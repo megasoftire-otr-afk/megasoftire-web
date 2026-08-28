@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: megasoftire-web
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python main.py
+    envVars:
+      - key: FLET_FORCE_WEB_SERVER
+        value: "true"
+      - key: FLET_SESSION_TIMEOUT
+        value: "3600"
