@@ -264,25 +264,98 @@ def main(page: ft.Page):
         reason=ft.TextField(label='Motivo',width=280)
         loc=ft.TextField(label='Ubicación',width=220)
         notes=ft.TextField(label='Observaciones',multiline=True,min_lines=2,max_lines=3)
+        ref=ft.Text('',size=11,color=TEXT_MUTED)
         hist=ft.DataTable(columns=[ft.DataColumn(ft.Text(x)) for x in ['Fecha','Evento','Equipo','Pos.','Lectura','Cocada I/E','Presión']],rows=[])
+
+        def fmt(v):
+            if v is None:
+                return ''
+            if isinstance(v,float) and v.is_integer():
+                return str(int(v))
+            return str(v)
+
+        def current_tire():
+            if not tire.value:
+                return None
+            rows=query(
+                'SELECT t.*,e.code equipment_code,e.location equipment_location '
+                'FROM tires t LEFT JOIN equipment e ON e.id=t.equipment_id WHERE t.id=?',
+                (int(tire.value),)
+            )
+            return rows[0] if rows else None
+
+        def load_current_state(e=None):
+            r=current_tire()
+            if not r:
+                equip.value=None
+                pos.value=''
+                meter.value=''
+                ti.value=''
+                to.value=''
+                press.value=''
+                loc.value=''
+                ref.value=''
+                return
+            equip.value=str(r['equipment_id']) if r['equipment_id'] is not None else None
+            pos.value=fmt(r['position'])
+            meter.value=fmt(r['current_meter'])
+            ti.value=fmt(r['tread_inner'])
+            to.value=fmt(r['tread_outer'])
+            press.value=fmt(r['recommended_pressure'])
+            loc.value=fmt(r['equipment_location'])
+            ref.value=(
+                f"Estado actual: {r['status']} · Equipo: {r['equipment_code'] or '-'} · "
+                f"Pos.: {r['position'] or '-'} · Última lectura: {fmt(r['current_meter']) or '-'} · "
+                f"Cocada I/E: {fmt(r['tread_inner']) or '-'}/{fmt(r['tread_outer']) or '-'}"
+            )
+
+        def apply_event_rules(e=None):
+            ec=event.value
+            r=current_tire()
+            locked=ec in ('INSP','INSC')
+            equip.disabled=locked
+            pos.disabled=locked
+            if locked and r:
+                equip.value=str(r['equipment_id']) if r['equipment_id'] is not None else None
+                pos.value=fmt(r['position'])
+                if r['status'] != 'SERVICIO':
+                    ref.value=(ref.value + ' · ADVERTENCIA: el neumático no figura EN SERVICIO').strip(' ·')
+            page.update()
 
         def refresh(e=None):
             if not tire.value:
                 hist.rows=[]
+                load_current_state()
             else:
                 rows=query('SELECT o.*,e.code equipment_code FROM occurrences o LEFT JOIN equipment e ON e.id=o.equipment_id WHERE o.tire_id=? ORDER BY o.event_date DESC,o.id DESC',(int(tire.value),))
                 hist.rows=[ft.DataRow(cells=[ft.DataCell(ft.Text(str(v or ''))) for v in [r['event_date'],r['event_code'],r['equipment_code'],r['position'],r['meter'],f"{r['tread_inner'] or ''}/{r['tread_outer'] or ''}",r['pressure']]]) for r in rows]
+                load_current_state()
+                apply_event_rules()
             page.update()
+
         tire.on_change=refresh
+        event.on_change=apply_event_rules
 
         def save(e):
-            if not tire.value or not event.value: return snack('Seleccione neumático y evento.',True)
-            tid=int(tire.value); ec=event.value; eid=int(equip.value) if equip.value else None
+            if not tire.value or not event.value:
+                return snack('Seleccione neumático y evento.',True)
+            tid=int(tire.value); ec=event.value
+            r=current_tire()
+            if ec in ('INSP','INSC'):
+                if not r or r['status'] != 'SERVICIO' or r['equipment_id'] is None or not r['position']:
+                    return snack('Para registrar una inspección el neumático debe estar instalado y EN SERVICIO.',True)
+                eid=int(r['equipment_id'])
+                event_pos=str(r['position'])
+                equip.value=str(eid)
+                pos.value=event_pos
+            else:
+                eid=int(equip.value) if equip.value else None
+                event_pos=pos.value
             if ec=='INSC' and query("SELECT id FROM occurrences WHERE tire_id=? AND event_code='INSC' AND event_date=? AND COALESCE(meter,-1)=COALESCE(?, -1)",(tid,date.value,num(meter.value))):
                 return snack('Ya existe una INSC con la misma fecha y lectura.',True)
-            execute('INSERT INTO occurrences(tire_id,event_code,event_date,equipment_id,position,meter,tread_inner,tread_outer,pressure,pressure_condition,reason,location,notes) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)',(tid,ec,date.value,eid,pos.value,num(meter.value),num(ti.value),num(to.value),num(press.value),cond.value,reason.value,loc.value,notes.value))
+            execute('INSERT INTO occurrences(tire_id,event_code,event_date,equipment_id,position,meter,tread_inner,tread_outer,pressure,pressure_condition,reason,location,notes) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)',(tid,ec,date.value,eid,event_pos,num(meter.value),num(ti.value),num(to.value),num(press.value),cond.value,reason.value,loc.value,notes.value))
             if ec=='INST':
-                execute("UPDATE tires SET status='SERVICIO',equipment_id=?,position=?,current_meter=?,tread_inner=COALESCE(?,tread_inner),tread_outer=COALESCE(?,tread_outer) WHERE id=?",(eid,pos.value,num(meter.value),num(ti.value),num(to.value),tid))
+                execute("UPDATE tires SET status='SERVICIO',equipment_id=?,position=?,current_meter=?,tread_inner=COALESCE(?,tread_inner),tread_outer=COALESCE(?,tread_outer) WHERE id=?",(eid,event_pos,num(meter.value),num(ti.value),num(to.value),tid))
             elif ec=='DINS':
                 execute("UPDATE tires SET status='STAND-BY',equipment_id=NULL,position=NULL,current_meter=? WHERE id=?",(num(meter.value),tid))
             elif ec=='REPA':
@@ -299,11 +372,12 @@ def main(page: ft.Page):
             card(ft.Column([
                 ft.Text('Datos del movimiento',size=17,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
                 ft.Row([tire,event,date],wrap=True),
+                ref,
                 ft.Row([equip,pos,meter],wrap=True),
                 ft.Row([ti,to,press,cond],wrap=True),
                 ft.Row([reason,loc],wrap=True),
                 notes,
-                ft.Row([ft.ElevatedButton('Guardar movimiento',icon=ft.Icons.SAVE,on_click=save),ft.Text('INSC evita duplicados por fecha + lectura.',size=11,color=TEXT_MUTED)])
+                ft.Row([ft.ElevatedButton('Guardar movimiento',icon=ft.Icons.SAVE,on_click=save),ft.Text('INSP/INSC conservan equipo y posición actuales. INSC evita duplicados por fecha + lectura.',size=11,color=TEXT_MUTED)])
             ])),
             card(ft.Column([
                 ft.Text('Historial del neumático',size=17,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
