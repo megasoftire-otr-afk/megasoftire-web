@@ -142,7 +142,7 @@ def main(page: ft.Page):
                 card(ft.Column([
                     ft.Text('Estado del sistema', size=17, weight=ft.FontWeight.BOLD, color=TEXT_MAIN),
                     ft.Row([ft.Icon(ft.Icons.CLOUD_DONE_OUTLINED, color=ft.Colors.GREEN_700), ft.Text('Web listo para publicación', color=TEXT_MAIN)]),
-                    ft.Row([ft.Icon(ft.Icons.DATABASE_OUTLINED, color=NAV_ACCENT), ft.Text('SQLite — demostración', color=TEXT_MAIN)]),
+                    ft.Row([ft.Icon(ft.Icons.STORAGE, color=NAV_ACCENT), ft.Text('SQLite — demostración', color=TEXT_MAIN)]),
                     ft.Row([ft.Icon(ft.Icons.PHONE_ANDROID_OUTLINED, color=NAV_ACCENT), ft.Text('Diseño adaptable PC / móvil', color=TEXT_MAIN)]),
                 ]), width=390),
             ], wrap=True, spacing=12),
