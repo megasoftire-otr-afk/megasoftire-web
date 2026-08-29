@@ -58,7 +58,7 @@ def main(page: ft.Page):
         return ft.Container(
             content=content,
             bgcolor=CARD_BG,
-            border=ft.border.all(1, '#E4EAF0'),
+            border=ft.Border.all(1, '#E4EAF0'),
             border_radius=14,
             padding=padding,
             width=width,
