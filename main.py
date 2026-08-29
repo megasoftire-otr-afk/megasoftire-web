@@ -71,7 +71,7 @@ def main(page: ft.Page):
                 ft.Row([
                     ft.Container(
                         width=40, height=40, border_radius=10,
-                        bgcolor='#EAF2FF', alignment=ft.alignment.center,
+                        bgcolor='#EAF2FF', alignment=ft.Alignment.CENTER,
                         content=ft.Icon(icon, color=NAV_ACCENT, size=21)
                     ),
                     ft.Container(expand=True),
@@ -451,7 +451,7 @@ def main(page: ft.Page):
             border_radius=20,
             shadow=ft.BoxShadow(blur_radius=24,color='#26000000',offset=ft.Offset(0,7)),
             content=ft.Column([
-                ft.Container(width=64,height=64,border_radius=16,bgcolor='#EAF2FF',alignment=ft.alignment.center,content=ft.Icon(ft.Icons.TIRE_REPAIR,size=34,color=NAV_ACCENT)),
+                ft.Container(width=64,height=64,border_radius=16,bgcolor='#EAF2FF',alignment=ft.Alignment.CENTER,content=ft.Icon(ft.Icons.TIRE_REPAIR,size=34,color=NAV_ACCENT)),
                 ft.Text('MegaSoftire',size=30,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
                 ft.Text('Gestión de Neumáticos OTR · Versión Web',size=13,color=TEXT_MUTED),
                 ft.Divider(height=20,color='#E8EDF3'),
@@ -465,7 +465,7 @@ def main(page: ft.Page):
         app_host.content=ft.Container(
             expand=True,
             bgcolor=BG,
-            alignment=ft.alignment.center,
+            alignment=ft.Alignment.CENTER,
             content=ft.Row([
                 ft.Container(
                     expand=True,
@@ -480,7 +480,7 @@ def main(page: ft.Page):
                         ft.Row([ft.Icon(ft.Icons.SECURITY,color=NAV_ACCENT),ft.Text('Acceso por usuario',color=TEXT_MAIN)]),
                     ],alignment=ft.MainAxisAlignment.CENTER,spacing=14)
                 ),
-                ft.Container(width=500,alignment=ft.alignment.center,content=login_card)
+                ft.Container(width=500,alignment=ft.Alignment.CENTER,content=login_card)
             ],expand=True,vertical_alignment=ft.CrossAxisAlignment.CENTER)
         )
         page.update()
