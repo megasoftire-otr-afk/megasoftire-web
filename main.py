@@ -207,23 +207,68 @@ def main(page: ft.Page):
         tread=ft.TextField(label='Prof. nueva (mm)',width=160)
         pressure=ft.TextField(label='Presión recomendada',width=175)
         life=ft.TextField(label='Vida proyectada (h)',width=175)
-        search=ft.TextField(label='Buscar neumático',prefix_icon=ft.Icons.SEARCH,width=280)
-        table=ft.DataTable(columns=[ft.DataColumn(ft.Text(x)) for x in ['Código','Serie','Marca','Medida','Diseño','Estado','Equipo','Pos.','Cocada I/E']],rows=[])
+        search=ft.TextField(label='Buscar neumático',prefix_icon=ft.Icons.SEARCH,width=260)
+        eq_options=[ft.dropdown.Option('', 'Todos los equipos')]
+        eq_options += [ft.dropdown.Option(str(r['id']), r['code']) for r in query('SELECT id,code FROM equipment WHERE active=1 ORDER BY code')]
+        eq_filter=ft.Dropdown(label='Equipo',width=180,value='',options=eq_options)
+        summary=ft.Text('',size=12,color=TEXT_MUTED)
+        table=ft.DataTable(columns=[ft.DataColumn(ft.Text(x)) for x in [
+            'Pos.','Código','Serie','Marca','Medida','Diseño','Estado','Equipo','Horómetro','Cocada I/E','Presión','Vida proy.'
+        ]],rows=[])
+        history=ft.DataTable(columns=[ft.DataColumn(ft.Text(x)) for x in [
+            'Fecha','Evento','Neumático','Serie','Equipo','Pos.','Lectura','Cocada I/E','Presión','Ubicación'
+        ]],rows=[])
+
+        def fmt(v):
+            if v is None: return ''
+            if isinstance(v,float) and v.is_integer(): return str(int(v))
+            return str(v)
 
         def refresh(e=None):
             sql='SELECT t.*,e.code equipment_code FROM tires t LEFT JOIN equipment e ON e.id=t.equipment_id'
             clauses=[]; params=[]
             if status_filter:
                 clauses.append('t.status=?'); params.append(status_filter)
+            if eq_filter.value:
+                clauses.append('t.equipment_id=?'); params.append(int(eq_filter.value))
             term=(search.value or '').strip()
             if term:
-                clauses.append('(t.code LIKE ? OR t.serial LIKE ? OR t.brand LIKE ?)'); params += [f'%{term}%',f'%{term}%',f'%{term}%']
+                clauses.append('(t.code LIKE ? OR t.serial LIKE ? OR t.brand LIKE ? OR e.code LIKE ?)')
+                params += [f'%{term}%',f'%{term}%',f'%{term}%',f'%{term}%']
             if clauses: sql += ' WHERE ' + ' AND '.join(clauses)
-            sql += ' ORDER BY t.code'
+            sql += " ORDER BY CASE WHEN t.position GLOB '[0-9]*' THEN CAST(t.position AS INTEGER) ELSE 999 END,t.code"
             rows=query(sql,tuple(params))
-            table.rows=[ft.DataRow(cells=[ft.DataCell(ft.Text(str(v or ''))) for v in [r['code'],r['serial'],r['brand'],r['size'],r['design'],r['status'],r['equipment_code'],r['position'],f"{r['tread_inner'] or ''}/{r['tread_outer'] or ''}"]]) for r in rows]
+            table.rows=[]
+            for r in rows:
+                table.rows.append(ft.DataRow(cells=[ft.DataCell(ft.Text(fmt(v))) for v in [
+                    r['position'],r['code'],r['serial'],r['brand'],r['size'],r['design'],r['status'],r['equipment_code'],
+                    r['current_meter'],f"{fmt(r['tread_inner'])}/{fmt(r['tread_outer'])}",r['recommended_pressure'],r['projected_life']
+                ]]))
+            summary.value=f'{len(rows)} neumático(s) mostrado(s)'
+
+            hist_sql=("SELECT o.event_date,o.event_code,t.code tire_code,t.serial,e.code equipment_code,"
+                      "o.position,o.meter,o.tread_inner,o.tread_outer,o.pressure,o.location "
+                      "FROM occurrences o JOIN tires t ON t.id=o.tire_id "
+                      "LEFT JOIN equipment e ON e.id=o.equipment_id")
+            hp=[]; hc=[]
+            if eq_filter.value:
+                hc.append('o.equipment_id=?'); hp.append(int(eq_filter.value))
+            if status_filter and not eq_filter.value:
+                hc.append('t.status=?'); hp.append(status_filter)
+            if term:
+                hc.append('(t.code LIKE ? OR t.serial LIKE ? OR e.code LIKE ?)')
+                hp += [f'%{term}%',f'%{term}%',f'%{term}%']
+            if hc: hist_sql += ' WHERE ' + ' AND '.join(hc)
+            hist_sql += ' ORDER BY o.event_date DESC,o.id DESC LIMIT 80'
+            hrows=query(hist_sql,tuple(hp))
+            history.rows=[ft.DataRow(cells=[ft.DataCell(ft.Text(fmt(v))) for v in [
+                r['event_date'],r['event_code'],r['tire_code'],r['serial'],r['equipment_code'],r['position'],r['meter'],
+                f"{fmt(r['tread_inner'])}/{fmt(r['tread_outer'])}",r['pressure'],r['location']
+            ]]) for r in hrows]
             page.update()
+
         search.on_change=refresh
+        eq_filter.on_change=refresh
 
         def save(e):
             if not code.value.strip(): return snack('Ingrese código interno.',True)
@@ -236,7 +281,9 @@ def main(page: ft.Page):
             except Exception as ex: snack(str(ex),True)
 
         refresh()
-        blocks=[page_title('Registro maestro de neumáticos' if not status_filter else f'Neumáticos: {status_filter}','Consulta y estado actual de cada neumático')]
+        title='Registro maestro de neumáticos' if not status_filter else f'Neumáticos: {status_filter}'
+        subtitle='Consulta y estado actual de cada neumático'
+        blocks=[page_title(title,subtitle)]
         if not status_filter:
             blocks.append(card(ft.Column([
                 ft.Text('Nuevo neumático',size=17,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
@@ -244,8 +291,14 @@ def main(page: ft.Page):
                 ft.ElevatedButton('Registrar neumático',icon=ft.Icons.SAVE,on_click=save)
             ])))
         blocks.append(card(ft.Column([
-            ft.Row([ft.Text('Listado',size=17,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),ft.Container(expand=True),search]),
+            ft.Row([ft.Text('Listado',size=17,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),ft.Container(expand=True),eq_filter,search],wrap=True),
+            summary,
             ft.Row([table],scroll=ft.ScrollMode.AUTO)
+        ])))
+        blocks.append(card(ft.Column([
+            ft.Text('Historial operativo',size=17,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
+            ft.Text('Filtra por equipo para ver juntos todos los movimientos de sus neumáticos.',size=11,color=TEXT_MUTED),
+            ft.Row([history],scroll=ft.ScrollMode.AUTO)
         ])))
         content.content=ft.Column(blocks,scroll=ft.ScrollMode.AUTO,spacing=16)
         page.update()
