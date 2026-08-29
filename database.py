@@ -143,6 +143,9 @@ def init_db():
         _seed_nexa_cat50(con)
         con.commit()
 
+    # Carga masiva Excel: se ejecuta una sola vez y únicamente con las tablas ya creadas.
+    seed_excel_carga_masiva()
+
 
 def authenticate(username: str, password: str):
     with connect() as con:
@@ -191,7 +194,7 @@ def seed_excel_carga_masiva():
 
         # Neumáticos
         for r in EXCEL_NEUMATICOS:
-            code,serial,brand,size,design,new_tread,pressure,install_meter,status,eq_code,pos,current_meter,tin,tout,purchase,cost,warranty,location,notes = r
+            code,serial,brand,size,design,new_tread,pressure,projected_life,status,eq_code,pos,current_meter,tin,tout,purchase,cost,warranty,location,notes = r
             eq_id=None
             if eq_code:
                 er=con.execute("SELECT id FROM equipment WHERE code=?",(str(eq_code).strip(),)).fetchone()
@@ -203,7 +206,7 @@ def seed_excel_carga_masiva():
                 design=excluded.design,new_tread=excluded.new_tread,recommended_pressure=excluded.recommended_pressure,
                 status=excluded.status,equipment_id=excluded.equipment_id,position=excluded.position,
                 current_meter=excluded.current_meter,tread_inner=excluded.tread_inner,tread_outer=excluded.tread_outer""",
-                (str(code).strip(), serial, brand, size, design, new_tread, pressure, None,
+                (str(code).strip(), serial, brand, size, design, new_tread, pressure, projected_life,
                  str(status).strip().upper(), eq_id, str(pos).strip() if pos is not None else None,
                  current_meter,tin,tout))
 
@@ -230,4 +233,3 @@ def seed_excel_carga_masiva():
         con.execute("INSERT INTO app_migrations(migration_key) VALUES(?)",(marker,))
         con.commit()
 
-seed_excel_carga_masiva()
