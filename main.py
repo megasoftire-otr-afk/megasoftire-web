@@ -303,6 +303,371 @@ def main(page: ft.Page):
         content.content=ft.Column(blocks,scroll=ft.ScrollMode.AUTO,spacing=16)
         page.update()
 
+
+    def service_view():
+        """Consulta operativa de neumáticos actualmente instalados."""
+        eq_rows = query("""
+            SELECT DISTINCT e.id,e.code,e.brand,e.model,e.location,e.vehicle_type,e.tire_size
+            FROM equipment e
+            JOIN tires t ON t.equipment_id=e.id
+            WHERE e.active=1 AND t.status='SERVICIO'
+            ORDER BY e.code
+        """)
+        default_eq = ''
+        for er in eq_rows:
+            if er['code'] == 'CAT 50':
+                default_eq = str(er['id'])
+                break
+        if not default_eq and eq_rows:
+            default_eq = str(eq_rows[0]['id'])
+
+        eq_filter = ft.Dropdown(
+            label='Equipo en servicio',
+            width=220,
+            value=default_eq,
+            options=[ft.dropdown.Option('', 'Todos los equipos')] +
+                    [ft.dropdown.Option(str(r['id']), r['code']) for r in eq_rows]
+        )
+        tire_filter = ft.Dropdown(
+            label='Neumático',
+            width=280,
+            value='',
+            options=[ft.dropdown.Option('', 'Todos los neumáticos')]
+        )
+        search = ft.TextField(
+            label='Buscar código / serie',
+            prefix_icon=ft.Icons.SEARCH,
+            width=260
+        )
+        eq_info = ft.Text('', size=12, color=TEXT_MUTED)
+        summary = ft.Text('', size=12, color=TEXT_MUTED)
+
+        metrics = ft.Row([], wrap=True, spacing=12, run_spacing=12)
+        position_grid = ft.Row([], wrap=True, spacing=12, run_spacing=12)
+
+        table = ft.DataTable(
+            columns=[ft.DataColumn(ft.Text(x)) for x in [
+                'Pos.','Código','Serie','Marca','Medida','Diseño',
+                'Horóm. actual','Horóm. instal.','Horas trab.','Cocada I/E',
+                'Desgaste','Remanente','Pres. últ./ref.','Vida proy.'
+            ]],
+            rows=[]
+        )
+        history = ft.DataTable(
+            columns=[ft.DataColumn(ft.Text(x)) for x in [
+                'Fecha','Evento','Neumático','Equipo','Pos.','Lectura',
+                'Cocada I/E','Presión','Condición','Ubicación','Motivo'
+            ]],
+            rows=[]
+        )
+
+        def fmt(v, dec=0):
+            if v in (None, ''):
+                return ''
+            try:
+                f = float(v)
+                if dec == 0 and f.is_integer():
+                    return str(int(f))
+                return f'{f:.{dec}f}'
+            except Exception:
+                return str(v)
+
+        def pct(v):
+            return '' if v is None else f'{v:.1f}%'
+
+        def selected_tire_id():
+            try:
+                return int(tire_filter.value) if tire_filter.value else None
+            except Exception:
+                return None
+
+        def tire_operational_data(r):
+            tid = r['id']
+            eid = r['equipment_id']
+            inst = query("""
+                SELECT meter,event_date FROM occurrences
+                WHERE tire_id=? AND event_code='INST'
+                  AND (? IS NULL OR equipment_id=?)
+                ORDER BY event_date DESC,id DESC LIMIT 1
+            """, (tid, eid, eid))
+            inst_meter = inst[0]['meter'] if inst else None
+            inst_date = inst[0]['event_date'] if inst else ''
+            last = query("""
+                SELECT event_date,event_code,meter,tread_inner,tread_outer,pressure,
+                       pressure_condition,location,reason
+                FROM occurrences WHERE tire_id=?
+                ORDER BY event_date DESC,id DESC LIMIT 1
+            """, (tid,))
+            last_row = last[0] if last else None
+
+            current_meter = r['current_meter']
+            worked = None
+            if current_meter is not None and inst_meter is not None:
+                worked = max(0, float(current_meter) - float(inst_meter))
+
+            vals = [v for v in (r['tread_inner'], r['tread_outer'])
+                    if isinstance(v, (int, float))]
+            min_tread = min(vals) if vals else None
+            new_tread = r['new_tread']
+            wear = None
+            rem = None
+            hpmm = None
+            if min_tread is not None and new_tread not in (None, 0):
+                wear = max(0, float(new_tread) - float(min_tread))
+                rem = max(0, min(100, float(min_tread) / float(new_tread) * 100))
+                if worked is not None and wear > 0:
+                    hpmm = worked / wear
+
+            last_pressure = last_row['pressure'] if last_row and last_row['pressure'] is not None else None
+            return {
+                'inst_meter': inst_meter, 'inst_date': inst_date, 'worked': worked,
+                'min_tread': min_tread, 'wear': wear, 'rem': rem, 'hpmm': hpmm,
+                'last_pressure': last_pressure,
+                'last_event': last_row['event_code'] if last_row else '',
+                'last_date': last_row['event_date'] if last_row else '',
+            }
+
+        def goto_movement(event_code=None):
+            tid = selected_tire_id()
+            if not tid:
+                return snack('Seleccione un neumático para continuar.', True)
+            session['movement_tire_id'] = str(tid)
+            session['movement_event'] = event_code
+            nav.selected_index = 1
+            select(1)
+
+        def inspect(e):
+            goto_movement('INSP')
+
+        def movement(e):
+            goto_movement(None)
+
+        inspect_btn = ft.ElevatedButton(
+            'Registrar INSP',
+            icon=ft.Icons.CHECK_CIRCLE_OUTLINE,
+            on_click=inspect,
+            disabled=True
+        )
+        movement_btn = ft.OutlinedButton(
+            'Abrir movimientos',
+            icon=ft.Icons.SWAP_HORIZ,
+            on_click=movement,
+            disabled=True
+        )
+
+        def refresh_tire_options(rows):
+            current = tire_filter.value
+            opts = [ft.dropdown.Option('', 'Todos los neumáticos')]
+            for r in rows:
+                opts.append(ft.dropdown.Option(str(r['id']), f"{r['code']} | P{r['position'] or '-'} | {r['serial'] or 's/serie'}"))
+            tire_filter.options = opts
+            valid = {'', *[str(r['id']) for r in rows]}
+            if current not in valid:
+                tire_filter.value = ''
+
+        def refresh(e=None):
+            sql = """
+                SELECT t.*,e.code equipment_code,e.brand equipment_brand,e.model equipment_model,
+                       e.location equipment_location,e.vehicle_type,e.tire_size equipment_tire_size
+                FROM tires t
+                LEFT JOIN equipment e ON e.id=t.equipment_id
+                WHERE t.status='SERVICIO'
+            """
+            params = []
+            if eq_filter.value:
+                sql += ' AND t.equipment_id=?'
+                params.append(int(eq_filter.value))
+            term = (search.value or '').strip()
+            if term:
+                sql += ' AND (t.code LIKE ? OR t.serial LIKE ? OR t.brand LIKE ? OR t.design LIKE ?)'
+                params += [f'%{term}%'] * 4
+            sql += " ORDER BY CASE WHEN t.position GLOB '[0-9]*' THEN CAST(t.position AS INTEGER) ELSE 999 END,t.code"
+            base_rows = query(sql, tuple(params))
+
+            # Al cambiar de equipo se reconstruye el selector de neumáticos.
+            if e is not None and getattr(e, 'control', None) is eq_filter:
+                tire_filter.value = ''
+            refresh_tire_options(base_rows)
+
+            tid = selected_tire_id()
+            rows = [r for r in base_rows if tid is None or r['id'] == tid]
+
+            inspect_btn.disabled = tid is None
+            movement_btn.disabled = tid is None
+
+            ops = [(r, tire_operational_data(r)) for r in rows]
+            table.rows = []
+            rem_values = []
+            worked_values = []
+
+            for r, od in ops:
+                if od['rem'] is not None:
+                    rem_values.append(od['rem'])
+                if od['worked'] is not None:
+                    worked_values.append(od['worked'])
+                ptxt = f"{fmt(od['last_pressure'])}/{fmt(r['recommended_pressure'])}"
+                table.rows.append(ft.DataRow(cells=[
+                    ft.DataCell(ft.Text(fmt(r['position']))),
+                    ft.DataCell(ft.Text(fmt(r['code']), weight=ft.FontWeight.BOLD)),
+                    ft.DataCell(ft.Text(fmt(r['serial']))),
+                    ft.DataCell(ft.Text(fmt(r['brand']))),
+                    ft.DataCell(ft.Text(fmt(r['size']))),
+                    ft.DataCell(ft.Text(fmt(r['design']))),
+                    ft.DataCell(ft.Text(fmt(r['current_meter']))),
+                    ft.DataCell(ft.Text(fmt(od['inst_meter']))),
+                    ft.DataCell(ft.Text(fmt(od['worked']))),
+                    ft.DataCell(ft.Text(f"{fmt(r['tread_inner'])}/{fmt(r['tread_outer'])}")),
+                    ft.DataCell(ft.Text(fmt(od['wear'], 1) + (' mm' if od['wear'] is not None else ''))),
+                    ft.DataCell(ft.Text(pct(od['rem']))),
+                    ft.DataCell(ft.Text(ptxt)),
+                    ft.DataCell(ft.Text(fmt(r['projected_life']))),
+                ]))
+
+            total_service = len(base_rows)
+            eq_count = query("SELECT COUNT(DISTINCT equipment_id) n FROM tires WHERE status='SERVICIO' AND equipment_id IS NOT NULL")[0]['n']
+            avg_rem = sum(rem_values) / len(rem_values) if rem_values else None
+            current_meter = max([float(r['current_meter']) for r in rows if r['current_meter'] is not None], default=None)
+            latest_date = ''
+            if rows:
+                ids = tuple(r['id'] for r in rows)
+                qmarks = ','.join('?' for _ in ids)
+                rr = query('SELECT MAX(event_date) d FROM occurrences WHERE tire_id IN (' + qmarks + ')', ids)
+                latest_date = rr[0]['d'] if rr else ''
+
+            metrics.controls = [
+                metric_card('En servicio', total_service, ft.Icons.TIRE_REPAIR, 'Neumáticos del filtro actual'),
+                metric_card('Equipos con neumáticos', eq_count, ft.Icons.PRECISION_MANUFACTURING_OUTLINED, 'Flota actualmente instalada'),
+                metric_card('Remanente promedio', pct(avg_rem) if avg_rem is not None else '—', ft.Icons.ASSESSMENT_OUTLINED, 'Sobre profundidad nueva'),
+                metric_card('Lectura actual', fmt(current_meter) if current_meter is not None else '—', ft.Icons.DIRECTIONS_CAR, 'Horómetro / km del equipo'),
+                metric_card('Último evento', latest_date or '—', ft.Icons.SWAP_HORIZ, 'Fecha más reciente'),
+            ]
+
+            # Información del equipo seleccionado.
+            if eq_filter.value:
+                er = query('SELECT * FROM equipment WHERE id=?', (int(eq_filter.value),))
+                if er:
+                    q = er[0]
+                    eq_info.value = (
+                        f"{q['code']} · {(q['brand'] or '').strip()} {(q['model'] or '').strip()} · "
+                        f"{q['vehicle_type'] or ''} · Ubicación: {q['location'] or ''} · "
+                        f"Medida: {q['tire_size'] or ''}"
+                    )
+                else:
+                    eq_info.value = ''
+            else:
+                eq_info.value = 'Vista consolidada de todos los equipos con neumáticos en servicio.'
+
+            # Tarjetas de posiciones del equipo.
+            position_grid.controls = []
+            for r, od in ops:
+                position_grid.controls.append(
+                    card(ft.Column([
+                        ft.Row([
+                            ft.Container(
+                                width=42, height=42, border_radius=21,
+                                bgcolor='#EAF2FF',
+                                alignment=ft.Alignment.CENTER,
+                                content=ft.Text(f"P{r['position'] or '-'}", weight=ft.FontWeight.BOLD, color=NAV_ACCENT)
+                            ),
+                            ft.Column([
+                                ft.Text(r['code'], size=18, weight=ft.FontWeight.BOLD, color=TEXT_MAIN),
+                                ft.Text(r['serial'] or 'Sin serie', size=11, color=TEXT_MUTED),
+                            ], spacing=1),
+                        ]),
+                        ft.Text(f"{r['brand'] or ''} · {r['size'] or ''} · {r['design'] or ''}", size=11, color=TEXT_MUTED),
+                        ft.Row([
+                            ft.Column([ft.Text('Cocada', size=10, color=TEXT_MUTED), ft.Text(f"{fmt(r['tread_inner'])}/{fmt(r['tread_outer'])} mm", weight=ft.FontWeight.BOLD)]),
+                            ft.Column([ft.Text('Remanente', size=10, color=TEXT_MUTED), ft.Text(pct(od['rem']) or '—', weight=ft.FontWeight.BOLD)]),
+                            ft.Column([ft.Text('Horas trab.', size=10, color=TEXT_MUTED), ft.Text(fmt(od['worked']) or '—', weight=ft.FontWeight.BOLD)]),
+                        ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+                        ft.Text(f"Último evento: {od['last_event'] or '—'} · {od['last_date'] or '—'}", size=10, color=TEXT_MUTED),
+                    ], spacing=9), width=300)
+                )
+
+            # Historial del equipo / neumático.
+            hsql = """
+                SELECT o.event_date,o.event_code,t.code tire_code,e.code equipment_code,
+                       o.position,o.meter,o.tread_inner,o.tread_outer,o.pressure,
+                       o.pressure_condition,o.location,o.reason
+                FROM occurrences o
+                JOIN tires t ON t.id=o.tire_id
+                LEFT JOIN equipment e ON e.id=o.equipment_id
+                WHERE 1=1
+            """
+            hp = []
+            if eq_filter.value:
+                hsql += ' AND o.equipment_id=?'
+                hp.append(int(eq_filter.value))
+            if tid:
+                hsql += ' AND o.tire_id=?'
+                hp.append(tid)
+            if term:
+                hsql += ' AND (t.code LIKE ? OR t.serial LIKE ?)'
+                hp += [f'%{term}%', f'%{term}%']
+            hsql += ' ORDER BY o.event_date DESC,o.id DESC LIMIT 120'
+            hrows = query(hsql, tuple(hp))
+            history.rows = [
+                ft.DataRow(cells=[ft.DataCell(ft.Text(fmt(v))) for v in [
+                    r['event_date'], r['event_code'], r['tire_code'], r['equipment_code'],
+                    r['position'], r['meter'],
+                    f"{fmt(r['tread_inner'])}/{fmt(r['tread_outer'])}",
+                    r['pressure'], r['pressure_condition'], r['location'], r['reason']
+                ]]) for r in hrows
+            ]
+
+            summary.value = (
+                f"{len(rows)} neumático(s) mostrado(s) · "
+                f"Historial: {len(hrows)} movimiento(s)"
+            )
+            page.update()
+
+        eq_filter.on_change = refresh
+        tire_filter.on_change = refresh
+        search.on_change = refresh
+
+        refresh()
+
+        content.content = ft.Column([
+            page_title(
+                'Neumáticos en servicio',
+                'Estado actual, posiciones, horas de trabajo e historial operativo por equipo'
+            ),
+            card(ft.Column([
+                ft.Row([
+                    ft.Text('Consulta operativa', size=17, weight=ft.FontWeight.BOLD, color=TEXT_MAIN),
+                    ft.Container(expand=True),
+                    eq_filter, tire_filter, search
+                ], wrap=True),
+                eq_info,
+                ft.Row([inspect_btn, movement_btn], wrap=True),
+            ])),
+            metrics,
+            card(ft.Column([
+                ft.Text('Vista de posiciones', size=17, weight=ft.FontWeight.BOLD, color=TEXT_MAIN),
+                ft.Text('Cada tarjeta representa la condición actual del neumático instalado en su posición.', size=11, color=TEXT_MUTED),
+                position_grid
+            ])),
+            card(ft.Column([
+                ft.Row([
+                    ft.Text('Detalle técnico de neumáticos instalados', size=17, weight=ft.FontWeight.BOLD, color=TEXT_MAIN),
+                    ft.Container(expand=True),
+                    summary
+                ]),
+                ft.Text(
+                    'Horas trabajadas = lectura actual − horómetro de la última instalación. '
+                    'Remanente = menor cocada actual / profundidad nueva.',
+                    size=10, color=TEXT_MUTED
+                ),
+                ft.Row([table], scroll=ft.ScrollMode.AUTO)
+            ])),
+            card(ft.Column([
+                ft.Text('Historial operativo', size=17, weight=ft.FontWeight.BOLD, color=TEXT_MAIN),
+                ft.Text('Muestra INST, INSP, INSC, ROT, INVE, DINS, REPA y BAJA según los filtros seleccionados.', size=11, color=TEXT_MUTED),
+                ft.Row([history], scroll=ft.ScrollMode.AUTO)
+            ]))
+        ], scroll=ft.ScrollMode.AUTO, spacing=16)
+        page.update()
+
     def movement_view():
         tire=ft.Dropdown(label='Neumático *',width=310,options=[ft.dropdown.Option(str(r['id']),f"{r['code']} | {r['serial'] or 's/serie'}") for r in query('SELECT id,code,serial FROM tires ORDER BY code')])
         event=ft.Dropdown(label='Evento *',width=265,options=[ft.dropdown.Option(k,f'{k} - {v}') for k,v in EVENTS.items()])
@@ -318,6 +683,12 @@ def main(page: ft.Page):
         loc=ft.TextField(label='Ubicación',width=220)
         notes=ft.TextField(label='Observaciones',multiline=True,min_lines=2,max_lines=3)
         ref=ft.Text('',size=11,color=TEXT_MUTED)
+        pre_tire = session.pop('movement_tire_id', None)
+        pre_event = session.pop('movement_event', None)
+        if pre_tire:
+            tire.value = pre_tire
+        if pre_event:
+            event.value = pre_event
         hist=ft.DataTable(columns=[ft.DataColumn(ft.Text(x)) for x in ['Fecha','Evento','Equipo','Pos.','Lectura','Cocada I/E','Presión']],rows=[])
 
         def fmt(v):
@@ -420,6 +791,9 @@ def main(page: ft.Page):
             snack(f'Evento {ec} registrado correctamente.')
             refresh()
 
+        if pre_tire:
+            refresh()
+
         content.content=ft.Column([
             page_title('Movimiento de neumáticos','Registro operativo del ciclo de vida'),
             card(ft.Column([
@@ -496,7 +870,7 @@ def main(page: ft.Page):
     def select(idx):
         if idx==0: dashboard()
         elif idx==1: movement_view()
-        elif idx==2: tires_view('SERVICIO')
+        elif idx==2: service_view()
         elif idx==3: maintenance_view()
         elif idx==4: tires_view('STAND-BY')
         elif idx==5: tires_view('BAJA')
