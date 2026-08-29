@@ -406,7 +406,7 @@ def main(page: ft.Page):
         userbar=ft.Container(
             height=62,
             bgcolor=ft.Colors.WHITE,
-            border=ft.border.only(bottom=ft.BorderSide(1,'#E4EAF0')),
+            border=ft.Border(bottom=ft.BorderSide(1,'#E4EAF0')),
             padding=ft.padding.symmetric(horizontal=20),
             content=ft.Row([
                 ft.Text('Gestión integral de neumáticos OTR',size=13,color=TEXT_MUTED),
