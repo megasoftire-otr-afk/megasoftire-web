@@ -236,7 +236,7 @@ def main(page: ft.Page):
                 clauses.append('(t.code LIKE ? OR t.serial LIKE ? OR t.brand LIKE ? OR e.code LIKE ?)')
                 params += [f'%{term}%',f'%{term}%',f'%{term}%',f'%{term}%']
             if clauses: sql += ' WHERE ' + ' AND '.join(clauses)
-            sql += " ORDER BY CASE WHEN t.position GLOB '[0-9]*' THEN CAST(t.position AS INTEGER) ELSE 999 END,t.code"
+            sql += " ORDER BY CAST(COALESCE(NULLIF(t.position,''),'999') AS INTEGER),t.code"
             rows=query(sql,tuple(params))
             table.rows=[]
             for r in rows:
@@ -324,7 +324,7 @@ def main(page: ft.Page):
         eq_filter = ft.Dropdown(
             label='Equipo en servicio',
             width=220,
-            value=default_eq,
+            value=default_eq if default_eq else '',
             options=[ft.dropdown.Option('', 'Todos los equipos')] +
                     [ft.dropdown.Option(str(r['id']), r['code']) for r in eq_rows]
         )
@@ -461,7 +461,7 @@ def main(page: ft.Page):
             for r in rows:
                 opts.append(ft.dropdown.Option(str(r['id']), f"{r['code']} | P{r['position'] or '-'} | {r['serial'] or 's/serie'}"))
             tire_filter.options = opts
-            valid = {'', *[str(r['id']) for r in rows]}
+            valid = set([''] + [str(r['id']) for r in rows])
             if current not in valid:
                 tire_filter.value = ''
 
@@ -481,7 +481,7 @@ def main(page: ft.Page):
             if term:
                 sql += ' AND (t.code LIKE ? OR t.serial LIKE ? OR t.brand LIKE ? OR t.design LIKE ?)'
                 params += [f'%{term}%'] * 4
-            sql += " ORDER BY CASE WHEN t.position GLOB '[0-9]*' THEN CAST(t.position AS INTEGER) ELSE 999 END,t.code"
+            sql += " ORDER BY CAST(COALESCE(NULLIF(t.position,''),'999') AS INTEGER),t.code"
             base_rows = query(sql, tuple(params))
 
             # Al cambiar de equipo se reconstruye el selector de neumáticos.
@@ -633,13 +633,10 @@ def main(page: ft.Page):
                 'Estado actual, posiciones, horas de trabajo e historial operativo por equipo'
             ),
             card(ft.Column([
-                ft.Row([
-                    ft.Text('Consulta operativa', size=17, weight=ft.FontWeight.BOLD, color=TEXT_MAIN),
-                    ft.Container(expand=True),
-                    eq_filter, tire_filter, search
-                ], wrap=True),
+                ft.Text('Consulta operativa', size=17, weight=ft.FontWeight.BOLD, color=TEXT_MAIN),
+                ft.Row([eq_filter, tire_filter, search], wrap=True, spacing=12, run_spacing=12),
                 eq_info,
-                ft.Row([inspect_btn, movement_btn], wrap=True),
+                ft.Row([inspect_btn, movement_btn], wrap=True, spacing=10),
             ])),
             metrics,
             card(ft.Column([
