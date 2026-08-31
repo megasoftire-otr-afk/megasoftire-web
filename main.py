@@ -1,3 +1,4 @@
+# MegaSoftire Web 2026 - corrección INSP + fechas dd/mm/aaaa (31/08/2026)
 import datetime as dt
 import os
 import flet as ft
@@ -53,6 +54,32 @@ def main(page: ft.Page):
             return float(v) if v not in (None, '') else None
         except Exception:
             return None
+
+    def format_date(value):
+        """Muestra fechas en dd/mm/aaaa sin alterar el valor almacenado.
+
+        Acepta seriales de Excel (p. ej. 46212), fechas ISO y fechas ya
+        formateadas. Esto corrige la visualización de datos importados de NEXA.
+        """
+        if value in (None, ''):
+            return ''
+        s = str(value).strip()
+        # Serial de Excel: usa origen 1899-12-30 (compatibilidad Excel/LibreOffice).
+        try:
+            f = float(s)
+            if f.is_integer() and 1 <= f <= 100000:
+                d = dt.date(1899, 12, 30) + dt.timedelta(days=int(f))
+                return d.strftime('%d/%m/%Y')
+        except Exception:
+            pass
+        # Fechas textuales comunes.
+        for fmt_in in ('%Y-%m-%d', '%Y/%m/%d', '%d/%m/%Y', '%d-%m-%Y'):
+            try:
+                d = dt.datetime.strptime(s[:10], fmt_in)
+                return d.strftime('%d/%m/%Y')
+            except Exception:
+                pass
+        return s
 
     def card(content, padding=18, width=None):
         return ft.Container(
@@ -111,7 +138,7 @@ def main(page: ft.Page):
 
         recent_table = ft.DataTable(
             columns=[ft.DataColumn(ft.Text(x)) for x in ['Fecha','Evento','Neumático','Equipo','Pos.']],
-            rows=[ft.DataRow(cells=[ft.DataCell(ft.Text(str(v or ''))) for v in [r['event_date'],r['event_code'],r['tire_code'],r['equipment_code'],r['position']]]) for r in recent]
+            rows=[ft.DataRow(cells=[ft.DataCell(ft.Text(str(v or ''))) for v in [format_date(r['event_date']),r['event_code'],r['tire_code'],r['equipment_code'],r['position']]]) for r in recent]
         )
 
         content.content = ft.Column([
@@ -375,11 +402,24 @@ def main(page: ft.Page):
         def pct(v):
             return '' if v is None else f'{v:.1f}%'
 
+        visible_tire_ids = []
+
         def selected_tire_id():
             try:
                 return int(tire_filter.value) if tire_filter.value else None
             except Exception:
                 return None
+
+        def effective_tire_id():
+            """Devuelve la llanta seleccionada o, si el filtro deja una sola, esa llanta.
+
+            Este respaldo evita que Flet deje INSP deshabilitado cuando el dropdown
+            muestra una única llanta pero el cambio de opciones aún no propagó value.
+            """
+            tid = selected_tire_id()
+            if tid:
+                return tid
+            return visible_tire_ids[0] if len(visible_tire_ids) == 1 else None
 
         def tire_operational_data(r):
             tid = r['id']
@@ -428,7 +468,7 @@ def main(page: ft.Page):
             }
 
         def goto_movement(event_code=None):
-            tid = selected_tire_id()
+            tid = effective_tire_id()
             if not tid:
                 return snack('Seleccione un neumático para continuar.', True)
             session['movement_tire_id'] = str(tid)
@@ -483,17 +523,21 @@ def main(page: ft.Page):
                 params += [f'%{term}%'] * 4
             sql += " ORDER BY CAST(COALESCE(NULLIF(t.position,''),'999') AS INTEGER),t.code"
             base_rows = query(sql, tuple(params))
+            visible_tire_ids.clear()
+            visible_tire_ids.extend([int(r['id']) for r in base_rows])
 
             # Al cambiar de equipo se reconstruye el selector de neumáticos.
             if e is not None and getattr(e, 'control', None) is eq_filter:
                 tire_filter.value = ''
             refresh_tire_options(base_rows)
 
-            tid = selected_tire_id()
+            tid = effective_tire_id()
             rows = [r for r in base_rows if tid is None or r['id'] == tid]
 
-            inspect_btn.disabled = tid is None
-            movement_btn.disabled = tid is None
+            # Habilita acciones cuando existe una llanta concreta seleccionada/visible.
+            can_open = tid is not None and any(int(r['id']) == int(tid) for r in base_rows)
+            inspect_btn.disabled = not can_open
+            movement_btn.disabled = not can_open
 
             ops = [(r, tire_operational_data(r)) for r in rows]
             table.rows = []
@@ -539,7 +583,7 @@ def main(page: ft.Page):
                 metric_card('Equipos con neumáticos', eq_count, ft.Icons.PRECISION_MANUFACTURING_OUTLINED, 'Flota actualmente instalada'),
                 metric_card('Remanente promedio', pct(avg_rem) if avg_rem is not None else '—', ft.Icons.ASSESSMENT_OUTLINED, 'Sobre profundidad nueva'),
                 metric_card('Lectura actual', fmt(current_meter) if current_meter is not None else '—', ft.Icons.DIRECTIONS_CAR, 'Horómetro / km del equipo'),
-                metric_card('Último evento', latest_date or '—', ft.Icons.SWAP_HORIZ, 'Fecha más reciente'),
+                metric_card('Último evento', format_date(latest_date) or '—', ft.Icons.SWAP_HORIZ, 'Fecha más reciente'),
             ]
 
             # Información del equipo seleccionado.
@@ -580,7 +624,7 @@ def main(page: ft.Page):
                             ft.Column([ft.Text('Remanente', size=10, color=TEXT_MUTED), ft.Text(pct(od['rem']) or '—', weight=ft.FontWeight.BOLD)]),
                             ft.Column([ft.Text('Horas trab.', size=10, color=TEXT_MUTED), ft.Text(fmt(od['worked']) or '—', weight=ft.FontWeight.BOLD)]),
                         ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
-                        ft.Text(f"Último evento: {od['last_event'] or '—'} · {od['last_date'] or '—'}", size=10, color=TEXT_MUTED),
+                        ft.Text(f"Último evento: {od['last_event'] or '—'} · {format_date(od['last_date']) or '—'}", size=10, color=TEXT_MUTED),
                     ], spacing=9), width=300)
                 )
 
@@ -608,7 +652,7 @@ def main(page: ft.Page):
             hrows = query(hsql, tuple(hp))
             history.rows = [
                 ft.DataRow(cells=[ft.DataCell(ft.Text(fmt(v))) for v in [
-                    r['event_date'], r['event_code'], r['tire_code'], r['equipment_code'],
+                    format_date(r['event_date']), r['event_code'], r['tire_code'], r['equipment_code'],
                     r['position'], r['meter'],
                     f"{fmt(r['tread_inner'])}/{fmt(r['tread_outer'])}",
                     r['pressure'], r['pressure_condition'], r['location'], r['reason']
@@ -668,7 +712,7 @@ def main(page: ft.Page):
     def movement_view():
         tire=ft.Dropdown(label='Neumático *',width=310,options=[ft.dropdown.Option(str(r['id']),f"{r['code']} | {r['serial'] or 's/serie'}") for r in query('SELECT id,code,serial FROM tires ORDER BY code')])
         event=ft.Dropdown(label='Evento *',width=265,options=[ft.dropdown.Option(k,f'{k} - {v}') for k,v in EVENTS.items()])
-        date=ft.TextField(label='Fecha',value=dt.date.today().isoformat(),width=165)
+        date=ft.TextField(label='Fecha',value=dt.date.today().strftime('%d/%m/%Y'),width=165)
         equip=ft.Dropdown(label='Equipo',width=220,options=[ft.dropdown.Option(str(r['id']),r['code']) for r in query('SELECT id,code FROM equipment WHERE active=1 ORDER BY code')])
         pos=ft.TextField(label='Posición',width=120)
         meter=ft.TextField(label='Horómetro / km',width=165)
@@ -749,7 +793,7 @@ def main(page: ft.Page):
                 load_current_state()
             else:
                 rows=query('SELECT o.*,e.code equipment_code FROM occurrences o LEFT JOIN equipment e ON e.id=o.equipment_id WHERE o.tire_id=? ORDER BY o.event_date DESC,o.id DESC',(int(tire.value),))
-                hist.rows=[ft.DataRow(cells=[ft.DataCell(ft.Text(str(v or ''))) for v in [r['event_date'],r['event_code'],r['equipment_code'],r['position'],r['meter'],f"{r['tread_inner'] or ''}/{r['tread_outer'] or ''}",r['pressure']]]) for r in rows]
+                hist.rows=[ft.DataRow(cells=[ft.DataCell(ft.Text(str(v or ''))) for v in [format_date(r['event_date']),r['event_code'],r['equipment_code'],r['position'],r['meter'],f"{r['tread_inner'] or ''}/{r['tread_outer'] or ''}",r['pressure']]]) for r in rows]
                 load_current_state()
                 apply_event_rules()
             page.update()
@@ -762,6 +806,14 @@ def main(page: ft.Page):
                 return snack('Seleccione neumático y evento.',True)
             tid=int(tire.value); ec=event.value
             r=current_tire()
+            raw_date = (date.value or '').strip()
+            event_date = raw_date
+            for _fmt in ('%d/%m/%Y', '%d-%m-%Y', '%Y/%m/%d', '%Y-%m-%d'):
+                try:
+                    event_date = dt.datetime.strptime(raw_date[:10], _fmt).strftime('%Y-%m-%d')
+                    break
+                except Exception:
+                    pass
             if ec in ('INSP','INSC'):
                 if not r or r['status'] != 'SERVICIO' or r['equipment_id'] is None or not r['position']:
                     return snack('Para registrar una inspección el neumático debe estar instalado y EN SERVICIO.',True)
@@ -772,9 +824,9 @@ def main(page: ft.Page):
             else:
                 eid=int(equip.value) if equip.value else None
                 event_pos=pos.value
-            if ec=='INSC' and query("SELECT id FROM occurrences WHERE tire_id=? AND event_code='INSC' AND event_date=? AND COALESCE(meter,-1)=COALESCE(?, -1)",(tid,date.value,num(meter.value))):
+            if ec=='INSC' and query("SELECT id FROM occurrences WHERE tire_id=? AND event_code='INSC' AND event_date=? AND COALESCE(meter,-1)=COALESCE(?, -1)",(tid,event_date,num(meter.value))):
                 return snack('Ya existe una INSC con la misma fecha y lectura.',True)
-            execute('INSERT INTO occurrences(tire_id,event_code,event_date,equipment_id,position,meter,tread_inner,tread_outer,pressure,pressure_condition,reason,location,notes) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)',(tid,ec,date.value,eid,event_pos,num(meter.value),num(ti.value),num(to.value),num(press.value),cond.value,reason.value,loc.value,notes.value))
+            execute('INSERT INTO occurrences(tire_id,event_code,event_date,equipment_id,position,meter,tread_inner,tread_outer,pressure,pressure_condition,reason,location,notes) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)',(tid,ec,event_date,eid,event_pos,num(meter.value),num(ti.value),num(to.value),num(press.value),cond.value,reason.value,loc.value,notes.value))
             if ec=='INST':
                 execute("UPDATE tires SET status='SERVICIO',equipment_id=?,position=?,current_meter=?,tread_inner=COALESCE(?,tread_inner),tread_outer=COALESCE(?,tread_outer) WHERE id=?",(eid,event_pos,num(meter.value),num(ti.value),num(to.value),tid))
             elif ec=='DINS':
