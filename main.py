@@ -348,18 +348,19 @@ def main(page: ft.Page):
         if not default_eq and eq_rows:
             default_eq = str(eq_rows[0]['id'])
 
+        ALL='__ALL__'
         eq_filter = ft.Dropdown(
             label='Equipo en servicio',
             width=220,
-            value=default_eq if default_eq else '',
-            options=[ft.dropdown.Option('', 'Todos los equipos')] +
+            value=default_eq if default_eq else ALL,
+            options=[ft.dropdown.Option(ALL, 'Todos los equipos')] +
                     [ft.dropdown.Option(str(r['id']), r['code']) for r in eq_rows]
         )
         tire_filter = ft.Dropdown(
             label='Neumático',
             width=280,
-            value='',
-            options=[ft.dropdown.Option('', 'Todos los neumáticos')]
+            value=ALL,
+            options=[ft.dropdown.Option(ALL, 'Todos los neumáticos')]
         )
         search = ft.TextField(
             label='Buscar código / serie',
@@ -406,7 +407,7 @@ def main(page: ft.Page):
 
         def selected_tire_id():
             try:
-                return int(tire_filter.value) if tire_filter.value else None
+                return int(tire_filter.value) if tire_filter.value not in (None, '', ALL) else None
             except Exception:
                 return None
 
@@ -476,36 +477,42 @@ def main(page: ft.Page):
             nav.selected_index = 1
             select(1)
 
-        def inspect(e):
-            goto_movement('INSP')
+        # Accesos directos a todos los eventos desde la vista de neumáticos en servicio.
+        # INST permanece bloqueado porque todo neumático mostrado aquí ya está instalado.
+        event_icons = {
+            'INST': ft.Icons.ADD_CIRCLE_OUTLINE,
+            'INSP': ft.Icons.CHECK_CIRCLE_OUTLINE,
+            'INSC': ft.Icons.FACT_CHECK_OUTLINED,
+            'ROT': ft.Icons.SYNC_ALT,
+            'INVE': ft.Icons.SWAP_HORIZ,
+            'DINS': ft.Icons.REMOVE_CIRCLE_OUTLINE,
+            'REPA': ft.Icons.HANDYMAN_OUTLINED,
+            'BAJA': ft.Icons.DELETE_OUTLINE,
+        }
+        event_buttons = {}
+        for code in ['INST','INSP','INSC','ROT','INVE','DINS','REPA','BAJA']:
+            event_buttons[code] = ft.OutlinedButton(
+                code,
+                icon=event_icons[code],
+                tooltip=EVENTS.get(code, code),
+                on_click=lambda e, ec=code: goto_movement(ec),
+                disabled=True
+            )
 
-        def movement(e):
-            goto_movement(None)
-
-        inspect_btn = ft.ElevatedButton(
-            'Registrar INSP',
-            icon=ft.Icons.CHECK_CIRCLE_OUTLINE,
-            on_click=inspect,
-            disabled=True
-        )
-        movement_btn = ft.OutlinedButton(
-            'Abrir movimientos',
-            icon=ft.Icons.SWAP_HORIZ,
-            on_click=movement,
-            disabled=True
-        )
+        event_buttons['INST'].tooltip = 'Instalación bloqueada: el neumático ya está EN SERVICIO'
 
         def refresh_tire_options(rows):
             current = tire_filter.value
-            opts = [ft.dropdown.Option('', 'Todos los neumáticos')]
+            opts = [ft.dropdown.Option(ALL, 'Todos los neumáticos')]
             for r in rows:
                 opts.append(ft.dropdown.Option(str(r['id']), f"{r['code']} | P{r['position'] or '-'} | {r['serial'] or 's/serie'}"))
             tire_filter.options = opts
-            valid = set([''] + [str(r['id']) for r in rows])
+            valid = set([ALL] + [str(r['id']) for r in rows])
             if current not in valid:
-                tire_filter.value = ''
+                tire_filter.value = ALL
 
         def refresh(e=None):
+            selected_value = str(tire_filter.value or ALL)
             sql = """
                 SELECT t.*,e.code equipment_code,e.brand equipment_brand,e.model equipment_model,
                        e.location equipment_location,e.vehicle_type,e.tire_size equipment_tire_size
@@ -514,7 +521,7 @@ def main(page: ft.Page):
                 WHERE t.status='SERVICIO'
             """
             params = []
-            if eq_filter.value:
+            if eq_filter.value not in (None, '', ALL):
                 sql += ' AND t.equipment_id=?'
                 params.append(int(eq_filter.value))
             term = (search.value or '').strip()
@@ -528,16 +535,25 @@ def main(page: ft.Page):
 
             # Al cambiar de equipo se reconstruye el selector de neumáticos.
             if e is not None and getattr(e, 'control', None) is eq_filter:
-                tire_filter.value = ''
+                tire_filter.value = ALL
             refresh_tire_options(base_rows)
 
-            tid = effective_tire_id()
-            rows = [r for r in base_rows if tid is None or r['id'] == tid]
+            valid_ids = {str(r['id']) for r in base_rows}
+            if selected_value not in ('', ALL) and selected_value in valid_ids:
+                tire_filter.value = selected_value
+                tid = int(selected_value)
+            else:
+                if tire_filter.value in (None, ''):
+                    tire_filter.value = ALL
+                tid = selected_tire_id()
 
-            # Habilita acciones cuando existe una llanta concreta seleccionada/visible.
-            can_open = tid is not None and any(int(r['id']) == int(tid) for r in base_rows)
-            inspect_btn.disabled = not can_open
-            movement_btn.disabled = not can_open
+            rows = [r for r in base_rows if tid is None or int(r['id']) == int(tid)]
+
+            # Los eventos se habilitan solo al seleccionar un neumático concreto.
+            # INST siempre queda bloqueado en esta ventana porque el neumático ya está instalado.
+            can_open = tire_filter.value not in (None, '', ALL) and str(tire_filter.value) in valid_ids
+            for code, btn in event_buttons.items():
+                btn.disabled = (not can_open) or code == 'INST'
 
             ops = [(r, tire_operational_data(r)) for r in rows]
             table.rows = []
@@ -587,7 +603,7 @@ def main(page: ft.Page):
             ]
 
             # Información del equipo seleccionado.
-            if eq_filter.value:
+            if eq_filter.value not in (None, '', ALL):
                 er = query('SELECT * FROM equipment WHERE id=?', (int(eq_filter.value),))
                 if er:
                     q = er[0]
@@ -639,7 +655,7 @@ def main(page: ft.Page):
                 WHERE 1=1
             """
             hp = []
-            if eq_filter.value:
+            if eq_filter.value not in (None, '', ALL):
                 hsql += ' AND o.equipment_id=?'
                 hp.append(int(eq_filter.value))
             if tid:
@@ -680,7 +696,11 @@ def main(page: ft.Page):
                 ft.Text('Consulta operativa', size=17, weight=ft.FontWeight.BOLD, color=TEXT_MAIN),
                 ft.Row([eq_filter, tire_filter, search], wrap=True, spacing=12, run_spacing=12),
                 eq_info,
-                ft.Row([inspect_btn, movement_btn], wrap=True, spacing=10),
+                ft.Text('Registrar evento', size=12, weight=ft.FontWeight.W_600, color=TEXT_MUTED),
+                ft.Row(
+                    [event_buttons[c] for c in ['INST','INSP','INSC','ROT','INVE','DINS','REPA','BAJA']],
+                    wrap=True, spacing=8, run_spacing=8
+                ),
             ])),
             metrics,
             card(ft.Column([
@@ -719,7 +739,10 @@ def main(page: ft.Page):
         ti=ft.TextField(label='Cocada int.',width=130)
         to=ft.TextField(label='Cocada ext.',width=130)
         press=ft.TextField(label='Presión',width=120)
-        cond=ft.Dropdown(label='Condición',width=150,options=[ft.dropdown.Option('FRÍO'),ft.dropdown.Option('CALIENTE')])
+        cond=ft.Dropdown(
+            label='Condición', width=160, value='FRIO',
+            options=[ft.dropdown.Option('FRIO','FRIO'), ft.dropdown.Option('CALIENTE','CALIENTE')]
+        )
         reason=ft.TextField(label='Motivo',width=280)
         loc=ft.TextField(label='Ubicación',width=220)
         notes=ft.TextField(label='Observaciones',multiline=True,min_lines=2,max_lines=3)
@@ -730,7 +753,13 @@ def main(page: ft.Page):
             tire.value = pre_tire
         if pre_event:
             event.value = pre_event
-        hist=ft.DataTable(columns=[ft.DataColumn(ft.Text(x)) for x in ['Fecha','Evento','Equipo','Pos.','Lectura','Cocada I/E','Presión']],rows=[])
+
+        hist=ft.DataTable(
+            columns=[ft.DataColumn(ft.Text(x)) for x in [
+                'Fecha','Evento','Equipo','Pos.','Lectura','Cocada I/E','Presión','Condición','Ubicación','Acción'
+            ]],
+            rows=[]
+        )
 
         def fmt(v):
             if v is None:
@@ -738,6 +767,18 @@ def main(page: ft.Page):
             if isinstance(v,float) and v.is_integer():
                 return str(int(v))
             return str(v)
+
+        def select_all_on_focus(e):
+            c=e.control
+            try:
+                value=str(c.value or '')
+                c.selection=ft.TextSelection(base_offset=0, extent_offset=len(value))
+                c.update()
+            except Exception:
+                pass
+
+        for ctrl in [date,pos,meter,ti,to,press,reason,loc,notes]:
+            ctrl.on_focus=select_all_on_focus
 
         def current_tire():
             if not tire.value:
@@ -749,6 +790,53 @@ def main(page: ft.Page):
             )
             return rows[0] if rows else None
 
+        def historical_limits(tid):
+            rows=query(
+                '''SELECT
+                       MAX(meter) max_meter,
+                       MIN(CASE WHEN tread_inner IS NOT NULL AND tread_inner>0 THEN tread_inner END) min_ti,
+                       MIN(CASE WHEN tread_outer IS NOT NULL AND tread_outer>0 THEN tread_outer END) min_to
+                   FROM occurrences WHERE tire_id=?''',
+                (tid,)
+            )
+            return rows[0] if rows else None
+
+        def parse_event_date(value):
+            if value in (None, ''):
+                return None
+            raw=str(value).strip()
+            try:
+                f=float(raw)
+                if f.is_integer() and 1 <= f <= 100000:
+                    return dt.date(1899,12,30)+dt.timedelta(days=int(f))
+            except Exception:
+                pass
+            for f in ('%d/%m/%Y','%d-%m-%Y','%Y/%m/%d','%Y-%m-%d'):
+                try:
+                    return dt.datetime.strptime(raw[:10],f).date()
+                except Exception:
+                    pass
+            return None
+
+        def latest_event_date(tid):
+            rows=query('SELECT event_date FROM occurrences WHERE tire_id=?',(tid,))
+            dates=[parse_event_date(r['event_date']) for r in rows]
+            dates=[d for d in dates if d is not None]
+            return max(dates) if dates else None
+
+        def recalc_numeric_state(tid):
+            lim=historical_limits(tid)
+            if not lim:
+                return
+            execute(
+                '''UPDATE tires SET
+                       current_meter=COALESCE(?,current_meter),
+                       tread_inner=COALESCE(?,tread_inner),
+                       tread_outer=COALESCE(?,tread_outer)
+                   WHERE id=?''',
+                (lim['max_meter'],lim['min_ti'],lim['min_to'],tid)
+            )
+
         def load_current_state(e=None):
             r=current_tire()
             if not r:
@@ -758,20 +846,38 @@ def main(page: ft.Page):
                 ti.value=''
                 to.value=''
                 press.value=''
+                cond.value='FRIO'
                 loc.value=''
                 ref.value=''
                 return
+
             equip.value=str(r['equipment_id']) if r['equipment_id'] is not None else None
             pos.value=fmt(r['position'])
-            meter.value=fmt(r['current_meter'])
-            ti.value=fmt(r['tread_inner'])
-            to.value=fmt(r['tread_outer'])
-            press.value=fmt(r['recommended_pressure'])
-            loc.value=fmt(r['equipment_location'])
+
+            lim=historical_limits(int(r['id']))
+            meter.value=fmt(lim['max_meter'] if lim and lim['max_meter'] is not None else r['current_meter'])
+            ti.value=fmt(lim['min_ti'] if lim and lim['min_ti'] is not None else r['tread_inner'])
+            to.value=fmt(lim['min_to'] if lim and lim['min_to'] is not None else r['tread_outer'])
+
+            last=query(
+                '''SELECT pressure,pressure_condition,location
+                   FROM occurrences
+                   WHERE tire_id=?
+                   ORDER BY id DESC LIMIT 1''',
+                (int(r['id']),)
+            )
+            last_row=last[0] if last else None
+            press.value=fmt(last_row['pressure']) if last_row and last_row['pressure'] is not None else fmt(r['recommended_pressure'])
+
+            last_cond=(last_row['pressure_condition'] if last_row else None) or 'FRIO'
+            last_cond=str(last_cond).strip().upper().replace('Í','I')
+            cond.value='CALIENTE' if last_cond.startswith('CAL') else 'FRIO'
+
+            loc.value=fmt(last_row['location']) if last_row and last_row['location'] else fmt(r['equipment_location'])
             ref.value=(
                 f"Estado actual: {r['status']} · Equipo: {r['equipment_code'] or '-'} · "
-                f"Pos.: {r['position'] or '-'} · Última lectura: {fmt(r['current_meter']) or '-'} · "
-                f"Cocada I/E: {fmt(r['tread_inner']) or '-'}/{fmt(r['tread_outer']) or '-'}"
+                f"Pos.: {r['position'] or '-'} · Última lectura válida: {meter.value or '-'} · "
+                f"Cocada I/E válida: {ti.value or '-'}/{to.value or '-'}"
             )
 
         def apply_event_rules(e=None):
@@ -787,35 +893,222 @@ def main(page: ft.Page):
                     ref.value=(ref.value + ' · ADVERTENCIA: el neumático no figura EN SERVICIO').strip(' ·')
             page.update()
 
+        def ask_delete(occ_id):
+            if not tire.value:
+                return
+            tid=int(tire.value)
+
+            def close_dialog(e=None):
+                dlg.open=False
+                page.update()
+
+            def do_delete(e=None):
+                execute('DELETE FROM occurrences WHERE id=? AND tire_id=?',(occ_id,tid))
+                recalc_numeric_state(tid)
+                dlg.open=False
+                snack('Evento eliminado correctamente.')
+                refresh()
+
+            dlg=ft.AlertDialog(
+                modal=True,
+                title=ft.Text('Eliminar evento'),
+                content=ft.Text('¿Desea eliminar este evento del historial? Esta acción no se puede deshacer.'),
+                actions=[
+                    ft.TextButton('Cancelar',on_click=close_dialog),
+                    ft.ElevatedButton('Eliminar',icon=ft.Icons.DELETE_OUTLINE,on_click=do_delete)
+                ],
+                actions_alignment=ft.MainAxisAlignment.END
+            )
+            page.dialog=dlg
+            dlg.open=True
+            page.update()
+
+        save_btn=ft.ElevatedButton(
+            'Guardar movimiento',
+            icon=ft.Icons.SAVE,
+            disabled=True
+        )
+
+        def form_is_valid():
+            if not tire.value or not event.value:
+                return False
+            r=current_tire()
+            if not r:
+                return False
+            tid=int(tire.value)
+            lim=historical_limits(tid)
+
+            entered_date=parse_event_date(date.value)
+            last_date=latest_event_date(tid)
+            if entered_date is None:
+                return False
+            if last_date is not None and entered_date < last_date:
+                return False
+
+            new_meter=num(meter.value)
+            if new_meter is None:
+                return False
+            if lim and lim['max_meter'] is not None and float(new_meter) < float(lim['max_meter']):
+                return False
+
+            new_ti=num(ti.value)
+            new_to=num(to.value)
+            max_new=num(r['new_tread'])
+            if new_ti is not None:
+                if new_ti < 0:
+                    return False
+                if max_new is not None and new_ti > max_new:
+                    return False
+                if lim and lim['min_ti'] is not None and new_ti > float(lim['min_ti']):
+                    return False
+            if new_to is not None:
+                if new_to < 0:
+                    return False
+                if max_new is not None and new_to > max_new:
+                    return False
+                if lim and lim['min_to'] is not None and new_to > float(lim['min_to']):
+                    return False
+
+            if event.value in ('INSP','INSC'):
+                if r['status'] != 'SERVICIO' or r['equipment_id'] is None or not r['position']:
+                    return False
+            if event.value == 'INST' and (not equip.value or not (pos.value or '').strip()):
+                return False
+            return True
+
+        def update_save_state(e=None):
+            save_btn.disabled = not form_is_valid()
+            page.update()
+
         def refresh(e=None):
             if not tire.value:
                 hist.rows=[]
                 load_current_state()
             else:
-                rows=query('SELECT o.*,e.code equipment_code FROM occurrences o LEFT JOIN equipment e ON e.id=o.equipment_id WHERE o.tire_id=? ORDER BY o.event_date DESC,o.id DESC',(int(tire.value),))
-                hist.rows=[ft.DataRow(cells=[ft.DataCell(ft.Text(str(v or ''))) for v in [format_date(r['event_date']),r['event_code'],r['equipment_code'],r['position'],r['meter'],f"{r['tread_inner'] or ''}/{r['tread_outer'] or ''}",r['pressure']]]) for r in rows]
+                rows=query(
+                    '''SELECT o.*,e.code equipment_code
+                       FROM occurrences o
+                       LEFT JOIN equipment e ON e.id=o.equipment_id
+                       WHERE o.tire_id=?
+                       ORDER BY o.id DESC''',
+                    (int(tire.value),)
+                )
+                hist.rows=[]
+                for r in rows:
+                    hist.rows.append(
+                        ft.DataRow(cells=[
+                            ft.DataCell(ft.Text(format_date(r['event_date']))),
+                            ft.DataCell(ft.Text(fmt(r['event_code']))),
+                            ft.DataCell(ft.Text(fmt(r['equipment_code']))),
+                            ft.DataCell(ft.Text(fmt(r['position']))),
+                            ft.DataCell(ft.Text(fmt(r['meter']))),
+                            ft.DataCell(ft.Text(f"{fmt(r['tread_inner'])}/{fmt(r['tread_outer'])}")),
+                            ft.DataCell(ft.Text(fmt(r['pressure']))),
+                            ft.DataCell(ft.Text(fmt(r['pressure_condition']))),
+                            ft.DataCell(ft.Text(fmt(r['location']))),
+                            ft.DataCell(ft.IconButton(
+                                icon=ft.Icons.DELETE_OUTLINE,
+                                tooltip='Eliminar evento',
+                                on_click=lambda e, oid=r['id']: ask_delete(oid)
+                            ))
+                        ])
+                    )
                 load_current_state()
                 apply_event_rules()
+            save_btn.disabled = not form_is_valid()
             page.update()
 
-        tire.on_change=refresh
-        event.on_change=apply_event_rules
+        def on_tire_change(e):
+            refresh(e)
+
+        def on_event_change(e):
+            apply_event_rules(e)
+            save_btn.disabled = not form_is_valid()
+            page.update()
+
+        tire.on_change=on_tire_change
+        event.on_change=on_event_change
+        date.on_change=update_save_state
+        equip.on_change=update_save_state
+        pos.on_change=update_save_state
+        meter.on_change=update_save_state
+        ti.on_change=update_save_state
+        to.on_change=update_save_state
+        press.on_change=update_save_state
+        cond.on_change=update_save_state
+        reason.on_change=update_save_state
+        loc.on_change=update_save_state
 
         def save(e):
             if not tire.value or not event.value:
                 return snack('Seleccione neumático y evento.',True)
-            tid=int(tire.value); ec=event.value
+
+            tid=int(tire.value)
+            ec=event.value
             r=current_tire()
-            raw_date = (date.value or '').strip()
-            event_date = raw_date
-            for _fmt in ('%d/%m/%Y', '%d-%m-%Y', '%Y/%m/%d', '%Y-%m-%d'):
+            if not r:
+                return snack('No se encontró el neumático seleccionado.',True)
+
+            lim=historical_limits(tid)
+            new_meter=num(meter.value)
+            max_meter=lim['max_meter'] if lim else None
+            if new_meter is None:
+                return snack('Ingrese el horómetro / km.',True)
+            if max_meter is not None and float(new_meter) < float(max_meter):
+                return snack(
+                    f'Horómetro inválido: {fmt(new_meter)} es menor que la última lectura válida {fmt(max_meter)}.',
+                    True
+                )
+
+            new_ti=num(ti.value)
+            new_to=num(to.value)
+            max_new=num(r['new_tread'])
+
+            if new_ti is not None:
+                if new_ti < 0:
+                    return snack('La cocada interior no puede ser negativa.',True)
+                if max_new is not None and new_ti > max_new:
+                    return snack(f'Cocada interior inválida: no puede superar la profundidad nueva ({fmt(max_new)} mm).',True)
+                if lim and lim['min_ti'] is not None and new_ti > float(lim['min_ti']):
+                    return snack(
+                        f'Cocada interior inválida: {fmt(new_ti)} mm es mayor que la última cocada válida {fmt(lim["min_ti"])} mm.',
+                        True
+                    )
+
+            if new_to is not None:
+                if new_to < 0:
+                    return snack('La cocada exterior no puede ser negativa.',True)
+                if max_new is not None and new_to > max_new:
+                    return snack(f'Cocada exterior inválida: no puede superar la profundidad nueva ({fmt(max_new)} mm).',True)
+                if lim and lim['min_to'] is not None and new_to > float(lim['min_to']):
+                    return snack(
+                        f'Cocada exterior inválida: {fmt(new_to)} mm es mayor que la última cocada válida {fmt(lim["min_to"])} mm.',
+                        True
+                    )
+
+            raw_date=(date.value or '').strip()
+            event_date=raw_date
+            date_ok=False
+            for _fmt in ('%d/%m/%Y','%d-%m-%Y','%Y/%m/%d','%Y-%m-%d'):
                 try:
-                    event_date = dt.datetime.strptime(raw_date[:10], _fmt).strftime('%Y-%m-%d')
+                    event_date=dt.datetime.strptime(raw_date[:10],_fmt).strftime('%Y-%m-%d')
+                    date_ok=True
                     break
                 except Exception:
                     pass
+            if not date_ok:
+                return snack('Fecha inválida. Use dd/mm/aaaa.',True)
+
+            entered_date=parse_event_date(event_date)
+            last_date=latest_event_date(tid)
+            if last_date is not None and entered_date is not None and entered_date < last_date:
+                return snack(
+                    f'Fecha inválida: {entered_date.strftime("%d/%m/%Y")} es anterior al último evento {last_date.strftime("%d/%m/%Y")}.',
+                    True
+                )
+
             if ec in ('INSP','INSC'):
-                if not r or r['status'] != 'SERVICIO' or r['equipment_id'] is None or not r['position']:
+                if r['status'] != 'SERVICIO' or r['equipment_id'] is None or not r['position']:
                     return snack('Para registrar una inspección el neumático debe estar instalado y EN SERVICIO.',True)
                 eid=int(r['equipment_id'])
                 event_pos=str(r['position'])
@@ -824,24 +1117,63 @@ def main(page: ft.Page):
             else:
                 eid=int(equip.value) if equip.value else None
                 event_pos=pos.value
-            if ec=='INSC' and query("SELECT id FROM occurrences WHERE tire_id=? AND event_code='INSC' AND event_date=? AND COALESCE(meter,-1)=COALESCE(?, -1)",(tid,event_date,num(meter.value))):
+
+            if ec=='INSC' and query(
+                "SELECT id FROM occurrences WHERE tire_id=? AND event_code='INSC' AND event_date=? AND COALESCE(meter,-1)=COALESCE(?, -1)",
+                (tid,event_date,new_meter)
+            ):
                 return snack('Ya existe una INSC con la misma fecha y lectura.',True)
-            execute('INSERT INTO occurrences(tire_id,event_code,event_date,equipment_id,position,meter,tread_inner,tread_outer,pressure,pressure_condition,reason,location,notes) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)',(tid,ec,event_date,eid,event_pos,num(meter.value),num(ti.value),num(to.value),num(press.value),cond.value,reason.value,loc.value,notes.value))
+
+            condition=(cond.value or 'FRIO').strip().upper().replace('Í','I')
+            condition='CALIENTE' if condition.startswith('CAL') else 'FRIO'
+
+            execute(
+                '''INSERT INTO occurrences(
+                       tire_id,event_code,event_date,equipment_id,position,meter,
+                       tread_inner,tread_outer,pressure,pressure_condition,reason,location,notes
+                   ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+                (tid,ec,event_date,eid,event_pos,new_meter,new_ti,new_to,
+                 num(press.value),condition,reason.value,loc.value,notes.value)
+            )
+
             if ec=='INST':
-                execute("UPDATE tires SET status='SERVICIO',equipment_id=?,position=?,current_meter=?,tread_inner=COALESCE(?,tread_inner),tread_outer=COALESCE(?,tread_outer) WHERE id=?",(eid,event_pos,num(meter.value),num(ti.value),num(to.value),tid))
+                execute(
+                    "UPDATE tires SET status='SERVICIO',equipment_id=?,position=?,current_meter=?,"
+                    "tread_inner=COALESCE(?,tread_inner),tread_outer=COALESCE(?,tread_outer) WHERE id=?",
+                    (eid,event_pos,new_meter,new_ti,new_to,tid)
+                )
             elif ec=='DINS':
-                execute("UPDATE tires SET status='STAND-BY',equipment_id=NULL,position=NULL,current_meter=? WHERE id=?",(num(meter.value),tid))
+                execute(
+                    "UPDATE tires SET status='STAND-BY',equipment_id=NULL,position=NULL,current_meter=? WHERE id=?",
+                    (new_meter,tid)
+                )
             elif ec=='REPA':
                 execute("UPDATE tires SET status='REPARACIÓN' WHERE id=?",(tid,))
             elif ec=='BAJA':
                 execute("UPDATE tires SET status='BAJA',equipment_id=NULL,position=NULL WHERE id=?",(tid,))
             else:
-                execute('UPDATE tires SET current_meter=COALESCE(?,current_meter),tread_inner=COALESCE(?,tread_inner),tread_outer=COALESCE(?,tread_outer) WHERE id=?',(num(meter.value),num(ti.value),num(to.value),tid))
+                execute(
+                    'UPDATE tires SET current_meter=COALESCE(?,current_meter),'
+                    'tread_inner=COALESCE(?,tread_inner),tread_outer=COALESCE(?,tread_outer) WHERE id=?',
+                    (new_meter,new_ti,new_to,tid)
+                )
+
             snack(f'Evento {ec} registrado correctamente.')
             refresh()
+            save_btn.disabled = True
+            page.update()
+
+        save_btn.on_click=save
 
         if pre_tire:
             refresh()
+        else:
+            save_btn.disabled = True
+
+        history_scroller=ft.Row(
+            [ft.Container(content=hist,width=1280)],
+            scroll=ft.ScrollMode.ALWAYS
+        )
 
         content.content=ft.Column([
             page_title('Movimiento de neumáticos','Registro operativo del ciclo de vida'),
@@ -853,11 +1185,18 @@ def main(page: ft.Page):
                 ft.Row([ti,to,press,cond],wrap=True),
                 ft.Row([reason,loc],wrap=True),
                 notes,
-                ft.Row([ft.ElevatedButton('Guardar movimiento',icon=ft.Icons.SAVE,on_click=save),ft.Text('INSP/INSC conservan equipo y posición actuales. INSC evita duplicados por fecha + lectura.',size=11,color=TEXT_MUTED)])
+                ft.Row([
+                    save_btn,
+                    ft.Text(
+                        'Guardar se habilita solo cuando fecha, horómetro y cocadas cumplen las validaciones.',
+                        size=11,color=TEXT_MUTED
+                    )
+                ],wrap=True)
             ])),
             card(ft.Column([
                 ft.Text('Historial del neumático',size=17,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
-                ft.Row([hist],scroll=ft.ScrollMode.AUTO)
+                ft.Text('Use la barra inferior para desplazarse horizontalmente. La columna Acción permite eliminar eventos.',size=11,color=TEXT_MUTED),
+                history_scroller
             ]))
         ],scroll=ft.ScrollMode.AUTO,spacing=16)
         page.update()
