@@ -500,6 +500,7 @@ def main(page: ft.Page):
             )
 
         event_buttons['INST'].tooltip = 'Instalación bloqueada: el neumático ya está EN SERVICIO'
+        event_buttons['ROT'].tooltip = 'Rotación bloqueada: funcionalidad pendiente de definición'
 
         def refresh_tire_options(rows):
             current = tire_filter.value
@@ -550,10 +551,11 @@ def main(page: ft.Page):
             rows = [r for r in base_rows if tid is None or int(r['id']) == int(tid)]
 
             # Los eventos se habilitan solo al seleccionar un neumático concreto.
-            # INST siempre queda bloqueado en esta ventana porque el neumático ya está instalado.
+            # INST permanece bloqueado porque el neumático ya está instalado.
+            # ROT permanece bloqueado hasta definir su funcionalidad operativa.
             can_open = tire_filter.value not in (None, '', ALL) and str(tire_filter.value) in valid_ids
             for code, btn in event_buttons.items():
-                btn.disabled = (not can_open) or code == 'INST'
+                btn.disabled = (not can_open) or code in ('INST', 'ROT')
 
             ops = [(r, tire_operational_data(r)) for r in rows]
             table.rows = []
@@ -731,7 +733,12 @@ def main(page: ft.Page):
 
     def movement_view():
         tire=ft.Dropdown(label='Neumático *',width=310,options=[ft.dropdown.Option(str(r['id']),f"{r['code']} | {r['serial'] or 's/serie'}") for r in query('SELECT id,code,serial FROM tires ORDER BY code')])
-        event=ft.Dropdown(label='Evento *',width=265,options=[ft.dropdown.Option(k,f'{k} - {v}') for k,v in EVENTS.items()])
+        # ROT se mantiene fuera del selector hasta definir su funcionalidad.
+        event=ft.Dropdown(
+            label='Evento *',
+            width=265,
+            options=[ft.dropdown.Option(k,f'{k} - {v}') for k,v in EVENTS.items() if k != 'ROT']
+        )
         date=ft.TextField(label='Fecha',value=dt.date.today().strftime('%d/%m/%Y'),width=165)
         equip=ft.Dropdown(label='Equipo',width=220,options=[ft.dropdown.Option(str(r['id']),r['code']) for r in query('SELECT id,code FROM equipment WHERE active=1 ORDER BY code')])
         pos=ft.TextField(label='Posición',width=120)
@@ -932,6 +939,9 @@ def main(page: ft.Page):
         def form_is_valid():
             if not tire.value or not event.value:
                 return False
+            # Seguridad adicional: ROT no puede guardarse mientras esté bloqueado.
+            if event.value == 'ROT':
+                return False
             r=current_tire()
             if not r:
                 return False
@@ -1045,6 +1055,8 @@ def main(page: ft.Page):
 
             tid=int(tire.value)
             ec=event.value
+            if ec == 'ROT':
+                return snack('ROT está bloqueado hasta definir su funcionalidad.', True)
             r=current_tire()
             if not r:
                 return snack('No se encontró el neumático seleccionado.',True)
