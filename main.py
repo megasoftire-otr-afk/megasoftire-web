@@ -510,7 +510,13 @@ def main(page: ft.Page):
         def refresh(e=None):
             selected_value = str(tire_filter.value or ALL)
 
-            # El selector de neumáticos depende solo del equipo, no del texto de búsqueda.
+            # Congelar el equipo seleccionado para que toda la actualización use
+            # exactamente el mismo valor, incluso si Flet está actualizando el UI.
+            selected_eq = str(eq_filter.value or ALL)
+
+            # El selector de neumáticos depende EXCLUSIVAMENTE del equipo elegido.
+            # Si hay un equipo concreto, solo se consultan neumáticos EN SERVICIO
+            # cuyo equipment_id coincida con ese equipo.
             options_sql = """
                 SELECT t.*,e.code equipment_code,e.brand equipment_brand,e.model equipment_model,
                        e.location equipment_location,e.vehicle_type,e.tire_size equipment_tire_size
@@ -519,16 +525,12 @@ def main(page: ft.Page):
                 WHERE t.status='SERVICIO'
             """
             options_params = []
-            if eq_filter.value not in (None, '', ALL):
+            if selected_eq not in ('', ALL):
                 options_sql += ' AND t.equipment_id=?'
-                options_params.append(int(eq_filter.value))
+                options_params.append(int(selected_eq))
             options_sql += " ORDER BY CAST(COALESCE(NULLIF(t.position,''),'999') AS INTEGER),t.code"
             option_rows = query(options_sql, tuple(options_params))
 
-            # Al cambiar de equipo, volver a "Todos los neumáticos".
-            if e is not None and getattr(e, 'control', None) is eq_filter:
-                tire_filter.value = ALL
-                selected_value = ALL
             refresh_tire_options(option_rows)
 
             valid_ids = {str(r['id']) for r in option_rows}
@@ -690,19 +692,18 @@ def main(page: ft.Page):
             page.update()
 
         def on_equipment_change(e):
-            # Flet puede actualizar visualmente el Dropdown antes de propagar
-            # su value al estado Python. Tomamos explícitamente el valor del
-            # evento para que el filtro SQL use siempre el equipo seleccionado.
-            selected = getattr(e, 'data', None)
-            if selected not in (None, ''):
-                eq_filter.value = str(selected)
-            elif getattr(e, 'control', None) is not None:
-                eq_filter.value = str(e.control.value or ALL)
+            # Tomar primero el valor REAL del control que originó el cambio.
+            # Esto evita que la interfaz muestre un equipo pero la consulta siga
+            # trabajando con "Todos los equipos".
+            control_value = getattr(getattr(e, 'control', None), 'value', None)
+            event_value = getattr(e, 'data', None)
+            selected = control_value if control_value not in (None, '') else event_value
+            eq_filter.value = str(selected or ALL)
 
-            # Cada cambio de equipo reinicia la selección de neumático y
-            # reconstruye la lista solo con neumáticos EN SERVICIO de ese equipo.
+            # Cada cambio de equipo comienza en "Todos los neumáticos" del equipo
+            # recién elegido y reconstruye completamente las opciones.
             tire_filter.value = ALL
-            refresh(e)
+            refresh(None)
 
         def on_tire_change(e):
             # Igual que con equipo, fijamos explícitamente el valor recibido
