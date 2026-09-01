@@ -546,10 +546,13 @@ def main(page: ft.Page):
             visible_tire_ids.clear()
             visible_tire_ids.extend([int(r['id']) for r in rows])
 
-            # Los eventos se habilitan solo con un neumático elegido explícitamente.
-            # INST y ROT permanecen bloqueados.
-            can_open = tire_filter.value not in (None, '', ALL) and str(tire_filter.value) in valid_ids
+            # Los eventos se habilitan únicamente cuando se selecciona un neumático
+            # concreto que pertenece al filtro de equipo actual.
+            selected_tid = str(tire_filter.value or ALL)
+            can_open = selected_tid not in ('', ALL) and selected_tid in valid_ids
             for code, btn in event_buttons.items():
+                # INST: bloqueado porque el neumático ya está en servicio.
+                # ROT: bloqueado hasta definir su funcionalidad.
                 btn.disabled = (not can_open) or code in ('INST', 'ROT')
 
             ops = [(r, tire_operational_data(r)) for r in rows]
@@ -675,8 +678,19 @@ def main(page: ft.Page):
             )
             page.update()
 
-        eq_filter.on_change = refresh
-        tire_filter.on_change = refresh
+        def on_equipment_change(e):
+            # Al cambiar de equipo, el selector de neumáticos se reconstruye
+            # exclusivamente con neumáticos EN SERVICIO de ese equipo.
+            tire_filter.value = ALL
+            refresh(e)
+
+        def on_tire_change(e):
+            # Al seleccionar un neumático concreto se actualiza la vista y
+            # se habilitan inmediatamente los eventos permitidos.
+            refresh(e)
+
+        eq_filter.on_change = on_equipment_change
+        tire_filter.on_change = on_tire_change
         search.on_change = refresh
 
         refresh()
