@@ -359,10 +359,9 @@ def main(page: ft.Page):
             prefix_icon=ft.Icons.SEARCH,
             width=260
         )
-        # Estado interno del filtro de equipo. No dependemos de que Flet
-        # sincronice inmediatamente eq_filter.value durante on_change.
+
+        # Estados independientes: el filtro por equipo NO depende del buscador.
         filter_state = {'equipment_id': ALL}
-        valid_equipment_ids = {str(r['id']) for r in eq_rows}
         eq_info = ft.Text('', size=12, color=TEXT_MUTED)
         summary = ft.Text('', size=12, color=TEXT_MUTED)
 
@@ -514,12 +513,7 @@ def main(page: ft.Page):
         def refresh(e=None):
             selected_value = str(tire_filter.value or ALL)
 
-            # Toda la actualización usa el estado interno confirmado del equipo.
-            selected_eq = str(filter_state.get('equipment_id') or ALL)
-
-            # El selector de neumáticos depende EXCLUSIVAMENTE del equipo elegido.
-            # Si hay un equipo concreto, solo se consultan neumáticos EN SERVICIO
-            # cuyo equipment_id coincida con ese equipo.
+            # El selector de neumáticos depende solo del equipo, no del texto de búsqueda.
             options_sql = """
                 SELECT t.*,e.code equipment_code,e.brand equipment_brand,e.model equipment_model,
                        e.location equipment_location,e.vehicle_type,e.tire_size equipment_tire_size
@@ -528,12 +522,16 @@ def main(page: ft.Page):
                 WHERE t.status='SERVICIO'
             """
             options_params = []
-            if selected_eq not in ('', ALL):
+            if filter_state['equipment_id'] not in (None, '', ALL):
                 options_sql += ' AND t.equipment_id=?'
-                options_params.append(int(selected_eq))
+                options_params.append(int(filter_state['equipment_id']))
             options_sql += " ORDER BY CAST(COALESCE(NULLIF(t.position,''),'999') AS INTEGER),t.code"
             option_rows = query(options_sql, tuple(options_params))
 
+            # Al cambiar de equipo, volver a "Todos los neumáticos".
+            if e is not None and getattr(e, 'control', None) is eq_filter:
+                tire_filter.value = ALL
+                selected_value = ALL
             refresh_tire_options(option_rows)
 
             valid_ids = {str(r['id']) for r in option_rows}
@@ -618,8 +616,8 @@ def main(page: ft.Page):
                 metric_card('Último evento', format_date(latest_date) or '—', ft.Icons.SWAP_HORIZ, 'Fecha más reciente'),
             ]
 
-            if selected_eq not in (None, '', ALL):
-                er = query('SELECT * FROM equipment WHERE id=?', (int(selected_eq),))
+            if filter_state['equipment_id'] not in (None, '', ALL):
+                er = query('SELECT * FROM equipment WHERE id=?', (int(filter_state['equipment_id']),))
                 if er:
                     q = er[0]
                     eq_info.value = (
@@ -668,9 +666,9 @@ def main(page: ft.Page):
                 WHERE 1=1
             """
             hp = []
-            if selected_eq not in (None, '', ALL):
+            if filter_state['equipment_id'] not in (None, '', ALL):
                 hsql += ' AND o.equipment_id=?'
-                hp.append(int(selected_eq))
+                hp.append(int(filter_state['equipment_id']))
             if tid:
                 hsql += ' AND o.tire_id=?'
                 hp.append(tid)
@@ -695,38 +693,37 @@ def main(page: ft.Page):
             page.update()
 
         def on_equipment_change(e):
-            # En Flet Web, e.control.value puede conservar momentáneamente el valor
-            # anterior. Por eso priorizamos e.data (valor NUEVO seleccionado).
-            event_value = getattr(e, 'data', None)
+            # Filtro por equipo completamente independiente del buscador.
+            # La selección real se guarda en un estado propio y todas las
+            # consultas de equipo usan exclusivamente ese valor.
             control_value = getattr(getattr(e, 'control', None), 'value', None)
-
-            selected = str(event_value or '').strip()
-            if selected not in valid_equipment_ids and selected != ALL:
-                selected = str(control_value or '').strip()
-            if selected not in valid_equipment_ids and selected != ALL:
-                selected = ALL
+            event_value = getattr(e, 'data', None)
+            selected = control_value if control_value not in (None, '') else event_value
+            selected = str(selected or ALL)
 
             filter_state['equipment_id'] = selected
             eq_filter.value = selected
 
-            # Cada cambio de equipo parte de "Todos los neumáticos" y reconstruye
-            # la lista exclusivamente con neumáticos EN SERVICIO del equipo nuevo.
+            # El cambio de equipo reinicia SOLO el selector de neumáticos.
+            # El texto de búsqueda no participa en la construcción de opciones.
             tire_filter.value = ALL
-            refresh(None)
+            refresh(e)
 
         def on_tire_change(e):
-            # Igual que con equipo, fijamos explícitamente el valor recibido
-            # antes de recalcular la vista y el estado de los botones.
-            selected = getattr(e, 'data', None)
-            if selected not in (None, ''):
-                tire_filter.value = str(selected)
-            elif getattr(e, 'control', None) is not None:
-                tire_filter.value = str(e.control.value or ALL)
+            control_value = getattr(getattr(e, 'control', None), 'value', None)
+            event_value = getattr(e, 'data', None)
+            selected = control_value if control_value not in (None, '') else event_value
+            tire_filter.value = str(selected or ALL)
+            refresh(e)
+
+        def on_search_change(e):
+            # Buscar código / serie filtra únicamente la vista visible.
+            # No modifica filter_state ni reconstruye el equipo seleccionado.
             refresh(e)
 
         eq_filter.on_change = on_equipment_change
         tire_filter.on_change = on_tire_change
-        search.on_change = refresh
+        search.on_change = on_search_change
 
         refresh()
 
