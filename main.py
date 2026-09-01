@@ -546,10 +546,11 @@ def main(page: ft.Page):
             visible_tire_ids.clear()
             visible_tire_ids.extend([int(r['id']) for r in rows])
 
-            # Los eventos se habilitan únicamente cuando se selecciona un neumático
-            # concreto que pertenece al filtro de equipo actual.
-            selected_tid = str(tire_filter.value or ALL)
-            can_open = selected_tid not in ('', ALL) and selected_tid in valid_ids
+            # Habilitar eventos cuando existe un neumático concreto activo.
+            # Puede estar seleccionado explícitamente en el desplegable o ser el
+            # único resultado visible de la búsqueda por código / serie.
+            active_tid = effective_tire_id()
+            can_open = active_tid is not None and str(active_tid) in valid_ids
             for code, btn in event_buttons.items():
                 # INST: bloqueado porque el neumático ya está en servicio.
                 # ROT: bloqueado hasta definir su funcionalidad.
