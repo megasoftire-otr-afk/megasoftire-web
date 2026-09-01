@@ -359,6 +359,10 @@ def main(page: ft.Page):
             prefix_icon=ft.Icons.SEARCH,
             width=260
         )
+        # Estado interno del filtro de equipo. No dependemos de que Flet
+        # sincronice inmediatamente eq_filter.value durante on_change.
+        filter_state = {'equipment_id': ALL}
+        valid_equipment_ids = {str(r['id']) for r in eq_rows}
         eq_info = ft.Text('', size=12, color=TEXT_MUTED)
         summary = ft.Text('', size=12, color=TEXT_MUTED)
 
@@ -510,9 +514,8 @@ def main(page: ft.Page):
         def refresh(e=None):
             selected_value = str(tire_filter.value or ALL)
 
-            # Congelar el equipo seleccionado para que toda la actualización use
-            # exactamente el mismo valor, incluso si Flet está actualizando el UI.
-            selected_eq = str(eq_filter.value or ALL)
+            # Toda la actualización usa el estado interno confirmado del equipo.
+            selected_eq = str(filter_state.get('equipment_id') or ALL)
 
             # El selector de neumáticos depende EXCLUSIVAMENTE del equipo elegido.
             # Si hay un equipo concreto, solo se consultan neumáticos EN SERVICIO
@@ -615,8 +618,8 @@ def main(page: ft.Page):
                 metric_card('Último evento', format_date(latest_date) or '—', ft.Icons.SWAP_HORIZ, 'Fecha más reciente'),
             ]
 
-            if eq_filter.value not in (None, '', ALL):
-                er = query('SELECT * FROM equipment WHERE id=?', (int(eq_filter.value),))
+            if selected_eq not in (None, '', ALL):
+                er = query('SELECT * FROM equipment WHERE id=?', (int(selected_eq),))
                 if er:
                     q = er[0]
                     eq_info.value = (
@@ -665,9 +668,9 @@ def main(page: ft.Page):
                 WHERE 1=1
             """
             hp = []
-            if eq_filter.value not in (None, '', ALL):
+            if selected_eq not in (None, '', ALL):
                 hsql += ' AND o.equipment_id=?'
-                hp.append(int(eq_filter.value))
+                hp.append(int(selected_eq))
             if tid:
                 hsql += ' AND o.tire_id=?'
                 hp.append(tid)
@@ -692,16 +695,22 @@ def main(page: ft.Page):
             page.update()
 
         def on_equipment_change(e):
-            # Tomar primero el valor REAL del control que originó el cambio.
-            # Esto evita que la interfaz muestre un equipo pero la consulta siga
-            # trabajando con "Todos los equipos".
-            control_value = getattr(getattr(e, 'control', None), 'value', None)
+            # En Flet Web, e.control.value puede conservar momentáneamente el valor
+            # anterior. Por eso priorizamos e.data (valor NUEVO seleccionado).
             event_value = getattr(e, 'data', None)
-            selected = control_value if control_value not in (None, '') else event_value
-            eq_filter.value = str(selected or ALL)
+            control_value = getattr(getattr(e, 'control', None), 'value', None)
 
-            # Cada cambio de equipo comienza en "Todos los neumáticos" del equipo
-            # recién elegido y reconstruye completamente las opciones.
+            selected = str(event_value or '').strip()
+            if selected not in valid_equipment_ids and selected != ALL:
+                selected = str(control_value or '').strip()
+            if selected not in valid_equipment_ids and selected != ALL:
+                selected = ALL
+
+            filter_state['equipment_id'] = selected
+            eq_filter.value = selected
+
+            # Cada cambio de equipo parte de "Todos los neumáticos" y reconstruye
+            # la lista exclusivamente con neumáticos EN SERVICIO del equipo nuevo.
             tire_filter.value = ALL
             refresh(None)
 
