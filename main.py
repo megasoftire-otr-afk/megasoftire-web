@@ -679,14 +679,28 @@ def main(page: ft.Page):
             page.update()
 
         def on_equipment_change(e):
-            # Al cambiar de equipo, el selector de neumáticos se reconstruye
-            # exclusivamente con neumáticos EN SERVICIO de ese equipo.
+            # Flet puede actualizar visualmente el Dropdown antes de propagar
+            # su value al estado Python. Tomamos explícitamente el valor del
+            # evento para que el filtro SQL use siempre el equipo seleccionado.
+            selected = getattr(e, 'data', None)
+            if selected not in (None, ''):
+                eq_filter.value = str(selected)
+            elif getattr(e, 'control', None) is not None:
+                eq_filter.value = str(e.control.value or ALL)
+
+            # Cada cambio de equipo reinicia la selección de neumático y
+            # reconstruye la lista solo con neumáticos EN SERVICIO de ese equipo.
             tire_filter.value = ALL
             refresh(e)
 
         def on_tire_change(e):
-            # Al seleccionar un neumático concreto se actualiza la vista y
-            # se habilitan inmediatamente los eventos permitidos.
+            # Igual que con equipo, fijamos explícitamente el valor recibido
+            # antes de recalcular la vista y el estado de los botones.
+            selected = getattr(e, 'data', None)
+            if selected not in (None, ''):
+                tire_filter.value = str(selected)
+            elif getattr(e, 'control', None) is not None:
+                tire_filter.value = str(e.control.value or ALL)
             refresh(e)
 
         eq_filter.on_change = on_equipment_change
