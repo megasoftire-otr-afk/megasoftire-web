@@ -359,9 +359,8 @@ def main(page: ft.Page):
             prefix_icon=ft.Icons.SEARCH,
             width=260
         )
-
-        # Estados independientes: el filtro por equipo NO depende del buscador.
-        filter_state = {'equipment_id': ALL}
+        # Estado exclusivo del filtro por equipo. No depende del buscador.
+        equipment_state = {'id': ALL}
         eq_info = ft.Text('', size=12, color=TEXT_MUTED)
         summary = ft.Text('', size=12, color=TEXT_MUTED)
 
@@ -522,9 +521,9 @@ def main(page: ft.Page):
                 WHERE t.status='SERVICIO'
             """
             options_params = []
-            if filter_state['equipment_id'] not in (None, '', ALL):
+            if equipment_state['id'] not in (None, '', ALL):
                 options_sql += ' AND t.equipment_id=?'
-                options_params.append(int(filter_state['equipment_id']))
+                options_params.append(int(equipment_state['id']))
             options_sql += " ORDER BY CAST(COALESCE(NULLIF(t.position,''),'999') AS INTEGER),t.code"
             option_rows = query(options_sql, tuple(options_params))
 
@@ -616,8 +615,8 @@ def main(page: ft.Page):
                 metric_card('Último evento', format_date(latest_date) or '—', ft.Icons.SWAP_HORIZ, 'Fecha más reciente'),
             ]
 
-            if filter_state['equipment_id'] not in (None, '', ALL):
-                er = query('SELECT * FROM equipment WHERE id=?', (int(filter_state['equipment_id']),))
+            if equipment_state['id'] not in (None, '', ALL):
+                er = query('SELECT * FROM equipment WHERE id=?', (int(equipment_state['id']),))
                 if er:
                     q = er[0]
                     eq_info.value = (
@@ -666,9 +665,9 @@ def main(page: ft.Page):
                 WHERE 1=1
             """
             hp = []
-            if filter_state['equipment_id'] not in (None, '', ALL):
+            if equipment_state['id'] not in (None, '', ALL):
                 hsql += ' AND o.equipment_id=?'
-                hp.append(int(filter_state['equipment_id']))
+                hp.append(int(equipment_state['id']))
             if tid:
                 hsql += ' AND o.tire_id=?'
                 hp.append(tid)
@@ -692,38 +691,54 @@ def main(page: ft.Page):
             )
             page.update()
 
+        def resolve_equipment_selection(raw):
+            """Convierte el valor recibido por Flet al id real del equipo."""
+            if raw in (None, '', ALL, 'Todos los equipos'):
+                return ALL
+            s = str(raw).strip()
+            if s == ALL or s.lower() == 'todos los equipos':
+                return ALL
+
+            # Caso normal: Flet entrega el key numérico del Option.
+            try:
+                eid = int(s)
+                found = query('SELECT id FROM equipment WHERE id=? AND active=1', (eid,))
+                if found:
+                    return str(eid)
+            except Exception:
+                pass
+
+            # Respaldo: algunas versiones pueden entregar el texto visible (SC-39).
+            found = query('SELECT id FROM equipment WHERE code=? AND active=1', (s,))
+            if found:
+                return str(found[0]['id'])
+            return ALL
+
         def on_equipment_change(e):
-            # Filtro por equipo completamente independiente del buscador.
-            # La selección real se guarda en un estado propio y todas las
-            # consultas de equipo usan exclusivamente ese valor.
-            control_value = getattr(getattr(e, 'control', None), 'value', None)
-            event_value = getattr(e, 'data', None)
-            selected = control_value if control_value not in (None, '') else event_value
-            selected = str(selected or ALL)
+            # La selección nueva del evento tiene prioridad sobre el value anterior
+            # del control. Así el filtro Equipo -> Neumáticos queda independiente.
+            raw = getattr(e, 'data', None)
+            if raw in (None, '') and getattr(e, 'control', None) is not None:
+                raw = e.control.value
 
-            filter_state['equipment_id'] = selected
-            eq_filter.value = selected
-
-            # El cambio de equipo reinicia SOLO el selector de neumáticos.
-            # El texto de búsqueda no participa en la construcción de opciones.
+            equipment_state['id'] = resolve_equipment_selection(raw)
+            eq_filter.value = equipment_state['id']
             tire_filter.value = ALL
-            refresh(e)
+            refresh()
 
         def on_tire_change(e):
-            control_value = getattr(getattr(e, 'control', None), 'value', None)
-            event_value = getattr(e, 'data', None)
-            selected = control_value if control_value not in (None, '') else event_value
-            tire_filter.value = str(selected or ALL)
-            refresh(e)
-
-        def on_search_change(e):
-            # Buscar código / serie filtra únicamente la vista visible.
-            # No modifica filter_state ni reconstruye el equipo seleccionado.
+            # Igual que con equipo, fijamos explícitamente el valor recibido
+            # antes de recalcular la vista y el estado de los botones.
+            selected = getattr(e, 'data', None)
+            if selected not in (None, ''):
+                tire_filter.value = str(selected)
+            elif getattr(e, 'control', None) is not None:
+                tire_filter.value = str(e.control.value or ALL)
             refresh(e)
 
         eq_filter.on_change = on_equipment_change
         tire_filter.on_change = on_tire_change
-        search.on_change = on_search_change
+        search.on_change = refresh
 
         refresh()
 
