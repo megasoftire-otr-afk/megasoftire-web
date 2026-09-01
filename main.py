@@ -404,8 +404,18 @@ def main(page: ft.Page):
                 return None
 
         def effective_tire_id():
-            """Devuelve solo el neumático seleccionado explícitamente."""
-            return selected_tire_id()
+            """Devuelve el neumático activo.
+
+            Prioridad:
+            1) neumático seleccionado explícitamente en el desplegable;
+            2) si la búsqueda/filtros dejan un único neumático visible, usar ese.
+            """
+            tid = selected_tire_id()
+            if tid is not None:
+                return tid
+            if len(visible_tire_ids) == 1:
+                return visible_tire_ids[0]
+            return None
 
         def tire_operational_data(r):
             tid = r['id']
