@@ -351,6 +351,7 @@ def main(page: ft.Page):
         equipment_by_code = {str(r['code']).strip().upper(): str(r['id']) for r in eq_rows}
         equipment_ids = {str(r['id']) for r in eq_rows}
         equipment_state = {'id': ALL}
+        equipment_rows_state = {'rows': None}
         tire_filter = ft.Dropdown(
             label='Neumático',
             width=280,
@@ -406,17 +407,19 @@ def main(page: ft.Page):
             except Exception:
                 return None
 
-        def effective_tire_id():
+        def effective_tire_id(allow_search_auto=True):
             """Devuelve el neumático activo.
 
-            Prioridad:
-            1) neumático seleccionado explícitamente en el desplegable;
-            2) si la búsqueda/filtros dejan un único neumático visible, usar ese.
+            - Un neumático elegido manualmente siempre es válido.
+            - La selección automática por único resultado solo se permite
+              cuando existe texto en Buscar código / serie.
+            - Un filtro de equipo, por sí solo, nunca activa eventos.
             """
             tid = selected_tire_id()
             if tid is not None:
                 return tid
-            if len(visible_tire_ids) == 1:
+            term = (search.value or '').strip()
+            if allow_search_auto and term and len(visible_tire_ids) == 1:
                 return visible_tire_ids[0]
             return None
 
@@ -513,20 +516,25 @@ def main(page: ft.Page):
         def refresh(e=None):
             selected_value = str(tire_filter.value or ALL)
 
-            # El selector de neumáticos depende solo del equipo, no del texto de búsqueda.
-            options_sql = """
-                SELECT t.*,e.code equipment_code,e.brand equipment_brand,e.model equipment_model,
-                       e.location equipment_location,e.vehicle_type,e.tire_size equipment_tire_size
-                FROM tires t
-                LEFT JOIN equipment e ON e.id=t.equipment_id
-                WHERE t.status='SERVICIO'
-            """
-            options_params = []
-            if equipment_state['id'] not in (None, '', ALL):
-                options_sql += ' AND t.equipment_id=?'
-                options_params.append(int(equipment_state['id']))
-            options_sql += " ORDER BY CAST(COALESCE(NULLIF(t.position,''),'999') AS INTEGER),t.code"
-            option_rows = query(options_sql, tuple(options_params))
+            # El selector Neumático depende EXCLUSIVAMENTE del equipo seleccionado.
+            # Si on_equipment_change ya construyó la lista, reutilizamos exactamente
+            # esos registros y no volvemos a mezclarlos con el buscador.
+            if equipment_rows_state['rows'] is not None:
+                option_rows = list(equipment_rows_state['rows'])
+            else:
+                options_sql = """
+                    SELECT t.*,e.code equipment_code,e.brand equipment_brand,e.model equipment_model,
+                           e.location equipment_location,e.vehicle_type,e.tire_size equipment_tire_size
+                    FROM tires t
+                    LEFT JOIN equipment e ON e.id=t.equipment_id
+                    WHERE t.status='SERVICIO'
+                """
+                options_params = []
+                if equipment_state['id'] not in (None, '', ALL):
+                    options_sql += ' AND t.equipment_id=?'
+                    options_params.append(int(equipment_state['id']))
+                options_sql += " ORDER BY CAST(COALESCE(NULLIF(t.position,''),'999') AS INTEGER),t.code"
+                option_rows = query(options_sql, tuple(options_params))
 
             refresh_tire_options(option_rows)
 
@@ -555,10 +563,11 @@ def main(page: ft.Page):
             visible_tire_ids.clear()
             visible_tire_ids.extend([int(r['id']) for r in rows])
 
-            # Habilitar eventos cuando existe un neumático concreto activo.
-            # Puede estar seleccionado explícitamente en el desplegable o ser el
-            # único resultado visible de la búsqueda por código / serie.
-            active_tid = effective_tire_id()
+            # Habilitar eventos solo si:
+            # 1) se seleccionó manualmente un neumático, o
+            # 2) Buscar código / serie dejó un único resultado.
+            # Elegir únicamente un equipo NO activa eventos.
+            active_tid = effective_tire_id(allow_search_auto=True)
             can_open = active_tid is not None and str(active_tid) in valid_ids
             for code, btn in event_buttons.items():
                 # INST: bloqueado porque el neumático ya está en servicio.
@@ -709,11 +718,21 @@ def main(page: ft.Page):
             return ALL
 
         def on_equipment_change(e):
-            # Flujo exclusivo Equipo -> Neumáticos. No depende del buscador.
+            """Cambio de equipo totalmente independiente del buscador.
+
+            Flujo:
+            equipo -> limpiar neumático -> bloquear eventos -> consultar solo ese
+            equipment_id -> reconstruir selector -> refrescar vista.
+            """
             eid = resolve_equipment_from_event(e)
             equipment_state['id'] = eid
             eq_filter.value = eid
+
+            # Nunca conservar un neumático seleccionado del equipo anterior.
             tire_filter.value = ALL
+            visible_tire_ids.clear()
+            for code, btn in event_buttons.items():
+                btn.disabled = True
 
             sql = """
                 SELECT t.*,e.code equipment_code,e.brand equipment_brand,e.model equipment_model,
@@ -729,12 +748,16 @@ def main(page: ft.Page):
             sql += " ORDER BY CAST(COALESCE(NULLIF(t.position,''),'999') AS INTEGER),t.code"
             option_rows = query(sql, tuple(params))
 
+            # Guardamos exactamente la lista del equipo; refresh no la recalcula
+            # a partir del buscador ni de un neumático anterior.
+            equipment_rows_state['rows'] = list(option_rows)
             tire_filter.options = [ft.dropdown.Option(key=ALL, text='Todos los neumáticos')] + [
                 ft.dropdown.Option(
                     key=str(r['id']),
                     text=f"{r['code']} | P{r['position'] or '-'} | {r['serial'] or 's/serie'}"
                 ) for r in option_rows
             ]
+            tire_filter.value = ALL
             refresh()
 
         def on_tire_change(e):
