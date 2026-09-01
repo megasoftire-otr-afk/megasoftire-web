@@ -345,22 +345,23 @@ def main(page: ft.Page):
             label='Equipo en servicio',
             width=220,
             value=ALL,
-            options=[ft.dropdown.Option(ALL, 'Todos los equipos')] +
-                    [ft.dropdown.Option(str(r['id']), r['code']) for r in eq_rows]
+            options=[ft.dropdown.Option(key=ALL, text='Todos los equipos')] +
+                    [ft.dropdown.Option(key=str(r['id']), text=r['code']) for r in eq_rows]
         )
+        equipment_by_code = {str(r['code']).strip().upper(): str(r['id']) for r in eq_rows}
+        equipment_ids = {str(r['id']) for r in eq_rows}
+        equipment_state = {'id': ALL}
         tire_filter = ft.Dropdown(
             label='Neumático',
             width=280,
             value=ALL,
-            options=[ft.dropdown.Option(ALL, 'Todos los neumáticos')]
+            options=[ft.dropdown.Option(key=ALL, text='Todos los neumáticos')]
         )
         search = ft.TextField(
             label='Buscar código / serie',
             prefix_icon=ft.Icons.SEARCH,
             width=260
         )
-        # Estado exclusivo del filtro por equipo. No depende del buscador.
-        equipment_state = {'id': ALL}
         eq_info = ft.Text('', size=12, color=TEXT_MUTED)
         summary = ft.Text('', size=12, color=TEXT_MUTED)
 
@@ -501,9 +502,9 @@ def main(page: ft.Page):
 
         def refresh_tire_options(rows):
             current = tire_filter.value
-            opts = [ft.dropdown.Option(ALL, 'Todos los neumáticos')]
+            opts = [ft.dropdown.Option(key=ALL, text='Todos los neumáticos')]
             for r in rows:
-                opts.append(ft.dropdown.Option(str(r['id']), f"{r['code']} | P{r['position'] or '-'} | {r['serial'] or 's/serie'}"))
+                opts.append(ft.dropdown.Option(key=str(r['id']), text=f"{r['code']} | P{r['position'] or '-'} | {r['serial'] or 's/serie'}"))
             tire_filter.options = opts
             valid = set([ALL] + [str(r['id']) for r in rows])
             if current not in valid:
@@ -527,10 +528,6 @@ def main(page: ft.Page):
             options_sql += " ORDER BY CAST(COALESCE(NULLIF(t.position,''),'999') AS INTEGER),t.code"
             option_rows = query(options_sql, tuple(options_params))
 
-            # Al cambiar de equipo, volver a "Todos los neumáticos".
-            if e is not None and getattr(e, 'control', None) is eq_filter:
-                tire_filter.value = ALL
-                selected_value = ALL
             refresh_tire_options(option_rows)
 
             valid_ids = {str(r['id']) for r in option_rows}
@@ -691,39 +688,53 @@ def main(page: ft.Page):
             )
             page.update()
 
-        def resolve_equipment_selection(raw):
-            """Convierte el valor recibido por Flet al id real del equipo."""
-            if raw in (None, '', ALL, 'Todos los equipos'):
-                return ALL
-            s = str(raw).strip()
-            if s == ALL or s.lower() == 'todos los equipos':
-                return ALL
+        def resolve_equipment_from_event(e):
+            candidates = []
+            ctrl = getattr(e, 'control', None)
+            if ctrl is not None:
+                candidates.append(getattr(ctrl, 'value', None))
+            candidates.append(getattr(e, 'data', None))
 
-            # Caso normal: Flet entrega el key numérico del Option.
-            try:
-                eid = int(s)
-                found = query('SELECT id FROM equipment WHERE id=? AND active=1', (eid,))
-                if found:
-                    return str(eid)
-            except Exception:
-                pass
-
-            # Respaldo: algunas versiones pueden entregar el texto visible (SC-39).
-            found = query('SELECT id FROM equipment WHERE code=? AND active=1', (s,))
-            if found:
-                return str(found[0]['id'])
+            for raw in candidates:
+                if raw in (None, ''):
+                    continue
+                val = str(raw).strip()
+                if val == ALL or val.lower() == 'todos los equipos':
+                    return ALL
+                if val in equipment_ids:
+                    return val
+                eid = equipment_by_code.get(val.upper())
+                if eid:
+                    return eid
             return ALL
 
         def on_equipment_change(e):
-            # La selección nueva del evento tiene prioridad sobre el value anterior
-            # del control. Así el filtro Equipo -> Neumáticos queda independiente.
-            raw = getattr(e, 'data', None)
-            if raw in (None, '') and getattr(e, 'control', None) is not None:
-                raw = e.control.value
-
-            equipment_state['id'] = resolve_equipment_selection(raw)
-            eq_filter.value = equipment_state['id']
+            # Flujo exclusivo Equipo -> Neumáticos. No depende del buscador.
+            eid = resolve_equipment_from_event(e)
+            equipment_state['id'] = eid
+            eq_filter.value = eid
             tire_filter.value = ALL
+
+            sql = """
+                SELECT t.*,e.code equipment_code,e.brand equipment_brand,e.model equipment_model,
+                       e.location equipment_location,e.vehicle_type,e.tire_size equipment_tire_size
+                FROM tires t
+                LEFT JOIN equipment e ON e.id=t.equipment_id
+                WHERE t.status='SERVICIO'
+            """
+            params = []
+            if eid != ALL:
+                sql += ' AND t.equipment_id=?'
+                params.append(int(eid))
+            sql += " ORDER BY CAST(COALESCE(NULLIF(t.position,''),'999') AS INTEGER),t.code"
+            option_rows = query(sql, tuple(params))
+
+            tire_filter.options = [ft.dropdown.Option(key=ALL, text='Todos los neumáticos')] + [
+                ft.dropdown.Option(
+                    key=str(r['id']),
+                    text=f"{r['code']} | P{r['position'] or '-'} | {r['serial'] or 's/serie'}"
+                ) for r in option_rows
+            ]
             refresh()
 
         def on_tire_change(e):
