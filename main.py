@@ -302,19 +302,31 @@ def main(page: ft.Page):
                 options=catalog_options(category)
             )
             manual = ft.TextField(
-                label=f'Digitar {label.lower()} *',
-                width=width,
-                visible=False
+                label=f'Nueva {label.lower()} *',
+                hint_text='Digite el nuevo valor',
+                width=width
             )
+            holder = ft.Container(width=width, content=dropdown)
 
-            def on_change(e):
-                manual.visible = (dropdown.value == DIGITAR_NUEVO)
-                if not manual.visible:
-                    manual.value = ''
+            def show_dropdown():
+                manual.value=''
+                dropdown.value=None
+                holder.content=dropdown
                 page.update()
 
-            dropdown.on_change = on_change
-            return dropdown, manual
+            def on_dropdown_change(e):
+                if dropdown.value == DIGITAR_NUEVO:
+                    holder.content=manual
+                    page.update()
+
+            def on_manual_submit(e):
+                # Si se deja vacío y se presiona Enter, vuelve al desplegable.
+                if not (manual.value or '').strip():
+                    show_dropdown()
+
+            dropdown.on_change = on_dropdown_change
+            manual.on_submit = on_manual_submit
+            return dropdown, manual, holder
 
         def catalog_value(dropdown, manual):
             if dropdown.value == DIGITAR_NUEVO:
@@ -337,33 +349,31 @@ def main(page: ft.Page):
             )
             return clean
 
-        code=ft.TextField(label='Código *',width=170,value=(str(prefill_code) if prefill_code else ''))
-        serial=ft.TextField(label='Serie Fab. *',width=190)
-        entry_date=ft.TextField(label='Fecha de ingreso *',value=dt.date.today().strftime('%d/%m/%Y'),width=175)
-        cost_usd=ft.TextField(label='Costo $ *',width=145)
-        brand, brand_manual = make_catalog_field('Marca', 'brand', 180)
-        size, size_manual = make_catalog_field('Medida', 'size', 175)
-        design, design_manual = make_catalog_field('Diseño', 'design', 180)
-        compound, compound_manual = make_catalog_field('Compuesto', 'compound', 180)
-        supplier, supplier_manual = make_catalog_field('Proveedor', 'supplier', 195)
+        FIELD_W = 220
 
-        brand_box = ft.Column([brand, brand_manual], spacing=4, width=180)
-        size_box = ft.Column([size, size_manual], spacing=4, width=175)
-        design_box = ft.Column([design, design_manual], spacing=4, width=180)
-        compound_box = ft.Column([compound, compound_manual], spacing=4, width=180)
-        supplier_box = ft.Column([supplier, supplier_manual], spacing=4, width=195)
-        pressure=ft.TextField(label='Presión recomendada *',width=190)
-        tread_outer_new=ft.TextField(label='Profundidad nueva EXT *',width=205)
-        tread_inner_new=ft.TextField(label='Profundidad nueva INT *',width=205)
-        retirement_tread=ft.TextField(label='Profundidad de retiro (mm) *',width=220)
-        projected_life_target=ft.TextField(label='Proyección de vida (h) *',width=210)
+        code=ft.TextField(label='Código *',width=FIELD_W,value=(str(prefill_code) if prefill_code else ''))
+        serial=ft.TextField(label='Serie Fab. *',width=FIELD_W)
+        entry_date=ft.TextField(label='Fecha de ingreso *',value=dt.date.today().strftime('%d/%m/%Y'),width=FIELD_W)
+        cost_usd=ft.TextField(label='Costo $ *',width=FIELD_W)
+
+        brand, brand_manual, brand_box = make_catalog_field('Marca', 'brand', FIELD_W)
+        size, size_manual, size_box = make_catalog_field('Medida', 'size', FIELD_W)
+        design, design_manual, design_box = make_catalog_field('Diseño', 'design', FIELD_W)
+        compound, compound_manual, compound_box = make_catalog_field('Compuesto', 'compound', FIELD_W)
+        supplier, supplier_manual, supplier_box = make_catalog_field('Proveedor', 'supplier', FIELD_W)
+
+        pressure=ft.TextField(label='Presión recomendada *',width=FIELD_W)
+        tread_outer_new=ft.TextField(label='Profundidad nueva EXT *',width=FIELD_W)
+        tread_inner_new=ft.TextField(label='Profundidad nueva INT *',width=FIELD_W)
+        retirement_tread=ft.TextField(label='Profundidad de retiro (mm) *',width=FIELD_W)
+        projected_life_target=ft.TextField(label='Proyección de vida (h) *',width=FIELD_W)
 
         construction=ft.Dropdown(
-            label='Tipo de construcción *', width=210,
+            label='Tipo de construcción *', width=FIELD_W,
             options=[ft.dropdown.Option('Radial'),ft.dropdown.Option('Convencional')]
         )
         condition=ft.Dropdown(
-            label='Condición *', width=180,
+            label='Condición *', width=FIELD_W,
             options=[ft.dropdown.Option('Nueva'),ft.dropdown.Option('Reencauchada')]
         )
 
@@ -542,16 +552,16 @@ def main(page: ft.Page):
                 ctrl.value=''
             entry_date.value=dt.date.today().strftime('%d/%m/%Y')
 
-            for dropdown, manual in [
-                (brand, brand_manual),
-                (size, size_manual),
-                (design, design_manual),
-                (compound, compound_manual),
-                (supplier, supplier_manual),
+            for dropdown, manual, holder in [
+                (brand, brand_manual, brand_box),
+                (size, size_manual, size_box),
+                (design, design_manual, design_box),
+                (compound, compound_manual, compound_box),
+                (supplier, supplier_manual, supplier_box),
             ]:
                 dropdown.value=None
                 manual.value=''
-                manual.visible=False
+                holder.content=dropdown
 
             construction.value=None
             condition.value=None
@@ -618,6 +628,16 @@ def main(page: ft.Page):
             compound_value = save_catalog_value('compound', compound_value)
             supplier_value = save_catalog_value('supplier', supplier_value)
 
+            def refresh_catalog_dropdowns():
+                for category, dropdown in [
+                    ('brand', brand),
+                    ('size', size),
+                    ('design', design),
+                    ('compound', compound),
+                    ('supplier', supplier),
+                ]:
+                    dropdown.options = catalog_options(category)
+
             try:
                 execute(
                     """INSERT INTO tires(
@@ -649,6 +669,7 @@ def main(page: ft.Page):
                         life_target,
                     )
                 )
+                refresh_catalog_dropdowns()
                 clear_form()
                 snack('Neumático registrado correctamente.')
                 refresh()
@@ -673,17 +694,18 @@ def main(page: ft.Page):
                 ft.ElevatedButton('Registrar neumático',icon=ft.Icons.SAVE,on_click=save)
             ])))
 
-        blocks.append(card(ft.Column([
-            ft.Row([
-                ft.Text('Listado de neumáticos registrados',size=17,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
-                ft.Container(expand=True),search
-            ],wrap=True),
-            summary,
-            ft.Row(
-                [ft.Container(content=master_table, width=1880)],
-                scroll=ft.ScrollMode.ALWAYS
-            )
-        ])))
+        if status_filter:
+            blocks.append(card(ft.Column([
+                ft.Row([
+                    ft.Text('Listado de neumáticos registrados',size=17,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
+                    ft.Container(expand=True),search
+                ],wrap=True),
+                summary,
+                ft.Row(
+                    [ft.Container(content=master_table, width=1880)],
+                    scroll=ft.ScrollMode.ALWAYS
+                )
+            ])))
 
         blocks.append(card(ft.Column([
             ft.Text('Historial operativo',size=17,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
