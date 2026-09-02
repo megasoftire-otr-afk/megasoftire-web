@@ -312,7 +312,7 @@ def main(page: ft.Page):
                     no_wrap=True,
                 ),
                 width=width,
-                padding=ft.padding.symmetric(horizontal=6, vertical=8),
+                padding=ft.Padding(left=6, top=8, right=6, bottom=8),
             )
 
         master_header = ft.Row(
