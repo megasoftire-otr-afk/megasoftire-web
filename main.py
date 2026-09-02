@@ -1479,6 +1479,7 @@ def main(page: ft.Page):
 
             snack(f'Evento {ec} registrado correctamente.')
             refresh()
+            update_event_button_states(tid)
             save_btn.disabled = True
             page.update()
 
@@ -1726,6 +1727,7 @@ def main(page: ft.Page):
             movement_form.visible = False
             event.value = None
             load_foxpro_ficha(tid)
+            update_event_button_states(tid)
             refresh()
             movement_form.visible = False
             page.update()
@@ -1749,6 +1751,7 @@ def main(page: ft.Page):
                 search_result.value = None
                 tire.value = None
                 clear_foxpro_ficha()
+                update_event_button_states(None)
                 page.update()
                 return
 
@@ -1770,12 +1773,14 @@ def main(page: ft.Page):
                 search_result.visible = True
                 search_result.value = None
                 clear_foxpro_ficha()
+                update_event_button_states(None)
                 page.update()
             else:
                 search_result.visible = False
                 search_result.value = None
                 tire.value = None
                 clear_foxpro_ficha()
+                update_event_button_states(None)
                 register_missing_btn.visible = True
                 snack('Código no registrado. Puede registrar el neumático desde el botón habilitado.', True)
                 page.update()
@@ -1802,6 +1807,38 @@ def main(page: ft.Page):
         }
         event_buttons_local = {}
 
+        def update_event_button_states(tid=None):
+            # Regla operativa:
+            # - Registrado pero sin instalar: solo INST habilitado.
+            # - Instalado en un equipo: INST bloqueado y eventos operativos habilitados.
+            # - ROT permanece bloqueado hasta definir su funcionalidad.
+            if not tid:
+                for code, btn in event_buttons_local.items():
+                    btn.disabled = True
+                return
+
+            rows = query(
+                """SELECT id,equipment_id,position,status
+                   FROM tires
+                   WHERE id=?""",
+                (int(tid),)
+            )
+            if not rows:
+                for code, btn in event_buttons_local.items():
+                    btn.disabled = True
+                return
+
+            r = rows[0]
+            installed = r['equipment_id'] is not None and str(r['position'] or '').strip() != ''
+
+            for code, btn in event_buttons_local.items():
+                if code == 'ROT':
+                    btn.disabled = True
+                elif installed:
+                    btn.disabled = (code == 'INST')
+                else:
+                    btn.disabled = (code != 'INST')
+
         def open_event_form(ec):
             if not tire.value:
                 return snack('Primero busque y seleccione un neumático.', True)
@@ -1819,13 +1856,14 @@ def main(page: ft.Page):
                 ec,
                 icon=event_icons_local[ec],
                 tooltip=EVENTS.get(ec, ec),
-                disabled=(ec == 'ROT'),
+                disabled=True,
                 on_click=lambda e, code=ec: open_event_form(code)
             )
 
         if pre_tire:
             search_tire.value = str(current_tire()['code']) if current_tire() else ''
             load_foxpro_ficha(pre_tire)
+            update_event_button_states(pre_tire)
 
         left_panel = ft.Column([
             card(ft.Column([
