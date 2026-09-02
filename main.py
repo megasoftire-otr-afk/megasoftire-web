@@ -294,35 +294,52 @@ def main(page: ft.Page):
             ]
 
         def make_catalog_field(label, category, width):
-            dropdown = ft.Dropdown(
+            # Un solo cuadro: permite escribir y al mismo tiempo filtra/autocompleta
+            # con los valores ya guardados en el catálogo.
+            return ft.Dropdown(
                 label=f'{label} *',
                 width=width,
+                editable=True,
+                enable_filter=True,
+                enable_search=True,
                 options=catalog_options(category)
             )
-            manual = ft.TextField(
-                label=f'Nuevo {label.lower()}',
-                hint_text='Solo si no aparece en la lista',
-                width=width
-            )
-            return dropdown, manual
 
-        def catalog_value(dropdown, manual):
-            # Prioridad: valor seleccionado del catálogo.
-            # Si no se seleccionó ninguno, toma el valor nuevo digitado.
+        def normalize_catalog_key(value):
+            # Para detectar equivalencias como:
+            # GoodYear / GOODYEAR / GOOD YEAR
+            return ''.join(str(value or '').strip().lower().split())
+
+        def catalog_value(dropdown):
+            typed = (getattr(dropdown, 'text', None) or '').strip()
             selected = (dropdown.value or '').strip()
-            typed = (manual.value or '').strip()
-            return selected if selected else typed
+            raw = typed if typed else selected
+            if not raw:
+                return ''
+
+            key = normalize_catalog_key(raw)
+            for option in dropdown.options or []:
+                option_key = getattr(option, 'key', None)
+                option_text = getattr(option, 'text', None)
+                candidate = str(option_key or option_text or '').strip()
+                if candidate and normalize_catalog_key(candidate) == key:
+                    return candidate
+            return raw
 
         def save_catalog_value(category, value):
             clean = (value or '').strip()
             if not clean:
                 return clean
-            existing = query(
-                'SELECT value FROM tire_catalogs WHERE category=? AND value=? COLLATE NOCASE LIMIT 1',
-                (category, clean)
-            )
-            if existing:
-                return str(existing[0]['value'])
+
+            wanted_key = normalize_catalog_key(clean)
+            for row in query(
+                'SELECT value FROM tire_catalogs WHERE category=?',
+                (category,)
+            ):
+                existing_value = str(row['value']).strip()
+                if normalize_catalog_key(existing_value) == wanted_key:
+                    return existing_value
+
             execute(
                 'INSERT OR IGNORE INTO tire_catalogs(category,value) VALUES(?,?)',
                 (category, clean)
@@ -336,17 +353,11 @@ def main(page: ft.Page):
         entry_date=ft.TextField(label='Fecha de ingreso *',value=dt.date.today().strftime('%d/%m/%Y'),width=FIELD_W)
         cost_usd=ft.TextField(label='Costo $ *',width=FIELD_W)
 
-        brand, brand_manual = make_catalog_field('Marca', 'brand', FIELD_W)
-        size, size_manual = make_catalog_field('Medida', 'size', FIELD_W)
-        design, design_manual = make_catalog_field('Diseño', 'design', FIELD_W)
-        compound, compound_manual = make_catalog_field('Compuesto', 'compound', FIELD_W)
-        supplier, supplier_manual = make_catalog_field('Proveedor', 'supplier', FIELD_W)
-
-        brand_box = ft.Column([brand, brand_manual], spacing=6, width=FIELD_W)
-        size_box = ft.Column([size, size_manual], spacing=6, width=FIELD_W)
-        design_box = ft.Column([design, design_manual], spacing=6, width=FIELD_W)
-        compound_box = ft.Column([compound, compound_manual], spacing=6, width=FIELD_W)
-        supplier_box = ft.Column([supplier, supplier_manual], spacing=6, width=FIELD_W)
+        brand = make_catalog_field('Marca', 'brand', FIELD_W)
+        size = make_catalog_field('Medida', 'size', FIELD_W)
+        design = make_catalog_field('Diseño', 'design', FIELD_W)
+        compound = make_catalog_field('Compuesto', 'compound', FIELD_W)
+        supplier = make_catalog_field('Proveedor', 'supplier', FIELD_W)
 
         pressure=ft.TextField(label='Presión recomendada *',width=FIELD_W)
         tread_outer_new=ft.TextField(label='Profundidad nueva EXT *',width=FIELD_W)
@@ -538,15 +549,12 @@ def main(page: ft.Page):
                 ctrl.value=''
             entry_date.value=dt.date.today().strftime('%d/%m/%Y')
 
-            for dropdown, manual in [
-                (brand, brand_manual),
-                (size, size_manual),
-                (design, design_manual),
-                (compound, compound_manual),
-                (supplier, supplier_manual),
-            ]:
+            for dropdown in [brand, size, design, compound, supplier]:
                 dropdown.value=None
-                manual.value=''
+                try:
+                    dropdown.text=''
+                except Exception:
+                    pass
 
             construction.value=None
             condition.value=None
@@ -558,25 +566,11 @@ def main(page: ft.Page):
                 if value is None or not str(value).strip():
                     missing.append(label)
 
-            catalog_pairs = [
-                ('Marca', brand, brand_manual),
-                ('Medida', size, size_manual),
-                ('Diseño', design, design_manual),
-                ('Compuesto', compound, compound_manual),
-                ('Proveedor', supplier, supplier_manual),
-            ]
-            for label, dropdown, manual in catalog_pairs:
-                if (dropdown.value or '').strip() and (manual.value or '').strip():
-                    return snack(
-                        f'{label}: seleccione del desplegable o digite un valor nuevo, no ambos.',
-                        True
-                    )
-
-            brand_value = catalog_value(brand, brand_manual)
-            size_value = catalog_value(size, size_manual)
-            design_value = catalog_value(design, design_manual)
-            compound_value = catalog_value(compound, compound_manual)
-            supplier_value = catalog_value(supplier, supplier_manual)
+            brand_value = catalog_value(brand)
+            size_value = catalog_value(size)
+            design_value = catalog_value(design)
+            compound_value = catalog_value(compound)
+            supplier_value = catalog_value(supplier)
 
             for label, value in [
                 ('Marca', brand_value),
@@ -686,8 +680,8 @@ def main(page: ft.Page):
                 ft.Text('Todos los campos son obligatorios.',size=11,color=TEXT_MUTED),
 
                 ft.Row([code,serial,entry_date,cost_usd],wrap=True,spacing=10,run_spacing=10),
-                ft.Row([brand_box,size_box,design_box,compound_box],wrap=True,spacing=10,run_spacing=10),
-                ft.Row([supplier_box,pressure,tread_outer_new,tread_inner_new],wrap=True,spacing=10,run_spacing=10),
+                ft.Row([brand,size,design,compound],wrap=True,spacing=10,run_spacing=10),
+                ft.Row([supplier,pressure,tread_outer_new,tread_inner_new],wrap=True,spacing=10,run_spacing=10),
                 ft.Row([retirement_tread,projected_life_target,construction,condition],wrap=True,spacing=10,run_spacing=10),
 
                 ft.ElevatedButton('Registrar neumático',icon=ft.Icons.SAVE,on_click=save)
