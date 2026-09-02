@@ -17,8 +17,8 @@ MODULES = [
     ('Retén / Stand-by', ft.Icons.INVENTORY_2_OUTLINED),
     ('Fuera de servicio / baja', ft.Icons.DELETE_OUTLINE),
     ('Inventarios y consumos', ft.Icons.WAREHOUSE_OUTLINED),
-    ('Administración', ft.Icons.ADMIN_PANEL_SETTINGS_OUTLINED),
-    ('Tablas del neumático', ft.Icons.TABLE_CHART_OUTLINED),
+    ('Administración de equipos', ft.Icons.ADMIN_PANEL_SETTINGS_OUTLINED),
+    ('Registro maestro de neumáticos', ft.Icons.TABLE_CHART_OUTLINED),
     ('Reportes Excel', ft.Icons.ASSESSMENT_OUTLINED),
 ]
 
@@ -181,14 +181,95 @@ def main(page: ft.Page):
         page.update()
 
     def equipment_view():
-        code=ft.TextField(label='Código de equipo *',width=180)
-        brand=ft.TextField(label='Marca',width=180)
-        model=ft.TextField(label='Modelo',width=180)
-        location=ft.TextField(label='Ubicación',width=200)
-        kind=ft.Dropdown(label='Tipo',width=180,options=[ft.dropdown.Option(x) for x in ['Scoop','Dumper','Jumbo','Scaler','Camión','Cargador','Otro']])
-        size=ft.TextField(label='Medida neumático',width=190)
+        # Administración maestra de equipos. Se conservan la tabla equipment
+        # y todos sus registros existentes; solo se amplía con tipo de motor.
+        existing_cols = {r['name'] for r in query("PRAGMA table_info(equipment)")}
+        if 'motor_type' not in existing_cols:
+            execute('ALTER TABLE equipment ADD COLUMN motor_type TEXT')
+
+        # Catálogos dinámicos para evitar variantes de escritura y permitir
+        # autocompletar/autoguardar en un solo campo.
+        execute("""
+            CREATE TABLE IF NOT EXISTS equipment_catalogs(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                category TEXT NOT NULL,
+                value TEXT COLLATE NOCASE NOT NULL,
+                UNIQUE(category, value)
+            )
+        """)
+
+        catalog_defaults = {
+            'vehicle_type': ['Scoop','Dumper','Jumbo','Scaler','Camión','Cargador','Otro'],
+            'motor_type': ['Diésel','Eléctrico','Híbrido','Otro'],
+        }
+        for category, values in catalog_defaults.items():
+            for value in values:
+                execute('INSERT OR IGNORE INTO equipment_catalogs(category,value) VALUES(?,?)',(category,value))
+
+        # Incorporar al catálogo los valores que ya existen en la flota.
+        historic_fields = {
+            'brand': 'brand',
+            'model': 'model',
+            'location': 'location',
+            'vehicle_type': 'vehicle_type',
+            'motor_type': 'motor_type',
+        }
+        for category, field_name in historic_fields.items():
+            for row in query(
+                f"SELECT DISTINCT {field_name} value FROM equipment "
+                f"WHERE {field_name} IS NOT NULL AND TRIM({field_name})<>''"
+            ):
+                execute('INSERT OR IGNORE INTO equipment_catalogs(category,value) VALUES(?,?)',
+                        (category,str(row['value']).strip()))
+
+        def catalog_options(category):
+            return [ft.dropdown.Option(str(r['value'])) for r in query(
+                'SELECT value FROM equipment_catalogs WHERE category=? ORDER BY value COLLATE NOCASE',(category,))]
+
+        def make_catalog_field(label, category, width=190):
+            return ft.Dropdown(label=label,width=width,editable=True,enable_filter=True,enable_search=True,
+                               options=catalog_options(category))
+
+        def normalize_catalog_key(value):
+            return ''.join(str(value or '').strip().lower().split())
+
+        def catalog_value(dropdown):
+            typed=(getattr(dropdown,'text',None) or '').strip()
+            selected=(dropdown.value or '').strip()
+            raw=typed if typed else selected
+            if not raw: return ''
+            key=normalize_catalog_key(raw)
+            for option in dropdown.options or []:
+                candidate=str(getattr(option,'key',None) or getattr(option,'text',None) or '').strip()
+                if candidate and normalize_catalog_key(candidate)==key:
+                    return candidate
+            return raw
+
+        def save_catalog_value(category,value):
+            clean=(value or '').strip()
+            if not clean: return clean
+            wanted=normalize_catalog_key(clean)
+            for row in query('SELECT value FROM equipment_catalogs WHERE category=?',(category,)):
+                existing=str(row['value']).strip()
+                if normalize_catalog_key(existing)==wanted:
+                    return existing
+            execute('INSERT OR IGNORE INTO equipment_catalogs(category,value) VALUES(?,?)',(category,clean))
+            return clean
+
+        code=ft.TextField(label='Código de equipo *',width=190)
+        brand=make_catalog_field('Marca','brand')
+        model=make_catalog_field('Modelo','model')
+        location=make_catalog_field('Ubicación','location')
+        kind=make_catalog_field('Tipo','vehicle_type')
+        motor=make_catalog_field('Tipo de motor','motor_type')
         search=ft.TextField(label='Buscar equipo',prefix_icon=ft.Icons.SEARCH,width=280)
-        table=ft.DataTable(columns=[ft.DataColumn(ft.Text(x)) for x in ['Código','Marca / Modelo','Tipo','Ubicación','Medida']],rows=[])
+        table=ft.DataTable(columns=[ft.DataColumn(ft.Text(x)) for x in ['Código','Marca / Modelo','Tipo','Ubicación','Tipo de motor']],rows=[])
+
+        catalog_fields=[(brand,'brand'),(model,'model'),(location,'location'),(kind,'vehicle_type'),(motor,'motor_type')]
+
+        def refresh_catalog_dropdowns():
+            for control,category in catalog_fields:
+                control.options=catalog_options(category)
 
         def refresh(e=None):
             term=(search.value or '').strip()
@@ -196,16 +277,26 @@ def main(page: ft.Page):
                 rows=query("SELECT * FROM equipment WHERE code LIKE ? OR brand LIKE ? OR model LIKE ? ORDER BY code",(f'%{term}%',f'%{term}%',f'%{term}%'))
             else:
                 rows=query('SELECT * FROM equipment ORDER BY code')
-            table.rows=[ft.DataRow(cells=[ft.DataCell(ft.Text(str(v or ''))) for v in [r['code'],f"{r['brand'] or ''} {r['model'] or ''}".strip(),r['vehicle_type'],r['location'],r['tire_size']]]) for r in rows]
+            table.rows=[ft.DataRow(cells=[ft.DataCell(ft.Text(str(v or ''))) for v in [
+                r['code'],f"{r['brand'] or ''} {r['model'] or ''}".strip(),r['vehicle_type'],r['location'],r['motor_type']
+            ]]) for r in rows]
             page.update()
         search.on_change=refresh
 
+        def clear_catalog_control(control):
+            control.value=None
+            try: control.text=''
+            except Exception: pass
+
         def save(e):
-            if not code.value.strip(): return snack('Ingrese el código del equipo.',True)
+            if not (code.value or '').strip(): return snack('Ingrese el código del equipo.',True)
             try:
-                execute('INSERT INTO equipment(code,brand,model,location,vehicle_type,tire_size) VALUES(?,?,?,?,?,?)',(code.value.strip(),brand.value,model.value,location.value,kind.value,size.value))
-                for c in [code,brand,model,location,size]: c.value=''
-                kind.value=None
+                values={category:save_catalog_value(category,catalog_value(control)) for control,category in catalog_fields}
+                execute('INSERT INTO equipment(code,brand,model,location,vehicle_type,motor_type) VALUES(?,?,?,?,?,?)',(
+                    code.value.strip(),values['brand'],values['model'],values['location'],values['vehicle_type'],values['motor_type']))
+                code.value=''
+                for control,_ in catalog_fields: clear_catalog_control(control)
+                refresh_catalog_dropdowns()
                 snack('Equipo registrado correctamente.')
                 refresh()
             except Exception as ex: snack(str(ex),True)
@@ -215,7 +306,7 @@ def main(page: ft.Page):
             page_title('Administración de equipos','Registro y consulta de la flota'),
             card(ft.Column([
                 ft.Text('Nuevo equipo',size=17,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
-                ft.Row([code,brand,model,location,kind,size],wrap=True),
+                ft.Row([code,brand,model,location,kind,motor],wrap=True),
                 ft.ElevatedButton('Registrar equipo',icon=ft.Icons.SAVE,on_click=save)
             ])),
             card(ft.Column([
@@ -700,11 +791,14 @@ def main(page: ft.Page):
                 )
             ])))
 
-        blocks.append(card(ft.Column([
-            ft.Text('Historial operativo',size=17,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
-            ft.Text('Filtra por equipo para ver juntos todos los movimientos de sus neumáticos.',size=11,color=TEXT_MUTED),
-            ft.Row([history],scroll=ft.ScrollMode.AUTO)
-        ])))
+        # El historial se conserva para las vistas operativas filtradas,
+        # pero no se muestra dentro del Registro maestro de neumáticos.
+        if status_filter:
+            blocks.append(card(ft.Column([
+                ft.Text('Historial operativo',size=17,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
+                ft.Text('Filtra por equipo para ver juntos todos los movimientos de sus neumáticos.',size=11,color=TEXT_MUTED),
+                ft.Row([history],scroll=ft.ScrollMode.AUTO)
+            ])))
 
         content.content=ft.Column(blocks,scroll=ft.ScrollMode.AUTO,spacing=16)
         page.update()
