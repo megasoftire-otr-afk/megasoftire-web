@@ -2564,7 +2564,7 @@ def main(page: ft.Page):
                 padding=16,
                 content=ft.Column([
                     ft.Row([ft.Icon(ft.Icons.TIRE_REPAIR,color=ft.Colors.WHITE,size=28),ft.Text('MegaSoftire',size=22,weight=ft.FontWeight.BOLD,color=ft.Colors.WHITE)]),
-                    ft.Text('PTS S.A. | Web 2026',size=11,color='#B9C9D9')
+                    ft.Text('Web 2026',size=11,color='#B9C9D9')
                 ],spacing=4)
             ),
             destinations=[
@@ -2603,59 +2603,55 @@ def main(page: ft.Page):
         show_login()
 
     def show_login():
-        username=ft.TextField(label='Usuario',prefix_icon=ft.Icons.PERSON_OUTLINE,width=340,autofocus=True)
-        password=ft.TextField(label='Contraseña',prefix_icon=ft.Icons.LOCK_OUTLINE,password=True,can_reveal_password=True,width=340)
-        error=ft.Text('',color=ft.Colors.RED_700,size=12)
-
-        def do_login(e):
-            user=authenticate(username.value or '',password.value or '')
-            if not user:
-                error.value='Usuario o contraseña incorrectos.'
-                page.update(); return
-            session['user']=user
+        # Portada tradicional inspirada en MegaSoftire DOS.
+        # Por el momento no solicita usuario ni contraseña: un clic ingresa al sistema.
+        def enter_system(e=None):
+            users = query("SELECT * FROM users ORDER BY CASE WHEN username='admin' THEN 0 ELSE 1 END, id LIMIT 1")
+            if users:
+                session['user'] = users[0]
+            else:
+                # Respaldo visual si una base antigua no tuviera tabla/usuario disponible.
+                session['user'] = {'username': 'MegaSoftire', 'full_name': 'MegaSoftire', 'role': 'ADMIN'}
             build_shell()
             page.update()
 
-        password.on_submit=do_login
-        login_card=ft.Container(
-            width=430,
-            padding=34,
-            bgcolor=ft.Colors.WHITE,
-            border_radius=20,
-            shadow=ft.BoxShadow(blur_radius=24,color='#26000000',offset=ft.Offset(0,7)),
-            content=ft.Column([
-                ft.Container(width=64,height=64,border_radius=16,bgcolor='#EAF2FF',alignment=ft.Alignment.CENTER,content=ft.Icon(ft.Icons.TIRE_REPAIR,size=34,color=NAV_ACCENT)),
-                ft.Text('MegaSoftire',size=30,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
-                ft.Text('Gestión de Neumáticos OTR · Versión Web',size=13,color=TEXT_MUTED),
-                ft.Divider(height=20,color='#E8EDF3'),
-                username,password,error,
-                ft.ElevatedButton('INGRESAR',icon=ft.Icons.LOGIN,width=340,height=46,on_click=do_login),
-                ft.Container(height=6),
-                ft.Text('Acceso inicial de demostración',size=11,color=TEXT_MUTED),
-                ft.Text('Usuario: admin   ·   Contraseña: Admin2026!',size=11,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
-            ],horizontal_alignment=ft.CrossAxisAlignment.CENTER,spacing=12)
-        )
-        app_host.content=ft.Container(
+        classic_blue = '#0000AA'
+        classic_white = '#FFFFFF'
+        cover = ft.Container(
             expand=True,
-            bgcolor=BG,
-            alignment=ft.Alignment.CENTER,
-            content=ft.Row([
-                ft.Container(
-                    expand=True,
-                    padding=50,
-                    content=ft.Column([
-                        ft.Text('MEGASOFTire WEB 2026',size=38,weight=ft.FontWeight.BOLD,color=NAV_BG),
-                        ft.Text('La evolución del control de neumáticos: misma lógica operativa, interfaz moderna y acceso desde navegador.',size=17,color=TEXT_MUTED,width=620),
-                        ft.Container(height=12),
-                        ft.Row([ft.Icon(ft.Icons.COMPUTER,color=NAV_ACCENT),ft.Text('Windows / navegador',color=TEXT_MAIN)]),
-                        ft.Row([ft.Icon(ft.Icons.PHONE_ANDROID,color=NAV_ACCENT),ft.Text('Compatible con móvil',color=TEXT_MAIN)]),
-                        ft.Row([ft.Icon(ft.Icons.HISTORY,color=NAV_ACCENT),ft.Text('Historial completo por neumático',color=TEXT_MAIN)]),
-                        ft.Row([ft.Icon(ft.Icons.SECURITY,color=NAV_ACCENT),ft.Text('Acceso por usuario',color=TEXT_MAIN)]),
-                    ],alignment=ft.MainAxisAlignment.CENTER,spacing=14)
+            bgcolor=classic_blue,
+            padding=18,
+            content=ft.Container(
+                expand=True,
+                border=ft.Border(
+                    left=ft.BorderSide(2, classic_white),
+                    top=ft.BorderSide(2, classic_white),
+                    right=ft.BorderSide(2, classic_white),
+                    bottom=ft.BorderSide(2, classic_white),
                 ),
-                ft.Container(width=500,alignment=ft.Alignment.CENTER,content=login_card)
-            ],expand=True,vertical_alignment=ft.CrossAxisAlignment.CENTER)
+                padding=18,
+                content=ft.Column([
+                    ft.Container(height=20),
+                    ft.Text('SISTEMA DE CONTROL DE NEUMÁTICOS OTR',
+                            size=22, weight=ft.FontWeight.BOLD, color=classic_white,
+                            text_align=ft.TextAlign.CENTER),
+                    ft.Container(height=35),
+                    ft.Text('MegaSoftire', size=76, weight=ft.FontWeight.BOLD,
+                            color=classic_white, text_align=ft.TextAlign.CENTER),
+                    ft.Container(height=16),
+                    ft.Text('VERSIÓN WEB 2026', size=20, weight=ft.FontWeight.BOLD,
+                            color=classic_white, text_align=ft.TextAlign.CENTER),
+                    ft.Container(expand=True),
+                    ft.Text('HAGA CLICK PARA INGRESAR AL SISTEMA', size=18,
+                            weight=ft.FontWeight.BOLD, color=classic_white,
+                            text_align=ft.TextAlign.CENTER),
+                    ft.Text('...', size=20, color=classic_white,
+                            text_align=ft.TextAlign.CENTER),
+                    ft.Container(height=22),
+                ], horizontal_alignment=ft.CrossAxisAlignment.CENTER)
+            )
         )
+        app_host.content = ft.GestureDetector(content=cover, on_tap=enter_system)
         page.update()
 
     def adapt(e=None):
