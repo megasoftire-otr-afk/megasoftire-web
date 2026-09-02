@@ -32,6 +32,29 @@ TEXT_MUTED = '#66788A'
 
 def main(page: ft.Page):
     init_db()
+
+    # Campos maestros necesarios para la consulta operativa.
+    startup_cols = {r['name'] for r in query("PRAGMA table_info(tires)")}
+    for col_name, col_type in [
+        ('cost_usd', 'REAL'),
+        ('compound', 'TEXT'),
+        ('projected_life_target', 'REAL'),
+    ]:
+        if col_name not in startup_cols:
+            execute(f'ALTER TABLE tires ADD COLUMN {col_name} {col_type}')
+
+    # Proyección de vida aprobada para la base actual.
+    execute("""
+        UPDATE tires
+        SET projected_life_target=2300, projected_life=2300
+        WHERE LOWER(TRIM(COALESCE(brand,'')))='goodyear'
+    """)
+    execute("""
+        UPDATE tires
+        SET projected_life_target=2800, projected_life=2800
+        WHERE LOWER(TRIM(COALESCE(brand,'')))='yokohama'
+    """)
+
     page.title = 'MegaSoftire Web 2026'
     page.padding = 0
     page.bgcolor = BG
@@ -1846,6 +1869,8 @@ def main(page: ft.Page):
             'Marca',
             'Medida',
             'Modelo / Diseño',
+            'Clasificación TRA',
+            'Costo $',
             'Estado',
             'Nro. Eventos',
             'Fecha',
@@ -1857,7 +1882,6 @@ def main(page: ft.Page):
             'Psi Act(F/C)-Rec',
             'Proyección Hrs',
             'Horas Acumuladas',
-            'Costo Acumulado',
             'Costo x Hrs.',
             'Tapa Válvula',
             'Lugar de Operación',
@@ -1880,7 +1904,6 @@ def main(page: ft.Page):
             'Psi Act(F/C)-Rec',
             'Proyección Hrs',
             'Horas Acumuladas',
-            'Costo Acumulado',
             'Costo x Hrs.',
             'Tapa Válvula',
             'Lugar de Operación',
@@ -1955,10 +1978,10 @@ def main(page: ft.Page):
                     ),
                     ft.Container(
                         content=ft.Column([
-                            ft.Text('Modelo:', size=11, weight=ft.FontWeight.W_600, color=TEXT_MUTED),
-                            foxpro_values['Modelo / Diseño'],
-                            ft.Text('Precio:', size=11, weight=ft.FontWeight.W_600, color=TEXT_MUTED),
-                            ft.Text('—', size=13, color=TEXT_MAIN),
+                            ft.Text('Clasificación TRA:', size=11, weight=ft.FontWeight.W_600, color=TEXT_MUTED),
+                            foxpro_values['Clasificación TRA'],
+                            ft.Text('Costo $:', size=11, weight=ft.FontWeight.W_600, color=TEXT_MUTED),
+                            foxpro_values['Costo $'],
                         ], spacing=2),
                         expand=1
                     ),
@@ -2050,6 +2073,12 @@ def main(page: ft.Page):
             foxpro_values['Marca'].value = str(r['brand'] or '—')
             foxpro_values['Medida'].value = str(r['size'] or '—')
             foxpro_values['Modelo / Diseño'].value = str(r['design'] or '—')
+            foxpro_values['Clasificación TRA'].value = str(r['compound'] or '—')
+            try:
+                header_cost = float(r['cost_usd']) if r['cost_usd'] is not None else None
+            except Exception:
+                header_cost = None
+            foxpro_values['Costo $'].value = f"$ {header_cost:,.2f}" if header_cost is not None else '—'
             foxpro_values['Estado'].value = str(r['status'] or '—')
             foxpro_values['Nro. Eventos'].value = str(len(occ))
             foxpro_values['Fecha'].value = format_date(last['event_date']) if last else '—'
@@ -2063,12 +2092,13 @@ def main(page: ft.Page):
             foxpro_values['Psi Act(F/C)-Rec'].value = (
                 f"{fmt(actual_press) or '-'} ({press_cond or '-'}) / {fmt(rec_press) or '-'}"
             )
-            foxpro_values['Proyección Hrs'].value = fmt(r['projected_life']) or '—'
-            # La base web actual aún no contiene campos económicos equivalentes
-            # a los del FoxPro. Se dejan visibles en su posición original.
+            life_value = r['projected_life_target'] if r['projected_life_target'] is not None else r['projected_life']
+            foxpro_values['Proyección Hrs'].value = fmt(life_value) or '—'
             foxpro_values['Horas Acumuladas'].value = f"{hrs_acum:.1f}" if hrs_acum is not None else '—'
-            foxpro_values['Costo Acumulado'].value = '—'
-            foxpro_values['Costo x Hrs.'].value = '—'
+            if header_cost is not None and hrs_acum is not None and hrs_acum > 0:
+                foxpro_values['Costo x Hrs.'].value = f"$ {header_cost / hrs_acum:.2f}/h"
+            else:
+                foxpro_values['Costo x Hrs.'].value = '—'
             foxpro_values['Tapa Válvula'].value = 'NO'
             foxpro_values['Lugar de Operación'].value = fmt(last['location']) if last and last['location'] else '—'
 
@@ -2149,12 +2179,15 @@ def main(page: ft.Page):
                 values['Psi Act(F/C)-Rec'].value = (
                     f"{fmt(evt_press) or '-'} ({evt_cond or '-'}) / {fmt(rec_press) or '-'}"
                 )
-                values['Proyección Hrs'].value = fmt(r['projected_life']) or '—'
+                life_value = r['projected_life_target'] if r['projected_life_target'] is not None else r['projected_life']
+                values['Proyección Hrs'].value = fmt(life_value) or '—'
                 values['Horas Acumuladas'].value = (
                     f"{event_hours:.1f}" if event_hours is not None else '—'
                 )
-                values['Costo Acumulado'].value = '—'
-                values['Costo x Hrs.'].value = '—'
+                if header_cost is not None and event_hours is not None and event_hours > 0:
+                    values['Costo x Hrs.'].value = f"$ {header_cost / event_hours:.2f}/h"
+                else:
+                    values['Costo x Hrs.'].value = '—'
                 note_text = str(target['notes'] or '').upper() if 'notes' in target.keys() else ''
                 values['Tapa Válvula'].value = (
                     'SI' if ('TAPA' in note_text or 'VALVULA' in note_text or 'VÁLVULA' in note_text) else 'NO'
