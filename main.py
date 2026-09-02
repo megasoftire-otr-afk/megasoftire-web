@@ -284,8 +284,6 @@ def main(page: ft.Page):
                     (category, str(row['value']).strip())
                 )
 
-        DIGITAR_NUEVO = '➕ DIGITAR NUEVO'
-
         def catalog_options(category):
             return [
                 ft.dropdown.Option(str(r['value']))
@@ -293,7 +291,7 @@ def main(page: ft.Page):
                     'SELECT value FROM tire_catalogs WHERE category=? ORDER BY value COLLATE NOCASE',
                     (category,)
                 )
-            ] + [ft.dropdown.Option(DIGITAR_NUEVO)]
+            ]
 
         def make_catalog_field(label, category, width):
             dropdown = ft.Dropdown(
@@ -302,36 +300,18 @@ def main(page: ft.Page):
                 options=catalog_options(category)
             )
             manual = ft.TextField(
-                label=f'Nueva {label.lower()} *',
-                hint_text='Digite el nuevo valor',
+                label=f'Nuevo {label.lower()}',
+                hint_text='Solo si no aparece en la lista',
                 width=width
             )
-            holder = ft.Container(width=width, content=dropdown)
-
-            def show_dropdown():
-                manual.value=''
-                dropdown.value=None
-                holder.content=dropdown
-                page.update()
-
-            def on_dropdown_change(e):
-                if dropdown.value == DIGITAR_NUEVO:
-                    holder.content=manual
-                    page.update()
-
-            def on_manual_submit(e):
-                # Si se deja vacío y se presiona Enter, vuelve al desplegable.
-                if not (manual.value or '').strip():
-                    show_dropdown()
-
-            dropdown.on_change = on_dropdown_change
-            manual.on_submit = on_manual_submit
-            return dropdown, manual, holder
+            return dropdown, manual
 
         def catalog_value(dropdown, manual):
-            if dropdown.value == DIGITAR_NUEVO:
-                return (manual.value or '').strip()
-            return (dropdown.value or '').strip()
+            # Prioridad: valor seleccionado del catálogo.
+            # Si no se seleccionó ninguno, toma el valor nuevo digitado.
+            selected = (dropdown.value or '').strip()
+            typed = (manual.value or '').strip()
+            return selected if selected else typed
 
         def save_catalog_value(category, value):
             clean = (value or '').strip()
@@ -356,11 +336,17 @@ def main(page: ft.Page):
         entry_date=ft.TextField(label='Fecha de ingreso *',value=dt.date.today().strftime('%d/%m/%Y'),width=FIELD_W)
         cost_usd=ft.TextField(label='Costo $ *',width=FIELD_W)
 
-        brand, brand_manual, brand_box = make_catalog_field('Marca', 'brand', FIELD_W)
-        size, size_manual, size_box = make_catalog_field('Medida', 'size', FIELD_W)
-        design, design_manual, design_box = make_catalog_field('Diseño', 'design', FIELD_W)
-        compound, compound_manual, compound_box = make_catalog_field('Compuesto', 'compound', FIELD_W)
-        supplier, supplier_manual, supplier_box = make_catalog_field('Proveedor', 'supplier', FIELD_W)
+        brand, brand_manual = make_catalog_field('Marca', 'brand', FIELD_W)
+        size, size_manual = make_catalog_field('Medida', 'size', FIELD_W)
+        design, design_manual = make_catalog_field('Diseño', 'design', FIELD_W)
+        compound, compound_manual = make_catalog_field('Compuesto', 'compound', FIELD_W)
+        supplier, supplier_manual = make_catalog_field('Proveedor', 'supplier', FIELD_W)
+
+        brand_box = ft.Column([brand, brand_manual], spacing=6, width=FIELD_W)
+        size_box = ft.Column([size, size_manual], spacing=6, width=FIELD_W)
+        design_box = ft.Column([design, design_manual], spacing=6, width=FIELD_W)
+        compound_box = ft.Column([compound, compound_manual], spacing=6, width=FIELD_W)
+        supplier_box = ft.Column([supplier, supplier_manual], spacing=6, width=FIELD_W)
 
         pressure=ft.TextField(label='Presión recomendada *',width=FIELD_W)
         tread_outer_new=ft.TextField(label='Profundidad nueva EXT *',width=FIELD_W)
@@ -552,16 +538,15 @@ def main(page: ft.Page):
                 ctrl.value=''
             entry_date.value=dt.date.today().strftime('%d/%m/%Y')
 
-            for dropdown, manual, holder in [
-                (brand, brand_manual, brand_box),
-                (size, size_manual, size_box),
-                (design, design_manual, design_box),
-                (compound, compound_manual, compound_box),
-                (supplier, supplier_manual, supplier_box),
+            for dropdown, manual in [
+                (brand, brand_manual),
+                (size, size_manual),
+                (design, design_manual),
+                (compound, compound_manual),
+                (supplier, supplier_manual),
             ]:
                 dropdown.value=None
                 manual.value=''
-                holder.content=dropdown
 
             construction.value=None
             condition.value=None
@@ -572,6 +557,20 @@ def main(page: ft.Page):
                 value=ctrl.value
                 if value is None or not str(value).strip():
                     missing.append(label)
+
+            catalog_pairs = [
+                ('Marca', brand, brand_manual),
+                ('Medida', size, size_manual),
+                ('Diseño', design, design_manual),
+                ('Compuesto', compound, compound_manual),
+                ('Proveedor', supplier, supplier_manual),
+            ]
+            for label, dropdown, manual in catalog_pairs:
+                if (dropdown.value or '').strip() and (manual.value or '').strip():
+                    return snack(
+                        f'{label}: seleccione del desplegable o digite un valor nuevo, no ambos.',
+                        True
+                    )
 
             brand_value = catalog_value(brand, brand_manual)
             size_value = catalog_value(size, size_manual)
