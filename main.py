@@ -280,11 +280,54 @@ def main(page: ft.Page):
         eq_filter=ft.Dropdown(label='Equipo',width=180,value='',options=eq_options)
         summary=ft.Text('',size=12,color=TEXT_MUTED)
 
-        table=ft.DataTable(columns=[ft.DataColumn(ft.Text(x)) for x in [
-            'Código','Serie Fab.','Fecha ingreso','Marca','Medida','Diseño','Compuesto','Proveedor',
-            'Tipo construcción','Condición','Presión rec.','Prof. EXT','Prof. INT',
-            'Prof. retiro','Proy. vida (h)','Costo $'
-        ]],rows=[])
+        # Listado maestro: se construye con filas explícitas para que los
+        # encabezados sean visibles aun cuando no haya registros y para evitar
+        # el bloque gris que estaba mostrando DataTable en la vista web.
+        master_columns = [
+            ('Código', 90),
+            ('Serie Fab.', 125),
+            ('Fecha ingreso', 115),
+            ('Costo $', 90),
+            ('Marca', 120),
+            ('Medida', 105),
+            ('Diseño', 115),
+            ('Compuesto', 115),
+            ('Proveedor', 120),
+            ('Presión rec.', 105),
+            ('Prof. nueva EXT', 120),
+            ('Prof. nueva INT', 120),
+            ('Prof. retiro', 105),
+            ('Proy. vida (h)', 115),
+            ('Tipo construcción', 140),
+            ('Condición', 120),
+        ]
+
+        def master_cell(value, width, header=False):
+            return ft.Container(
+                content=ft.Text(
+                    value,
+                    size=12,
+                    weight=ft.FontWeight.BOLD if header else ft.FontWeight.NORMAL,
+                    color=TEXT_MAIN,
+                    no_wrap=True,
+                ),
+                width=width,
+                padding=ft.padding.symmetric(horizontal=6, vertical=8),
+            )
+
+        master_header = ft.Row(
+            [master_cell(label, width, True) for label, width in master_columns],
+            spacing=0,
+        )
+        master_rows = ft.Column(spacing=0)
+        master_table = ft.Column([
+            ft.Container(
+                content=master_header,
+                bgcolor='#EEF2F7',
+                border=ft.border.only(bottom=ft.BorderSide(1, '#D5DCE5')),
+            ),
+            master_rows,
+        ], spacing=0)
 
         history=ft.DataTable(columns=[ft.DataColumn(ft.Text(x)) for x in [
             'Fecha','Evento','Neumático','Serie','Equipo','Pos.','Lectura','Cocada I/E','Presión','Ubicación'
@@ -309,27 +352,47 @@ def main(page: ft.Page):
             sql += " ORDER BY CAST(COALESCE(NULLIF(t.position,''),'999') AS INTEGER),t.code"
             rows=query(sql,tuple(params))
 
-            table.rows=[]
-            for r in rows:
-                table.rows.append(ft.DataRow(cells=[ft.DataCell(ft.Text(fmt(v))) for v in [
+            master_rows.controls=[]
+            for idx, r in enumerate(rows):
+                values = [
                     r['code'],
                     r['serial'],
-                    format_date(r['entry_date']) if r['entry_date'] else '',
+                    format_date(r['entry_date']) if r['entry_date'] else None,
+                    r['cost_usd'],
                     r['brand'],
                     r['size'],
                     r['design'],
                     r['compound'],
                     r['supplier'],
-                    r['construction_type'],
-                    r['tire_condition'],
                     r['recommended_pressure'],
                     r['new_tread_outer'],
                     r['new_tread_inner'],
                     r['retirement_tread'],
                     r['projected_life_target'],
-                    r['cost_usd'],
-                ]]))
-            summary.value=f'{len(rows)} neumático(s) mostrado(s)'
+                    r['construction_type'],
+                    r['tire_condition'],
+                ]
+
+                display_values = [
+                    '—' if v is None or str(v).strip() == '' else fmt(v)
+                    for v in values
+                ]
+
+                master_rows.controls.append(
+                    ft.Container(
+                        content=ft.Row(
+                            [
+                                master_cell(display_values[i], master_columns[i][1])
+                                for i in range(len(master_columns))
+                            ],
+                            spacing=0,
+                        ),
+                        bgcolor='#FFFFFF' if idx % 2 == 0 else '#F8FAFC',
+                        border=ft.border.only(bottom=ft.BorderSide(1, '#E5E9EF')),
+                    )
+                )
+
+            summary.value=f'{len(rows)} neumático(s) registrado(s)'
 
             hist_sql=("SELECT o.event_date,o.event_code,t.code tire_code,t.serial,e.code equipment_code,"
                       "o.position,o.meter,o.tread_inner,o.tread_outer,o.pressure,o.location "
@@ -493,7 +556,10 @@ def main(page: ft.Page):
                 ft.Container(expand=True),search
             ],wrap=True),
             summary,
-            ft.Row([table],scroll=ft.ScrollMode.AUTO)
+            ft.Row(
+                [ft.Container(content=master_table, width=1880)],
+                scroll=ft.ScrollMode.ALWAYS
+            )
         ])))
 
         blocks.append(card(ft.Column([
