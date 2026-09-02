@@ -352,6 +352,7 @@ def main(page: ft.Page):
         equipment_ids = {str(r['id']) for r in eq_rows}
         equipment_state = {'id': ALL}
         equipment_rows_state = {'rows': None}
+        mode_state = {'mode': None}  # None | 'search' | 'equipment'
         tire_filter = ft.Dropdown(
             label='Neumático',
             width=280,
@@ -408,19 +409,20 @@ def main(page: ft.Page):
                 return None
 
         def effective_tire_id(allow_search_auto=True):
-            """Devuelve el neumático activo.
+            """Devuelve el neumático activo según el modo de consulta.
 
-            - Un neumático elegido manualmente siempre es válido.
-            - La selección automática por único resultado solo se permite
-              cuando existe texto en Buscar código / serie.
-            - Un filtro de equipo, por sí solo, nunca activa eventos.
+            Modo búsqueda: solo auto-selecciona cuando el texto deja un único resultado.
+            Modo equipo: solo acepta un neumático elegido manualmente.
+            Sin modo activo: no habilita eventos.
             """
-            tid = selected_tire_id()
-            if tid is not None:
-                return tid
-            term = (search.value or '').strip()
-            if allow_search_auto and term and len(visible_tire_ids) == 1:
-                return visible_tire_ids[0]
+            mode = mode_state['mode']
+            if mode == 'equipment':
+                return selected_tire_id()
+            if mode == 'search':
+                term = (search.value or '').strip()
+                if allow_search_auto and term and len(visible_tire_ids) == 1:
+                    return visible_tire_ids[0]
+                return None
             return None
 
         def tire_operational_data(r):
@@ -760,9 +762,66 @@ def main(page: ft.Page):
             tire_filter.value = ALL
             refresh()
 
+        def set_mode(mode):
+            """Activa un único camino de consulta y bloquea el otro."""
+            mode_state['mode'] = mode
+            if mode == 'search':
+                eq_filter.disabled = True
+                tire_filter.disabled = True
+                equipment_state['id'] = ALL
+                equipment_rows_state['rows'] = None
+                eq_filter.value = ALL
+                tire_filter.value = ALL
+            elif mode == 'equipment':
+                search.disabled = True
+                search.value = ''
+                tire_filter.disabled = False
+            else:
+                search.disabled = False
+                eq_filter.disabled = False
+                tire_filter.disabled = False
+
+        def reset_query_modes():
+            """ESC: vuelve al estado inicial y elimina cualquier selección activa."""
+            mode_state['mode'] = None
+            search.value = ''
+            search.disabled = False
+            eq_filter.disabled = False
+            eq_filter.value = ALL
+            equipment_state['id'] = ALL
+            equipment_rows_state['rows'] = None
+            tire_filter.disabled = False
+            tire_filter.value = ALL
+            visible_tire_ids.clear()
+            for code, btn in event_buttons.items():
+                btn.disabled = True
+            refresh()
+
+        def on_search_focus(e):
+            if not search.disabled:
+                set_mode('search')
+                refresh()
+
+        def on_search_change(e):
+            if mode_state['mode'] != 'search':
+                set_mode('search')
+            refresh(e)
+
+        def on_equipment_focus(e):
+            if not eq_filter.disabled:
+                set_mode('equipment')
+                page.update()
+
+        # Conservamos la lógica de filtrado por equipo, pero activando primero
+        # su modo exclusivo y eliminando cualquier búsqueda previa.
+        original_on_equipment_change = on_equipment_change
+        def on_equipment_change_mode(e):
+            set_mode('equipment')
+            original_on_equipment_change(e)
+
         def on_tire_change(e):
-            # Igual que con equipo, fijamos explícitamente el valor recibido
-            # antes de recalcular la vista y el estado de los botones.
+            if mode_state['mode'] != 'equipment':
+                return
             selected = getattr(e, 'data', None)
             if selected not in (None, ''):
                 tire_filter.value = str(selected)
@@ -770,9 +829,17 @@ def main(page: ft.Page):
                 tire_filter.value = str(e.control.value or ALL)
             refresh(e)
 
-        eq_filter.on_change = on_equipment_change
+        def on_service_keyboard(e):
+            key = str(getattr(e, 'key', '') or '').upper()
+            if key in ('ESCAPE', 'ESC'):
+                reset_query_modes()
+
+        search.on_focus = on_search_focus
+        search.on_change = on_search_change
+        eq_filter.on_focus = on_equipment_focus
+        eq_filter.on_change = on_equipment_change_mode
         tire_filter.on_change = on_tire_change
-        search.on_change = refresh
+        page.on_keyboard_event = on_service_keyboard
 
         refresh()
 
@@ -1355,6 +1422,9 @@ def main(page: ft.Page):
         page.update()
 
     def select(idx):
+        # El manejo de ESC pertenece solo a Neumáticos en servicio.
+        if idx != 2:
+            page.on_keyboard_event = None
         if idx==0: dashboard()
         elif idx==1: movement_view()
         elif idx==2: service_view()
