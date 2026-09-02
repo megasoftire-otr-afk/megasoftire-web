@@ -1370,13 +1370,11 @@ def main(page: ft.Page):
             'Ext/Int - Último',
             'Psi Act(F/C)-Rec',
             'Proyección Hrs',
-            'Costo Reparación',
-            'Motivos',
             'Horas Acumuladas',
             'Costo Acumulado',
             'Costo x Hrs.',
-            'Tapa-Ul / 250h',
-            'Precisar Lugar',
+            'Tapa Válvula',
+            'Lugar de Operación',
         ]
         for label in foxpro_order:
             foxpro_values[label] = ft.Text('—', size=13, color=TEXT_MAIN)
@@ -1486,7 +1484,7 @@ def main(page: ft.Page):
                 f"{r['equipment_code'] or '-'} - P{r['position'] or '-'}"
             )
             foxpro_values['Horómetro'].value = fmt(current_meter) or '—'
-            foxpro_values['Hrs Acumuladas'].value = fmt(hrs_acum) if hrs_acum is not None else '—'
+            foxpro_values['Hrs Acumuladas'].value = f"{hrs_acum:.1f}" if hrs_acum is not None else '—'
             foxpro_values['Ext/Int - Inicial'].value = f"{fmt(initial_e)}/{fmt(initial_i)}"
             foxpro_values['Ext/Int - Último'].value = f"{fmt(last_e)}/{fmt(last_i)}"
             foxpro_values['Psi Act(F/C)-Rec'].value = (
@@ -1495,13 +1493,11 @@ def main(page: ft.Page):
             foxpro_values['Proyección Hrs'].value = fmt(r['projected_life']) or '—'
             # La base web actual aún no contiene campos económicos equivalentes
             # a los del FoxPro. Se dejan visibles en su posición original.
-            foxpro_values['Costo Reparación'].value = '—'
-            foxpro_values['Motivos'].value = fmt(last['reason']) if last and last['reason'] else '—'
-            foxpro_values['Horas Acumuladas'].value = fmt(hrs_acum) if hrs_acum is not None else '—'
+            foxpro_values['Horas Acumuladas'].value = f"{hrs_acum:.1f}" if hrs_acum is not None else '—'
             foxpro_values['Costo Acumulado'].value = '—'
             foxpro_values['Costo x Hrs.'].value = '—'
-            foxpro_values['Tapa-Ul / 250h'].value = '—'
-            foxpro_values['Precisar Lugar'].value = fmt(last['location']) if last and last['location'] else '—'
+            foxpro_values['Tapa Válvula'].value = 'NO'
+            foxpro_values['Lugar de Operación'].value = fmt(last['location']) if last and last['location'] else '—'
 
         def select_operational_tire(tid):
             if not tid:
