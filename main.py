@@ -1350,11 +1350,11 @@ def main(page: ft.Page):
         search_tire = ft.TextField(
             label='Buscar código / serie',
             prefix_icon=ft.Icons.SEARCH,
-            width=330
+            width=255
         )
         search_result = ft.Dropdown(
             label='Neumático encontrado',
-            width=360,
+            width=255,
             visible=False,
             options=[]
         )
@@ -1389,7 +1389,23 @@ def main(page: ft.Page):
         header_detail = ft.Text('', size=12, color=TEXT_MUTED)
 
         ficha_rows = []
-        for label in foxpro_order:
+        vertical_labels = [
+            'Nro. Eventos',
+            'Fecha',
+            'Equipo-Posición',
+            'Horómetro',
+            'Hrs Acumuladas',
+            'Ext/Int - Inicial',
+            'Ext/Int - Último',
+            'Psi Act(F/C)-Rec',
+            'Proyección Hrs',
+            'Horas Acumuladas',
+            'Costo Acumulado',
+            'Costo x Hrs.',
+            'Tapa Válvula',
+            'Lugar de Operación',
+        ]
+        for label in vertical_labels:
             ficha_rows.append(
                 ft.Row([
                     ft.Container(
@@ -1406,12 +1422,45 @@ def main(page: ft.Page):
         ficha_panel = card(
             ft.Column([
                 ft.Text('Consulta del neumático', size=17, weight=ft.FontWeight.BOLD, color=TEXT_MAIN),
-                header_tire,
-                header_detail,
+                ft.Row([
+                    ft.Container(
+                        content=ft.Column([
+                            header_tire,
+                        ], spacing=2),
+                        expand=2
+                    ),
+                    ft.Container(
+                        content=ft.Column([
+                            ft.Text('Marca:', size=11, weight=ft.FontWeight.W_600, color=TEXT_MUTED),
+                            foxpro_values['Marca'],
+                            ft.Text('Diseño:', size=11, weight=ft.FontWeight.W_600, color=TEXT_MUTED),
+                            foxpro_values['Modelo / Diseño'],
+                        ], spacing=2),
+                        expand=1
+                    ),
+                    ft.Container(
+                        content=ft.Column([
+                            ft.Text('Medida:', size=11, weight=ft.FontWeight.W_600, color=TEXT_MUTED),
+                            foxpro_values['Medida'],
+                            ft.Text('Estado:', size=11, weight=ft.FontWeight.W_600, color=TEXT_MUTED),
+                            foxpro_values['Estado'],
+                        ], spacing=2),
+                        expand=1
+                    ),
+                    ft.Container(
+                        content=ft.Column([
+                            ft.Text('Modelo:', size=11, weight=ft.FontWeight.W_600, color=TEXT_MUTED),
+                            foxpro_values['Modelo / Diseño'],
+                            ft.Text('Precio:', size=11, weight=ft.FontWeight.W_600, color=TEXT_MUTED),
+                            ft.Text('—', size=13, color=TEXT_MAIN),
+                        ], spacing=2),
+                        expand=1
+                    ),
+                ], spacing=18, vertical_alignment=ft.CrossAxisAlignment.START),
                 ft.Divider(height=8),
                 *ficha_rows,
             ], spacing=7),
-            width=620
+            width=None
         )
 
         movement_form = card(ft.Column([
@@ -1608,28 +1657,35 @@ def main(page: ft.Page):
             search_tire.value = str(current_tire()['code']) if current_tire() else ''
             load_foxpro_ficha(pre_tire)
 
-        content.content=ft.Column([
-            page_title('Movimiento de neumáticos','Registro operativo del ciclo de vida'),
+        left_panel = ft.Column([
             card(ft.Column([
                 ft.Text('Consulta operativa', size=17, weight=ft.FontWeight.BOLD, color=TEXT_MAIN),
-                ft.Row([search_tire, search_result], wrap=True, spacing=12),
-            ])),
-            ft.Row([
-                card(
-                    ft.Column([
-                        ft.Text('Registrar evento', size=12, weight=ft.FontWeight.W_600, color=TEXT_MUTED),
-                        *[
-                            ft.Container(
-                                content=event_buttons_local[c],
-                                width=125
-                            )
-                            for c in ['INST','INSP','INSC','ROT','INVE','DINS','REPA','BAJA']
-                        ],
-                    ], spacing=8),
-                    width=150
-                ),
-                ft.Container(content=ficha_panel, expand=True),
-            ], spacing=12, vertical_alignment=ft.CrossAxisAlignment.START),
+                search_tire,
+                search_result,
+            ], spacing=8), width=285),
+            card(
+                ft.Column([
+                    ft.Text('Registrar evento', size=12, weight=ft.FontWeight.W_600, color=TEXT_MUTED),
+                    *[
+                        ft.Container(
+                            content=event_buttons_local[c],
+                            width=140
+                        )
+                        for c in ['INST','INSP','INSC','ROT','INVE','DINS','REPA','BAJA']
+                    ],
+                ], spacing=8),
+                width=185
+            ),
+        ], spacing=12)
+
+        top_operational_area = ft.Row([
+            ft.Container(content=left_panel, width=300),
+            ft.Container(content=ficha_panel, expand=True),
+        ], spacing=12, vertical_alignment=ft.CrossAxisAlignment.START)
+
+        content.content=ft.Column([
+            page_title('Movimiento de neumáticos','Registro operativo del ciclo de vida'),
+            top_operational_area,
             movement_form,
             card(ft.Column([
                 ft.Text('Historial del neumático',size=17,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
