@@ -1565,6 +1565,29 @@ def main(page: ft.Page):
             'Tapa Válvula',
             'Lugar de Operación',
         ]
+        event_values = [foxpro_values]
+        for _ in range(2):
+            event_values.append({
+                label: ft.Text('—', size=13, color=TEXT_MAIN)
+                for label in vertical_labels
+            })
+
+        event_headers = [
+            ft.Text('Último evento', size=11, weight=ft.FontWeight.BOLD, color=TEXT_MUTED),
+            ft.Text('Penúltimo evento', size=11, weight=ft.FontWeight.BOLD, color=TEXT_MUTED),
+            ft.Text('Antepenúltimo evento', size=11, weight=ft.FontWeight.BOLD, color=TEXT_MUTED),
+        ]
+        # Cabecera de las tres columnas de eventos.
+        ficha_rows.append(
+            ft.Row([
+                ft.Container(width=185),
+                *[
+                    ft.Container(content=event_headers[i], expand=True)
+                    for i in range(3)
+                ],
+            ], spacing=12)
+        )
+
         for label in vertical_labels:
             ficha_rows.append(
                 ft.Row([
@@ -1572,10 +1595,13 @@ def main(page: ft.Page):
                         content=ft.Text(label, size=12, weight=ft.FontWeight.W_600, color=TEXT_MUTED),
                         width=185
                     ),
-                    ft.Container(
-                        content=foxpro_values[label],
-                        expand=True
-                    ),
+                    *[
+                        ft.Container(
+                            content=event_values[i][label],
+                            expand=True
+                        )
+                        for i in range(3)
+                    ],
                 ], spacing=12)
             )
 
@@ -1646,6 +1672,12 @@ def main(page: ft.Page):
             header_detail.value = ''
             for label in foxpro_order:
                 foxpro_values[label].value = '—'
+            for i in range(1, 3):
+                for label in vertical_labels:
+                    event_values[i][label].value = '—'
+            event_headers[0].value = 'Último evento'
+            event_headers[1].value = 'Penúltimo evento'
+            event_headers[2].value = 'Antepenúltimo evento'
 
         def load_foxpro_ficha(tid):
             rows = query(
@@ -1719,6 +1751,104 @@ def main(page: ft.Page):
             foxpro_values['Costo x Hrs.'].value = '—'
             foxpro_values['Tapa Válvula'].value = 'NO'
             foxpro_values['Lugar de Operación'].value = fmt(last['location']) if last and last['location'] else '—'
+
+
+            # --------------------------------------------------------------
+            # Visualización de los tres últimos eventos en paralelo.
+            # Mantiene el mismo orden vertical de la ficha aprobada.
+            # --------------------------------------------------------------
+            last_three = list(reversed(occ[-3:]))
+
+            def fill_event_column(col_idx, target):
+                values = event_values[col_idx]
+                if not target:
+                    for label in vertical_labels:
+                        values[label].value = '—'
+                    return
+
+                # Posición ordinal real del evento dentro del historial.
+                target_index = next(
+                    (i for i, item in enumerate(occ) if item['id'] == target['id']),
+                    None
+                )
+                event_number = (target_index + 1) if target_index is not None else '—'
+
+                # Última instalación vigente hasta ese evento.
+                base_inst = None
+                if target_index is not None:
+                    for item in reversed(occ[:target_index + 1]):
+                        if item['event_code'] == 'INST':
+                            base_inst = item
+                            break
+
+                event_hours = None
+                try:
+                    if target['meter'] is not None and base_inst and base_inst['meter'] is not None:
+                        event_hours = max(0, float(target['meter']) - float(base_inst['meter']))
+                except Exception:
+                    event_hours = None
+
+                init_i = (
+                    base_inst['tread_inner']
+                    if base_inst and base_inst['tread_inner'] is not None
+                    else r['new_tread']
+                )
+                init_e = (
+                    base_inst['tread_outer']
+                    if base_inst and base_inst['tread_outer'] is not None
+                    else r['new_tread']
+                )
+                evt_i = target['tread_inner'] if target['tread_inner'] is not None else '—'
+                evt_e = target['tread_outer'] if target['tread_outer'] is not None else '—'
+                evt_press = target['pressure'] if target['pressure'] is not None else None
+                evt_cond = target['pressure_condition'] if target['pressure_condition'] else ''
+
+                values['Nro. Eventos'].value = str(event_number)
+                values['Fecha'].value = format_date(target['event_date'])
+                values['Equipo-Posición'].value = (
+                    f"{target['equipment_id'] or '-'} - P{target['position'] or '-'}"
+                )
+
+                # Mostrar código de equipo en lugar del id cuando exista.
+                if target['equipment_id']:
+                    eq_row = query(
+                        'SELECT code FROM equipment WHERE id=?',
+                        (int(target['equipment_id']),)
+                    )
+                    if eq_row:
+                        values['Equipo-Posición'].value = (
+                            f"{eq_row[0]['code']} - P{target['position'] or '-'}"
+                        )
+
+                values['Horómetro'].value = fmt(target['meter']) or '—'
+                values['Hrs Acumuladas'].value = (
+                    f"{event_hours:.1f}" if event_hours is not None else '—'
+                )
+                values['Ext/Int - Inicial'].value = f"{fmt(init_e)}/{fmt(init_i)}"
+                values['Ext/Int - Último'].value = f"{fmt(evt_e)}/{fmt(evt_i)}"
+                values['Psi Act(F/C)-Rec'].value = (
+                    f"{fmt(evt_press) or '-'} ({evt_cond or '-'}) / {fmt(rec_press) or '-'}"
+                )
+                values['Proyección Hrs'].value = fmt(r['projected_life']) or '—'
+                values['Horas Acumuladas'].value = (
+                    f"{event_hours:.1f}" if event_hours is not None else '—'
+                )
+                values['Costo Acumulado'].value = '—'
+                values['Costo x Hrs.'].value = '—'
+                note_text = str(target['notes'] or '').upper() if 'notes' in target.keys() else ''
+                values['Tapa Válvula'].value = (
+                    'SI' if ('TAPA' in note_text or 'VALVULA' in note_text or 'VÁLVULA' in note_text) else 'NO'
+                )
+                values['Lugar de Operación'].value = fmt(target['location']) if target['location'] else '—'
+
+            for col_idx in range(3):
+                target = last_three[col_idx] if col_idx < len(last_three) else None
+                fill_event_column(col_idx, target)
+                if target:
+                    prefix = ['Último', 'Penúltimo', 'Antepenúltimo'][col_idx]
+                    event_headers[col_idx].value = f"{prefix}: {target['event_code']}"
+                else:
+                    event_headers[col_idx].value = ['Último evento', 'Penúltimo evento', 'Antepenúltimo evento'][col_idx]
 
         def select_operational_tire(tid):
             if not tid:
