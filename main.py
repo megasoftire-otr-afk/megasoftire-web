@@ -237,6 +237,8 @@ def main(page: ft.Page):
             ('new_tread_inner', 'REAL'),
             ('construction_type', 'TEXT'),
             ('tire_condition', 'TEXT'),
+            ('retirement_tread', 'REAL'),
+            ('projected_life_target', 'REAL'),
         ]
         for col_name, col_type in extra_cols:
             if col_name not in existing_cols:
@@ -260,6 +262,8 @@ def main(page: ft.Page):
         pressure=ft.TextField(label='Presión recomendada *',width=190)
         tread_outer_new=ft.TextField(label='Profundidad nueva EXT *',width=205)
         tread_inner_new=ft.TextField(label='Profundidad nueva INT *',width=205)
+        retirement_tread=ft.TextField(label='Profundidad de retiro (mm) *',width=220)
+        projected_life_target=ft.TextField(label='Proyección de vida (h) *',width=210)
 
         construction=ft.Dropdown(
             label='Tipo de construcción *', width=210,
@@ -278,7 +282,8 @@ def main(page: ft.Page):
 
         table=ft.DataTable(columns=[ft.DataColumn(ft.Text(x)) for x in [
             'Código','Serie Fab.','Fecha ingreso','Marca','Medida','Diseño','Compuesto','Proveedor',
-            'Tipo construcción','Condición','Presión rec.','Prof. EXT','Prof. INT','Costo $'
+            'Tipo construcción','Condición','Presión rec.','Prof. EXT','Prof. INT',
+            'Prof. retiro','Proy. vida (h)','Costo $'
         ]],rows=[])
 
         history=ft.DataTable(columns=[ft.DataColumn(ft.Text(x)) for x in [
@@ -320,6 +325,8 @@ def main(page: ft.Page):
                     r['recommended_pressure'],
                     r['new_tread_outer'],
                     r['new_tread_inner'],
+                    r['retirement_tread'],
+                    r['projected_life_target'],
                     r['cost_usd'],
                 ]]))
             summary.value=f'{len(rows)} neumático(s) mostrado(s)'
@@ -363,6 +370,8 @@ def main(page: ft.Page):
             ('Presión recomendada', pressure),
             ('Profundidad nueva EXT', tread_outer_new),
             ('Profundidad nueva INT', tread_inner_new),
+            ('Profundidad de retiro', retirement_tread),
+            ('Proyección de vida', projected_life_target),
             ('Tipo de construcción', construction),
             ('Condición', condition),
         ]
@@ -377,7 +386,8 @@ def main(page: ft.Page):
             return None
 
         def clear_form():
-            for ctrl in [code,serial,cost_usd,brand,size,design,compound,pressure,tread_outer_new,tread_inner_new]:
+            for ctrl in [code,serial,cost_usd,brand,size,design,compound,pressure,
+                         tread_outer_new,tread_inner_new,retirement_tread,projected_life_target]:
                 ctrl.value=''
             entry_date.value=dt.date.today().strftime('%d/%m/%Y')
             supplier.value=None
@@ -402,6 +412,8 @@ def main(page: ft.Page):
             rec_pressure=num(pressure.value)
             new_ext=num(tread_outer_new.value)
             new_int=num(tread_inner_new.value)
+            retirement=num(retirement_tread.value)
+            life_target=num(projected_life_target.value)
 
             if cost is None or cost < 0:
                 return snack('Costo $ inválido.', True)
@@ -411,6 +423,12 @@ def main(page: ft.Page):
                 return snack('Profundidad nueva EXT inválida.', True)
             if new_int is None or new_int <= 0:
                 return snack('Profundidad nueva INT inválida.', True)
+            if retirement is None or retirement < 0:
+                return snack('Profundidad de retiro inválida.', True)
+            if retirement >= min(float(new_ext), float(new_int)):
+                return snack('La profundidad de retiro debe ser menor que la profundidad nueva.', True)
+            if life_target is None or life_target <= 0:
+                return snack('Proyección de vida inválida.', True)
 
             new_tread_ref=max(float(new_ext), float(new_int))
 
@@ -419,8 +437,9 @@ def main(page: ft.Page):
                     """INSERT INTO tires(
                            code,serial,brand,size,design,new_tread,recommended_pressure,
                            tread_inner,tread_outer,entry_date,cost_usd,compound,supplier,
-                           new_tread_outer,new_tread_inner,construction_type,tire_condition
-                       ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                           new_tread_outer,new_tread_inner,construction_type,tire_condition,
+                           retirement_tread,projected_life_target,projected_life
+                       ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                     (
                         code.value.strip(),
                         serial.value.strip(),
@@ -439,6 +458,9 @@ def main(page: ft.Page):
                         new_int,
                         construction.value,
                         condition.value,
+                        retirement,
+                        life_target,
+                        life_target,
                     )
                 )
                 clear_form()
@@ -460,7 +482,7 @@ def main(page: ft.Page):
                 ft.Row([code,serial,entry_date,cost_usd],wrap=True,spacing=10,run_spacing=10),
                 ft.Row([brand,size,design,compound],wrap=True,spacing=10,run_spacing=10),
                 ft.Row([supplier,pressure,tread_outer_new,tread_inner_new],wrap=True,spacing=10,run_spacing=10),
-                ft.Row([construction,condition],wrap=True,spacing=10,run_spacing=10),
+                ft.Row([retirement_tread,projected_life_target,construction,condition],wrap=True,spacing=10,run_spacing=10),
 
                 ft.ElevatedButton('Registrar neumático',icon=ft.Icons.SAVE,on_click=save)
             ])))
