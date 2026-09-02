@@ -1341,24 +1341,278 @@ def main(page: ft.Page):
             scroll=ft.ScrollMode.ALWAYS
         )
 
+        # ------------------------------------------------------------------
+        # CABECERA OPERATIVA - lógica visual basada en MegaSoftire FoxPro.
+        # Primero se busca/selecciona el neumático; luego se muestra su ficha
+        # vertical y los eventos. El formulario de movimiento queda oculto
+        # hasta escoger un evento.
+        # ------------------------------------------------------------------
+        search_tire = ft.TextField(
+            label='Buscar código / serie',
+            prefix_icon=ft.Icons.SEARCH,
+            width=330
+        )
+        search_result = ft.Dropdown(
+            label='Neumático encontrado',
+            width=360,
+            visible=False,
+            options=[]
+        )
+
+        foxpro_values = {}
+        foxpro_order = [
+            'Nro. Eventos',
+            'Fecha',
+            'Equipo-Posición',
+            'Horómetro',
+            'Hrs Acumuladas',
+            'Ext/Int - Inicial',
+            'Ext/Int - Último',
+            'Psi Act(F/C)-Rec',
+            'Proyección Hrs',
+            'Costo Reparación',
+            'Motivos',
+            'Horas Acumuladas',
+            'Costo Acumulado',
+            'Costo x Hrs.',
+            'Tapa-Ul / 250h',
+            'Precisar Lugar',
+        ]
+        for label in foxpro_order:
+            foxpro_values[label] = ft.Text('—', size=13, color=TEXT_MAIN)
+
+        header_tire = ft.Text('Seleccione un neumático', size=18, weight=ft.FontWeight.BOLD, color=TEXT_MAIN)
+        header_detail = ft.Text('', size=12, color=TEXT_MUTED)
+
+        ficha_rows = []
+        for label in foxpro_order:
+            ficha_rows.append(
+                ft.Row([
+                    ft.Container(
+                        content=ft.Text(label, size=12, weight=ft.FontWeight.W_600, color=TEXT_MUTED),
+                        width=185
+                    ),
+                    ft.Container(
+                        content=foxpro_values[label],
+                        expand=True
+                    ),
+                ], spacing=12)
+            )
+
+        ficha_panel = card(
+            ft.Column([
+                ft.Text('Consulta del neumático', size=17, weight=ft.FontWeight.BOLD, color=TEXT_MAIN),
+                header_tire,
+                header_detail,
+                ft.Divider(height=8),
+                *ficha_rows,
+            ], spacing=7),
+            width=620
+        )
+
+        movement_form = card(ft.Column([
+            ft.Text('Datos del movimiento',size=17,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
+            ft.Row([tire,event,date],wrap=True),
+            ref,
+            ft.Row([equip,pos,meter],wrap=True),
+            ft.Row([ti,to,press,cond],wrap=True),
+            ft.Row([reason,loc],wrap=True),
+            notes,
+            ft.Row([
+                save_btn,
+                ft.Text(
+                    'Guardar se habilita solo cuando fecha, horómetro y cocadas cumplen las validaciones.',
+                    size=11,color=TEXT_MUTED
+                )
+            ],wrap=True)
+        ]))
+        movement_form.visible = False
+
+        def clear_foxpro_ficha():
+            header_tire.value = 'Seleccione un neumático'
+            header_detail.value = ''
+            for label in foxpro_order:
+                foxpro_values[label].value = '—'
+
+        def load_foxpro_ficha(tid):
+            rows = query(
+                '''SELECT t.*,e.code equipment_code
+                   FROM tires t LEFT JOIN equipment e ON e.id=t.equipment_id
+                   WHERE t.id=?''',
+                (int(tid),)
+            )
+            if not rows:
+                clear_foxpro_ficha()
+                return
+            r = rows[0]
+            occ = query(
+                '''SELECT * FROM occurrences
+                   WHERE tire_id=?
+                   ORDER BY event_date ASC,id ASC''',
+                (int(tid),)
+            )
+            last = occ[-1] if occ else None
+            first = occ[0] if occ else None
+
+            inst = [o for o in occ if o['event_code'] == 'INST']
+            last_inst = inst[-1] if inst else None
+
+            current_meter = r['current_meter']
+            inst_meter = last_inst['meter'] if last_inst else None
+            hrs_acum = None
+            try:
+                if current_meter is not None and inst_meter is not None:
+                    hrs_acum = max(0, float(current_meter) - float(inst_meter))
+            except Exception:
+                hrs_acum = None
+
+            initial_i = first['tread_inner'] if first and first['tread_inner'] is not None else r['new_tread']
+            initial_e = first['tread_outer'] if first and first['tread_outer'] is not None else r['new_tread']
+            last_i = last['tread_inner'] if last and last['tread_inner'] is not None else r['tread_inner']
+            last_e = last['tread_outer'] if last and last['tread_outer'] is not None else r['tread_outer']
+
+            actual_press = last['pressure'] if last and last['pressure'] is not None else None
+            press_cond = last['pressure_condition'] if last and last['pressure_condition'] else ''
+            rec_press = r['recommended_pressure']
+
+            header_tire.value = f"{r['code']} | {r['serial'] or 's/serie'}"
+            header_detail.value = (
+                f"{r['brand'] or ''} · {r['size'] or ''} · {r['design'] or ''} · Estado: {r['status'] or '-'}"
+            )
+
+            foxpro_values['Nro. Eventos'].value = str(len(occ))
+            foxpro_values['Fecha'].value = format_date(last['event_date']) if last else '—'
+            foxpro_values['Equipo-Posición'].value = (
+                f"{r['equipment_code'] or '-'} - P{r['position'] or '-'}"
+            )
+            foxpro_values['Horómetro'].value = fmt(current_meter) or '—'
+            foxpro_values['Hrs Acumuladas'].value = fmt(hrs_acum) if hrs_acum is not None else '—'
+            foxpro_values['Ext/Int - Inicial'].value = f"{fmt(initial_e)}/{fmt(initial_i)}"
+            foxpro_values['Ext/Int - Último'].value = f"{fmt(last_e)}/{fmt(last_i)}"
+            foxpro_values['Psi Act(F/C)-Rec'].value = (
+                f"{fmt(actual_press) or '-'} ({press_cond or '-'}) / {fmt(rec_press) or '-'}"
+            )
+            foxpro_values['Proyección Hrs'].value = fmt(r['projected_life']) or '—'
+            # La base web actual aún no contiene campos económicos equivalentes
+            # a los del FoxPro. Se dejan visibles en su posición original.
+            foxpro_values['Costo Reparación'].value = '—'
+            foxpro_values['Motivos'].value = fmt(last['reason']) if last and last['reason'] else '—'
+            foxpro_values['Horas Acumuladas'].value = fmt(hrs_acum) if hrs_acum is not None else '—'
+            foxpro_values['Costo Acumulado'].value = '—'
+            foxpro_values['Costo x Hrs.'].value = '—'
+            foxpro_values['Tapa-Ul / 250h'].value = '—'
+            foxpro_values['Precisar Lugar'].value = fmt(last['location']) if last and last['location'] else '—'
+
+        def select_operational_tire(tid):
+            if not tid:
+                return
+            tire.value = str(tid)
+            movement_form.visible = False
+            event.value = None
+            load_foxpro_ficha(tid)
+            refresh()
+            movement_form.visible = False
+            page.update()
+
+        def do_search(e=None):
+            term = (search_tire.value or '').strip()
+            movement_form.visible = False
+            event.value = None
+            if not term:
+                search_result.visible = False
+                search_result.options = []
+                search_result.value = None
+                tire.value = None
+                clear_foxpro_ficha()
+                page.update()
+                return
+
+            rows = query(
+                '''SELECT id,code,serial FROM tires
+                   WHERE code LIKE ? OR serial LIKE ?
+                   ORDER BY code''',
+                (f'%{term}%', f'%{term}%')
+            )
+            search_result.options = [
+                ft.dropdown.Option(str(r['id']), f"{r['code']} | {r['serial'] or 's/serie'}")
+                for r in rows
+            ]
+            if len(rows) == 1:
+                search_result.visible = False
+                search_result.value = str(rows[0]['id'])
+                select_operational_tire(rows[0]['id'])
+            elif len(rows) > 1:
+                search_result.visible = True
+                search_result.value = None
+                clear_foxpro_ficha()
+                page.update()
+            else:
+                search_result.visible = False
+                search_result.value = None
+                tire.value = None
+                clear_foxpro_ficha()
+                snack('No se encontró un neumático con ese código o serie.', True)
+
+        def on_search_result(e):
+            selected = getattr(e, 'data', None) or search_result.value
+            if selected:
+                search_result.value = str(selected)
+                select_operational_tire(selected)
+
+        search_tire.on_submit = do_search
+        search_tire.on_change = do_search
+        search_result.on_change = on_search_result
+
+        event_icons_local = {
+            'INST': ft.Icons.ADD_CIRCLE_OUTLINE,
+            'INSP': ft.Icons.CHECK_CIRCLE_OUTLINE,
+            'INSC': ft.Icons.FACT_CHECK_OUTLINED,
+            'ROT': ft.Icons.SYNC_ALT,
+            'INVE': ft.Icons.SWAP_HORIZ,
+            'DINS': ft.Icons.REMOVE_CIRCLE_OUTLINE,
+            'REPA': ft.Icons.HANDYMAN_OUTLINED,
+            'BAJA': ft.Icons.DELETE_OUTLINE,
+        }
+        event_buttons_local = {}
+
+        def open_event_form(ec):
+            if not tire.value:
+                return snack('Primero busque y seleccione un neumático.', True)
+            if ec == 'ROT':
+                return snack('ROT permanece bloqueado hasta definir su funcionalidad.', True)
+            event.value = ec
+            movement_form.visible = True
+            load_current_state()
+            apply_event_rules()
+            update_save_state()
+            page.update()
+
+        for ec in ['INST','INSP','INSC','ROT','INVE','DINS','REPA','BAJA']:
+            event_buttons_local[ec] = ft.OutlinedButton(
+                ec,
+                icon=event_icons_local[ec],
+                tooltip=EVENTS.get(ec, ec),
+                disabled=(ec == 'ROT'),
+                on_click=lambda e, code=ec: open_event_form(code)
+            )
+
+        if pre_tire:
+            search_tire.value = str(current_tire()['code']) if current_tire() else ''
+            load_foxpro_ficha(pre_tire)
+
         content.content=ft.Column([
             page_title('Movimiento de neumáticos','Registro operativo del ciclo de vida'),
             card(ft.Column([
-                ft.Text('Datos del movimiento',size=17,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
-                ft.Row([tire,event,date],wrap=True),
-                ref,
-                ft.Row([equip,pos,meter],wrap=True),
-                ft.Row([ti,to,press,cond],wrap=True),
-                ft.Row([reason,loc],wrap=True),
-                notes,
-                ft.Row([
-                    save_btn,
-                    ft.Text(
-                        'Guardar se habilita solo cuando fecha, horómetro y cocadas cumplen las validaciones.',
-                        size=11,color=TEXT_MUTED
-                    )
-                ],wrap=True)
+                ft.Text('Consulta operativa', size=17, weight=ft.FontWeight.BOLD, color=TEXT_MAIN),
+                ft.Row([search_tire, search_result], wrap=True, spacing=12),
+                ft.Text('Registrar evento', size=12, weight=ft.FontWeight.W_600, color=TEXT_MUTED),
+                ft.Row(
+                    [event_buttons_local[c] for c in ['INST','INSP','INSC','ROT','INVE','DINS','REPA','BAJA']],
+                    wrap=True, spacing=8, run_spacing=8
+                ),
             ])),
+            ficha_panel,
+            movement_form,
             card(ft.Column([
                 ft.Text('Historial del neumático',size=17,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
                 ft.Text('Use la barra inferior para desplazarse horizontalmente. La columna Acción permite eliminar eventos.',size=11,color=TEXT_MUTED),
