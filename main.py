@@ -244,21 +244,114 @@ def main(page: ft.Page):
             if col_name not in existing_cols:
                 execute(f'ALTER TABLE tires ADD COLUMN {col_name} {col_type}')
 
+        # Catálogos dinámicos del Registro Maestro.
+        # Permiten seleccionar un valor existente o DIGITAR uno nuevo.
+        execute("""
+            CREATE TABLE IF NOT EXISTS tire_catalogs(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                category TEXT NOT NULL,
+                value TEXT COLLATE NOCASE NOT NULL,
+                UNIQUE(category, value)
+            )
+        """)
+
+        catalog_defaults = {
+            'brand': ['GoodYear','Bridgestone','Michelin','Yokohama','Techking','Maxam'],
+            'supplier': ['Soltrak','Nuema','PTS','Renova','Tire SOL','J.CH.','Pimentel'],
+        }
+        for category, values in catalog_defaults.items():
+            for value in values:
+                execute(
+                    'INSERT OR IGNORE INTO tire_catalogs(category,value) VALUES(?,?)',
+                    (category, value)
+                )
+
+        # Recuperar también valores ya existentes en los neumáticos históricos.
+        historic_catalog_fields = {
+            'brand': 'brand',
+            'size': 'size',
+            'design': 'design',
+            'compound': 'compound',
+            'supplier': 'supplier',
+        }
+        for category, field_name in historic_catalog_fields.items():
+            for row in query(
+                f"SELECT DISTINCT {field_name} value FROM tires "
+                f"WHERE {field_name} IS NOT NULL AND TRIM({field_name})<>''"
+            ):
+                execute(
+                    'INSERT OR IGNORE INTO tire_catalogs(category,value) VALUES(?,?)',
+                    (category, str(row['value']).strip())
+                )
+
+        DIGITAR_NUEVO = '➕ DIGITAR NUEVO'
+
+        def catalog_options(category):
+            return [
+                ft.dropdown.Option(str(r['value']))
+                for r in query(
+                    'SELECT value FROM tire_catalogs WHERE category=? ORDER BY value COLLATE NOCASE',
+                    (category,)
+                )
+            ] + [ft.dropdown.Option(DIGITAR_NUEVO)]
+
+        def make_catalog_field(label, category, width):
+            dropdown = ft.Dropdown(
+                label=f'{label} *',
+                width=width,
+                options=catalog_options(category)
+            )
+            manual = ft.TextField(
+                label=f'Digitar {label.lower()} *',
+                width=width,
+                visible=False
+            )
+
+            def on_change(e):
+                manual.visible = (dropdown.value == DIGITAR_NUEVO)
+                if not manual.visible:
+                    manual.value = ''
+                page.update()
+
+            dropdown.on_change = on_change
+            return dropdown, manual
+
+        def catalog_value(dropdown, manual):
+            if dropdown.value == DIGITAR_NUEVO:
+                return (manual.value or '').strip()
+            return (dropdown.value or '').strip()
+
+        def save_catalog_value(category, value):
+            clean = (value or '').strip()
+            if not clean:
+                return clean
+            existing = query(
+                'SELECT value FROM tire_catalogs WHERE category=? AND value=? COLLATE NOCASE LIMIT 1',
+                (category, clean)
+            )
+            if existing:
+                return str(existing[0]['value'])
+            execute(
+                'INSERT OR IGNORE INTO tire_catalogs(category,value) VALUES(?,?)',
+                (category, clean)
+            )
+            return clean
+
         code=ft.TextField(label='Código *',width=170,value=(str(prefill_code) if prefill_code else ''))
         serial=ft.TextField(label='Serie Fab. *',width=190)
         entry_date=ft.TextField(label='Fecha de ingreso *',value=dt.date.today().strftime('%d/%m/%Y'),width=175)
         cost_usd=ft.TextField(label='Costo $ *',width=145)
-        brand=ft.TextField(label='Marca *',width=170)
-        size=ft.TextField(label='Medida *',width=165)
-        design=ft.TextField(label='Diseño *',width=170)
-        compound=ft.TextField(label='Compuesto *',width=170)
+        brand, brand_manual = make_catalog_field('Marca', 'brand', 180)
+        size, size_manual = make_catalog_field('Medida', 'size', 175)
+        design, design_manual = make_catalog_field('Diseño', 'design', 180)
+        compound, compound_manual = make_catalog_field('Compuesto', 'compound', 180)
+        supplier, supplier_manual = make_catalog_field('Proveedor', 'supplier', 195)
 
-        supplier=ft.Dropdown(
-            label='Proveedor *', width=190,
-            options=[ft.dropdown.Option(x) for x in [
-                'Soltrak','Nuema','PTS','Renova','Tire SOL','J.CH.','Pimentel','OTROS'
-            ]]
-        )
+        brand_box = ft.Column([brand, brand_manual], spacing=4, width=180)
+        size_box = ft.Column([size, size_manual], spacing=4, width=175)
+        design_box = ft.Column([design, design_manual], spacing=4, width=180)
+        compound_box = ft.Column([compound, compound_manual], spacing=4, width=180)
+        supplier_box = ft.Column([supplier, supplier_manual], spacing=4, width=195)
         pressure=ft.TextField(label='Presión recomendada *',width=190)
         tread_outer_new=ft.TextField(label='Profundidad nueva EXT *',width=205)
         tread_inner_new=ft.TextField(label='Profundidad nueva INT *',width=205)
@@ -425,11 +518,6 @@ def main(page: ft.Page):
             ('Serie Fab.', serial),
             ('Fecha de ingreso', entry_date),
             ('Costo $', cost_usd),
-            ('Marca', brand),
-            ('Medida', size),
-            ('Diseño', design),
-            ('Compuesto', compound),
-            ('Proveedor', supplier),
             ('Presión recomendada', pressure),
             ('Profundidad nueva EXT', tread_outer_new),
             ('Profundidad nueva INT', tread_inner_new),
@@ -449,11 +537,22 @@ def main(page: ft.Page):
             return None
 
         def clear_form():
-            for ctrl in [code,serial,cost_usd,brand,size,design,compound,pressure,
+            for ctrl in [code,serial,cost_usd,pressure,
                          tread_outer_new,tread_inner_new,retirement_tread,projected_life_target]:
                 ctrl.value=''
             entry_date.value=dt.date.today().strftime('%d/%m/%Y')
-            supplier.value=None
+
+            for dropdown, manual in [
+                (brand, brand_manual),
+                (size, size_manual),
+                (design, design_manual),
+                (compound, compound_manual),
+                (supplier, supplier_manual),
+            ]:
+                dropdown.value=None
+                manual.value=''
+                manual.visible=False
+
             construction.value=None
             condition.value=None
 
@@ -462,6 +561,22 @@ def main(page: ft.Page):
             for label,ctrl in required_controls:
                 value=ctrl.value
                 if value is None or not str(value).strip():
+                    missing.append(label)
+
+            brand_value = catalog_value(brand, brand_manual)
+            size_value = catalog_value(size, size_manual)
+            design_value = catalog_value(design, design_manual)
+            compound_value = catalog_value(compound, compound_manual)
+            supplier_value = catalog_value(supplier, supplier_manual)
+
+            for label, value in [
+                ('Marca', brand_value),
+                ('Medida', size_value),
+                ('Diseño', design_value),
+                ('Compuesto', compound_value),
+                ('Proveedor', supplier_value),
+            ]:
+                if not value:
                     missing.append(label)
 
             if missing:
@@ -495,6 +610,14 @@ def main(page: ft.Page):
 
             new_tread_ref=max(float(new_ext), float(new_int))
 
+            # Si se digitó un valor nuevo, se incorpora al catálogo y queda
+            # disponible automáticamente para los siguientes registros.
+            brand_value = save_catalog_value('brand', brand_value)
+            size_value = save_catalog_value('size', size_value)
+            design_value = save_catalog_value('design', design_value)
+            compound_value = save_catalog_value('compound', compound_value)
+            supplier_value = save_catalog_value('supplier', supplier_value)
+
             try:
                 execute(
                     """INSERT INTO tires(
@@ -506,17 +629,17 @@ def main(page: ft.Page):
                     (
                         code.value.strip(),
                         serial.value.strip(),
-                        brand.value.strip(),
-                        size.value.strip(),
-                        design.value.strip(),
+                        brand_value,
+                        size_value,
+                        design_value,
                         new_tread_ref,
                         rec_pressure,
                         new_int,
                         new_ext,
                         date_iso,
                         cost,
-                        compound.value.strip(),
-                        supplier.value,
+                        compound_value,
+                        supplier_value,
                         new_ext,
                         new_int,
                         construction.value,
@@ -543,8 +666,8 @@ def main(page: ft.Page):
                 ft.Text('Todos los campos son obligatorios.',size=11,color=TEXT_MUTED),
 
                 ft.Row([code,serial,entry_date,cost_usd],wrap=True,spacing=10,run_spacing=10),
-                ft.Row([brand,size,design,compound],wrap=True,spacing=10,run_spacing=10),
-                ft.Row([supplier,pressure,tread_outer_new,tread_inner_new],wrap=True,spacing=10,run_spacing=10),
+                ft.Row([brand_box,size_box,design_box,compound_box],wrap=True,spacing=10,run_spacing=10),
+                ft.Row([supplier_box,pressure,tread_outer_new,tread_inner_new],wrap=True,spacing=10,run_spacing=10),
                 ft.Row([retirement_tread,projected_life_target,construction,condition],wrap=True,spacing=10,run_spacing=10),
 
                 ft.ElevatedButton('Registrar neumático',icon=ft.Icons.SAVE,on_click=save)
