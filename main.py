@@ -324,7 +324,7 @@ def main(page: ft.Page):
             ft.Container(
                 content=master_header,
                 bgcolor='#EEF2F7',
-                border=ft.border.only(bottom=ft.BorderSide(1, '#D5DCE5')),
+                border=ft.Border(bottom=ft.BorderSide(1, '#D5DCE5')),
             ),
             master_rows,
         ], spacing=0)
@@ -388,7 +388,7 @@ def main(page: ft.Page):
                             spacing=0,
                         ),
                         bgcolor='#FFFFFF' if idx % 2 == 0 else '#F8FAFC',
-                        border=ft.border.only(bottom=ft.BorderSide(1, '#E5E9EF')),
+                        border=ft.Border(bottom=ft.BorderSide(1, '#E5E9EF')),
                     )
                 )
 
