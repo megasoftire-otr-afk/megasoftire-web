@@ -1361,6 +1361,12 @@ def main(page: ft.Page):
 
         foxpro_values = {}
         foxpro_order = [
+            'Código',
+            'Serie',
+            'Marca',
+            'Medida',
+            'Modelo / Diseño',
+            'Estado',
             'Nro. Eventos',
             'Fecha',
             'Equipo-Posición',
@@ -1478,6 +1484,12 @@ def main(page: ft.Page):
                 f"{r['brand'] or ''} · {r['size'] or ''} · {r['design'] or ''} · Estado: {r['status'] or '-'}"
             )
 
+            foxpro_values['Código'].value = str(r['code'] or '—')
+            foxpro_values['Serie'].value = str(r['serial'] or 's/serie')
+            foxpro_values['Marca'].value = str(r['brand'] or '—')
+            foxpro_values['Medida'].value = str(r['size'] or '—')
+            foxpro_values['Modelo / Diseño'].value = str(r['design'] or '—')
+            foxpro_values['Estado'].value = str(r['status'] or '—')
             foxpro_values['Nro. Eventos'].value = str(len(occ))
             foxpro_values['Fecha'].value = format_date(last['event_date']) if last else '—'
             foxpro_values['Equipo-Posición'].value = (
@@ -1601,13 +1613,23 @@ def main(page: ft.Page):
             card(ft.Column([
                 ft.Text('Consulta operativa', size=17, weight=ft.FontWeight.BOLD, color=TEXT_MAIN),
                 ft.Row([search_tire, search_result], wrap=True, spacing=12),
-                ft.Text('Registrar evento', size=12, weight=ft.FontWeight.W_600, color=TEXT_MUTED),
-                ft.Row(
-                    [event_buttons_local[c] for c in ['INST','INSP','INSC','ROT','INVE','DINS','REPA','BAJA']],
-                    wrap=True, spacing=8, run_spacing=8
-                ),
             ])),
-            ficha_panel,
+            ft.Row([
+                card(
+                    ft.Column([
+                        ft.Text('Registrar evento', size=12, weight=ft.FontWeight.W_600, color=TEXT_MUTED),
+                        *[
+                            ft.Container(
+                                content=event_buttons_local[c],
+                                width=125
+                            )
+                            for c in ['INST','INSP','INSC','ROT','INVE','DINS','REPA','BAJA']
+                        ],
+                    ], spacing=8),
+                    width=150
+                ),
+                ft.Container(content=ficha_panel, expand=True),
+            ], spacing=12, vertical_alignment=ft.CrossAxisAlignment.START),
             movement_form,
             card(ft.Column([
                 ft.Text('Historial del neumático',size=17,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
