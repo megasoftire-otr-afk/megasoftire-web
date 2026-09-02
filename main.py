@@ -447,7 +447,7 @@ def main(page: ft.Page):
         brand = make_catalog_field('Marca', 'brand', FIELD_W)
         size = make_catalog_field('Medida', 'size', FIELD_W)
         design = make_catalog_field('Diseño', 'design', FIELD_W)
-        compound = make_catalog_field('Compuesto', 'compound', FIELD_W)
+        compound = make_catalog_field('Clasificación TRA', 'compound', FIELD_W)
         supplier = make_catalog_field('Proveedor', 'supplier', FIELD_W)
 
         pressure=ft.TextField(label='Presión recomendada *',width=FIELD_W)
@@ -482,7 +482,7 @@ def main(page: ft.Page):
             ('Marca', 120),
             ('Medida', 105),
             ('Diseño', 115),
-            ('Compuesto', 115),
+            ('Clasificación TRA', 135),
             ('Proveedor', 120),
             ('Presión rec.', 105),
             ('Prof. nueva EXT', 120),
@@ -667,7 +667,7 @@ def main(page: ft.Page):
                 ('Marca', brand_value),
                 ('Medida', size_value),
                 ('Diseño', design_value),
-                ('Compuesto', compound_value),
+                ('Clasificación TRA', compound_value),
                 ('Proveedor', supplier_value),
             ]:
                 if not value:
