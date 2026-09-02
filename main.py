@@ -2113,19 +2113,34 @@ def main(page: ft.Page):
                 clear_foxpro_ficha()
                 return
             r = rows[0]
-            occ = query(
+            # Orden cronológico real de los eventos. No dependemos del formato
+            # textual almacenado en SQLite ni del id de inserción.
+            occ_raw = query(
                 '''SELECT * FROM occurrences
-                   WHERE tire_id=?
-                   ORDER BY event_date ASC,id ASC''',
+                   WHERE tire_id=?''',
                 (int(tid),)
             )
+
+            def occurrence_sort_key(item):
+                parsed = parse_event_date(item['event_date'])
+                # Fechas no interpretables quedan al inicio para no desplazar
+                # un evento válido reciente de la columna "Último".
+                return (parsed or dt.datetime.min, int(item['id'] or 0))
+
+            occ = sorted(occ_raw, key=occurrence_sort_key)
             last = occ[-1] if occ else None
             first = occ[0] if occ else None
 
             inst = [o for o in occ if o['event_code'] == 'INST']
             last_inst = inst[-1] if inst else None
 
-            current_meter = r['current_meter']
+            # Para la ficha operativa usamos el horómetro del evento
+            # cronológicamente más reciente. Si no existe, conservamos el
+            # current_meter del maestro como respaldo.
+            current_meter = (
+                last['meter'] if last and last['meter'] is not None
+                else r['current_meter']
+            )
             inst_meter = last_inst['meter'] if last_inst else None
             hrs_acum = None
             try:
