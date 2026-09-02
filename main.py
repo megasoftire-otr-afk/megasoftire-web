@@ -226,22 +226,60 @@ def main(page: ft.Page):
         page.update()
 
     def tires_view(status_filter=None):
-        code=ft.TextField(label='Código interno *',width=180)
-        serial=ft.TextField(label='Serie',width=190)
-        brand=ft.TextField(label='Marca',width=170)
-        size=ft.TextField(label='Medida',width=170)
-        design=ft.TextField(label='Diseño',width=170)
-        tread=ft.TextField(label='Prof. nueva (mm)',width=160)
-        pressure=ft.TextField(label='Presión recomendada',width=175)
-        life=ft.TextField(label='Vida proyectada (h)',width=175)
+        # Registro maestro de neumáticos.
+        existing_cols = {r['name'] for r in query("PRAGMA table_info(tires)")}
+        extra_cols = [
+            ('entry_date', 'TEXT'),
+            ('cost_usd', 'REAL'),
+            ('compound', 'TEXT'),
+            ('supplier', 'TEXT'),
+            ('new_tread_outer', 'REAL'),
+            ('new_tread_inner', 'REAL'),
+            ('construction_type', 'TEXT'),
+            ('tire_condition', 'TEXT'),
+        ]
+        for col_name, col_type in extra_cols:
+            if col_name not in existing_cols:
+                execute(f'ALTER TABLE tires ADD COLUMN {col_name} {col_type}')
+
+        code=ft.TextField(label='Código *',width=170)
+        serial=ft.TextField(label='Serie Fab. *',width=190)
+        entry_date=ft.TextField(label='Fecha de ingreso *',value=dt.date.today().strftime('%d/%m/%Y'),width=175)
+        cost_usd=ft.TextField(label='Costo $ *',width=145)
+        brand=ft.TextField(label='Marca *',width=170)
+        size=ft.TextField(label='Medida *',width=165)
+        design=ft.TextField(label='Diseño *',width=170)
+        compound=ft.TextField(label='Compuesto *',width=170)
+
+        supplier=ft.Dropdown(
+            label='Proveedor *', width=190,
+            options=[ft.dropdown.Option(x) for x in [
+                'Soltrak','Nuema','PTS','Renova','Tire SOL','J.CH.','Pimentel','OTROS'
+            ]]
+        )
+        pressure=ft.TextField(label='Presión recomendada *',width=190)
+        tread_outer_new=ft.TextField(label='Profundidad nueva EXT *',width=205)
+        tread_inner_new=ft.TextField(label='Profundidad nueva INT *',width=205)
+
+        construction=ft.Dropdown(
+            label='Tipo de construcción *', width=210,
+            options=[ft.dropdown.Option('Radial'),ft.dropdown.Option('Convencional')]
+        )
+        condition=ft.Dropdown(
+            label='Condición *', width=180,
+            options=[ft.dropdown.Option('Nueva'),ft.dropdown.Option('Reencauchada')]
+        )
+
         search=ft.TextField(label='Buscar neumático',prefix_icon=ft.Icons.SEARCH,width=260)
         eq_options=[ft.dropdown.Option('', 'Todos los equipos')]
         eq_options += [ft.dropdown.Option(str(r['id']), r['code']) for r in query('SELECT id,code FROM equipment WHERE active=1 ORDER BY code')]
         eq_filter=ft.Dropdown(label='Equipo',width=180,value='',options=eq_options)
         summary=ft.Text('',size=12,color=TEXT_MUTED)
+
         table=ft.DataTable(columns=[ft.DataColumn(ft.Text(x)) for x in [
             'Pos.','Código','Serie','Marca','Medida','Diseño','Estado','Equipo','Horómetro','Cocada I/E','Presión','Vida proy.'
         ]],rows=[])
+
         history=ft.DataTable(columns=[ft.DataColumn(ft.Text(x)) for x in [
             'Fecha','Evento','Neumático','Serie','Equipo','Pos.','Lectura','Cocada I/E','Presión','Ubicación'
         ]],rows=[])
@@ -262,9 +300,11 @@ def main(page: ft.Page):
             if term:
                 clauses.append('(t.code LIKE ? OR t.serial LIKE ? OR t.brand LIKE ? OR e.code LIKE ?)')
                 params += [f'%{term}%',f'%{term}%',f'%{term}%',f'%{term}%']
-            if clauses: sql += ' WHERE ' + ' AND '.join(clauses)
+            if clauses:
+                sql += ' WHERE ' + ' AND '.join(clauses)
             sql += " ORDER BY CAST(COALESCE(NULLIF(t.position,''),'999') AS INTEGER),t.code"
             rows=query(sql,tuple(params))
+
             table.rows=[]
             for r in rows:
                 table.rows.append(ft.DataRow(cells=[ft.DataCell(ft.Text(fmt(v))) for v in [
@@ -285,11 +325,13 @@ def main(page: ft.Page):
             if term:
                 hc.append('(t.code LIKE ? OR t.serial LIKE ? OR e.code LIKE ?)')
                 hp += [f'%{term}%',f'%{term}%',f'%{term}%']
-            if hc: hist_sql += ' WHERE ' + ' AND '.join(hc)
+            if hc:
+                hist_sql += ' WHERE ' + ' AND '.join(hc)
             hist_sql += ' ORDER BY o.event_date DESC,o.id DESC LIMIT 80'
             hrows=query(hist_sql,tuple(hp))
+
             history.rows=[ft.DataRow(cells=[ft.DataCell(ft.Text(fmt(v))) for v in [
-                r['event_date'],r['event_code'],r['tire_code'],r['serial'],r['equipment_code'],r['position'],r['meter'],
+                format_date(r['event_date']),r['event_code'],r['tire_code'],r['serial'],r['equipment_code'],r['position'],r['meter'],
                 f"{fmt(r['tread_inner'])}/{fmt(r['tread_outer'])}",r['pressure'],r['location']
             ]]) for r in hrows]
             page.update()
@@ -297,36 +339,136 @@ def main(page: ft.Page):
         search.on_change=refresh
         eq_filter.on_change=refresh
 
+        required_controls = [
+            ('Código', code),
+            ('Serie Fab.', serial),
+            ('Fecha de ingreso', entry_date),
+            ('Costo $', cost_usd),
+            ('Marca', brand),
+            ('Medida', size),
+            ('Diseño', design),
+            ('Compuesto', compound),
+            ('Proveedor', supplier),
+            ('Presión recomendada', pressure),
+            ('Profundidad nueva EXT', tread_outer_new),
+            ('Profundidad nueva INT', tread_inner_new),
+            ('Tipo de construcción', construction),
+            ('Condición', condition),
+        ]
+
+        def normalize_date(value):
+            raw=(value or '').strip()
+            for date_fmt in ('%d/%m/%Y','%d-%m-%Y','%Y-%m-%d','%Y/%m/%d'):
+                try:
+                    return dt.datetime.strptime(raw[:10],date_fmt).strftime('%Y-%m-%d')
+                except Exception:
+                    pass
+            return None
+
+        def clear_form():
+            for ctrl in [code,serial,cost_usd,brand,size,design,compound,pressure,tread_outer_new,tread_inner_new]:
+                ctrl.value=''
+            entry_date.value=dt.date.today().strftime('%d/%m/%Y')
+            supplier.value=None
+            construction.value=None
+            condition.value=None
+
         def save(e):
-            if not code.value.strip(): return snack('Ingrese código interno.',True)
+            missing=[]
+            for label,ctrl in required_controls:
+                value=ctrl.value
+                if value is None or not str(value).strip():
+                    missing.append(label)
+
+            if missing:
+                return snack('Faltan campos obligatorios: ' + ', '.join(missing), True)
+
+            date_iso=normalize_date(entry_date.value)
+            if not date_iso:
+                return snack('Fecha de ingreso inválida. Use dd/mm/aaaa.', True)
+
+            cost=num(cost_usd.value)
+            rec_pressure=num(pressure.value)
+            new_ext=num(tread_outer_new.value)
+            new_int=num(tread_inner_new.value)
+
+            if cost is None or cost < 0:
+                return snack('Costo $ inválido.', True)
+            if rec_pressure is None or rec_pressure <= 0:
+                return snack('Presión recomendada inválida.', True)
+            if new_ext is None or new_ext <= 0:
+                return snack('Profundidad nueva EXT inválida.', True)
+            if new_int is None or new_int <= 0:
+                return snack('Profundidad nueva INT inválida.', True)
+
+            new_tread_ref=max(float(new_ext), float(new_int))
+
             try:
-                n=num(tread.value) or 0
-                execute('INSERT INTO tires(code,serial,brand,size,design,new_tread,recommended_pressure,projected_life,tread_inner,tread_outer) VALUES(?,?,?,?,?,?,?,?,?,?)',(code.value.strip(),serial.value,brand.value,size.value,design.value,n,num(pressure.value) or 0,num(life.value) or 0,n,n))
-                for c in [code,serial,brand,size,design,tread,pressure,life]: c.value=''
+                execute(
+                    """INSERT INTO tires(
+                           code,serial,brand,size,design,new_tread,recommended_pressure,
+                           tread_inner,tread_outer,entry_date,cost_usd,compound,supplier,
+                           new_tread_outer,new_tread_inner,construction_type,tire_condition
+                       ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (
+                        code.value.strip(),
+                        serial.value.strip(),
+                        brand.value.strip(),
+                        size.value.strip(),
+                        design.value.strip(),
+                        new_tread_ref,
+                        rec_pressure,
+                        new_int,
+                        new_ext,
+                        date_iso,
+                        cost,
+                        compound.value.strip(),
+                        supplier.value,
+                        new_ext,
+                        new_int,
+                        construction.value,
+                        condition.value,
+                    )
+                )
+                clear_form()
                 snack('Neumático registrado correctamente.')
                 refresh()
-            except Exception as ex: snack(str(ex),True)
+            except Exception as ex:
+                snack(str(ex),True)
 
         refresh()
         title='Registro maestro de neumáticos' if not status_filter else f'Neumáticos: {status_filter}'
         subtitle='Consulta y estado actual de cada neumático'
         blocks=[page_title(title,subtitle)]
+
         if not status_filter:
             blocks.append(card(ft.Column([
                 ft.Text('Nuevo neumático',size=17,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
-                ft.Row([code,serial,brand,size,design,tread,pressure,life],wrap=True),
+                ft.Text('Todos los campos son obligatorios.',size=11,color=TEXT_MUTED),
+
+                ft.Row([code,serial,entry_date,cost_usd],wrap=True,spacing=10,run_spacing=10),
+                ft.Row([brand,size,design,compound],wrap=True,spacing=10,run_spacing=10),
+                ft.Row([supplier,pressure,tread_outer_new,tread_inner_new],wrap=True,spacing=10,run_spacing=10),
+                ft.Row([construction,condition],wrap=True,spacing=10,run_spacing=10),
+
                 ft.ElevatedButton('Registrar neumático',icon=ft.Icons.SAVE,on_click=save)
             ])))
+
         blocks.append(card(ft.Column([
-            ft.Row([ft.Text('Listado',size=17,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),ft.Container(expand=True),eq_filter,search],wrap=True),
+            ft.Row([
+                ft.Text('Listado',size=17,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
+                ft.Container(expand=True),eq_filter,search
+            ],wrap=True),
             summary,
             ft.Row([table],scroll=ft.ScrollMode.AUTO)
         ])))
+
         blocks.append(card(ft.Column([
             ft.Text('Historial operativo',size=17,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
             ft.Text('Filtra por equipo para ver juntos todos los movimientos de sus neumáticos.',size=11,color=TEXT_MUTED),
             ft.Row([history],scroll=ft.ScrollMode.AUTO)
         ])))
+
         content.content=ft.Column(blocks,scroll=ft.ScrollMode.AUTO,spacing=16)
         page.update()
 
