@@ -225,7 +225,7 @@ def main(page: ft.Page):
         ],scroll=ft.ScrollMode.AUTO,spacing=16)
         page.update()
 
-    def tires_view(status_filter=None):
+    def tires_view(status_filter=None, prefill_code=None):
         # Registro maestro de neumáticos.
         existing_cols = {r['name'] for r in query("PRAGMA table_info(tires)")}
         extra_cols = [
@@ -242,7 +242,7 @@ def main(page: ft.Page):
             if col_name not in existing_cols:
                 execute(f'ALTER TABLE tires ADD COLUMN {col_name} {col_type}')
 
-        code=ft.TextField(label='Código *',width=170)
+        code=ft.TextField(label='Código *',width=170,value=(str(prefill_code) if prefill_code else ''))
         serial=ft.TextField(label='Serie Fab. *',width=190)
         entry_date=ft.TextField(label='Fecha de ingreso *',value=dt.date.today().strftime('%d/%m/%Y'),width=175)
         cost_usd=ft.TextField(label='Costo $ *',width=145)
@@ -277,7 +277,8 @@ def main(page: ft.Page):
         summary=ft.Text('',size=12,color=TEXT_MUTED)
 
         table=ft.DataTable(columns=[ft.DataColumn(ft.Text(x)) for x in [
-            'Pos.','Código','Serie','Marca','Medida','Diseño','Estado','Equipo','Horómetro','Cocada I/E','Presión','Vida proy.'
+            'Código','Serie Fab.','Fecha ingreso','Marca','Medida','Diseño','Compuesto','Proveedor',
+            'Tipo construcción','Condición','Presión rec.','Prof. EXT','Prof. INT','Costo $'
         ]],rows=[])
 
         history=ft.DataTable(columns=[ft.DataColumn(ft.Text(x)) for x in [
@@ -294,8 +295,6 @@ def main(page: ft.Page):
             clauses=[]; params=[]
             if status_filter:
                 clauses.append('t.status=?'); params.append(status_filter)
-            if eq_filter.value:
-                clauses.append('t.equipment_id=?'); params.append(int(eq_filter.value))
             term=(search.value or '').strip()
             if term:
                 clauses.append('(t.code LIKE ? OR t.serial LIKE ? OR t.brand LIKE ? OR e.code LIKE ?)')
@@ -308,8 +307,20 @@ def main(page: ft.Page):
             table.rows=[]
             for r in rows:
                 table.rows.append(ft.DataRow(cells=[ft.DataCell(ft.Text(fmt(v))) for v in [
-                    r['position'],r['code'],r['serial'],r['brand'],r['size'],r['design'],r['status'],r['equipment_code'],
-                    r['current_meter'],f"{fmt(r['tread_inner'])}/{fmt(r['tread_outer'])}",r['recommended_pressure'],r['projected_life']
+                    r['code'],
+                    r['serial'],
+                    format_date(r['entry_date']) if r['entry_date'] else '',
+                    r['brand'],
+                    r['size'],
+                    r['design'],
+                    r['compound'],
+                    r['supplier'],
+                    r['construction_type'],
+                    r['tire_condition'],
+                    r['recommended_pressure'],
+                    r['new_tread_outer'],
+                    r['new_tread_inner'],
+                    r['cost_usd'],
                 ]]))
             summary.value=f'{len(rows)} neumático(s) mostrado(s)'
 
@@ -456,8 +467,8 @@ def main(page: ft.Page):
 
         blocks.append(card(ft.Column([
             ft.Row([
-                ft.Text('Listado',size=17,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
-                ft.Container(expand=True),eq_filter,search
+                ft.Text('Listado de neumáticos registrados',size=17,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
+                ft.Container(expand=True),search
             ],wrap=True),
             summary,
             ft.Row([table],scroll=ft.ScrollMode.AUTO)
@@ -1501,6 +1512,12 @@ def main(page: ft.Page):
             options=[]
         )
 
+        register_missing_btn = ft.ElevatedButton(
+            'REGISTRAR NEUMÁTICO',
+            icon=ft.Icons.ADD_CIRCLE_OUTLINE,
+            visible=False
+        )
+
         foxpro_values = {}
         foxpro_order = [
             'Código',
@@ -1713,10 +1730,19 @@ def main(page: ft.Page):
             movement_form.visible = False
             page.update()
 
+        def go_register_missing(e=None):
+            pending_code = (search_tire.value or '').strip()
+            if not pending_code:
+                return
+            tires_view(prefill_code=pending_code)
+
+        register_missing_btn.on_click = go_register_missing
+
         def do_search(e=None):
             term = (search_tire.value or '').strip()
             movement_form.visible = False
             event.value = None
+            register_missing_btn.visible = False
             if not term:
                 search_result.visible = False
                 search_result.options = []
@@ -1750,7 +1776,9 @@ def main(page: ft.Page):
                 search_result.value = None
                 tire.value = None
                 clear_foxpro_ficha()
-                snack('No se encontró un neumático con ese código o serie.', True)
+                register_missing_btn.visible = True
+                snack('Código no registrado. Puede registrar el neumático desde el botón habilitado.', True)
+                page.update()
 
         def on_search_result(e):
             selected = getattr(e, 'data', None) or search_result.value
@@ -1804,6 +1832,7 @@ def main(page: ft.Page):
                 ft.Text('Consulta operativa', size=17, weight=ft.FontWeight.BOLD, color=TEXT_MAIN),
                 search_tire,
                 search_result,
+                register_missing_btn,
             ], spacing=8), width=285),
             card(
                 ft.Column([
