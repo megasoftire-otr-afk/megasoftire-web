@@ -952,6 +952,8 @@ def main(page: ft.Page):
         rem_chart_body = ft.Column([], spacing=7)
         hours_chart_body = ft.Column([], spacing=7)
         brand_pie_body = ft.Column([], spacing=8, horizontal_alignment=ft.CrossAxisAlignment.CENTER)
+        pressure_pie_body = ft.Column([], spacing=8, horizontal_alignment=ft.CrossAxisAlignment.CENTER)
+        valve_pie_body = ft.Column([], spacing=8, horizontal_alignment=ft.CrossAxisAlignment.CENTER)
 
         def dashboard_bar(label, value, max_value, suffix='', decimals=1):
             try:
@@ -1082,49 +1084,92 @@ def main(page: ft.Page):
                 )),
             ], spacing=8, vertical_alignment=ft.CrossAxisAlignment.END)
 
-        def brand_pie_chart(brand_counts):
-            # Gráfico tipo dona compatible con versiones de Flet sin PieChart/PieChartSection.
-            # Se genera como SVG embebido, evitando depender de controles de gráficos opcionales.
-            if not brand_counts:
+        def donut_svg_chart(items, total=None, palette=None, legend_lines=None, center_label='Total'):
+            """Dona SVG compatible con Flet actual, con leyenda compacta y simétrica."""
+            if not items:
                 return ft.Text('Sin datos suficientes para graficar.', size=11, color=TEXT_MUTED)
             import base64, math
-            total = sum(brand_counts.values())
-            palette = ['#1D4ED8', '#16A34A', '#EA580C', '#A855F7', '#DC2626', '#0D9488', '#CA8A04', '#475569']
-            ordered = sorted(brand_counts.items(), key=lambda x: (-x[1], x[0]))
-            cx, cy, radius, stroke = 100, 100, 62, 30
+            if total is None:
+                total = sum(count for _label, count in items)
+            if palette is None:
+                palette = ['#1D4ED8', '#16A34A', '#EA580C', '#A855F7', '#DC2626', '#0D9488', '#CA8A04', '#475569']
+            cx, cy, radius, stroke = 82, 82, 50, 24
             circumference = 2 * math.pi * radius
             offset = 0.0
             circles = []
             legend = []
-            for idx, (brand, count) in enumerate(ordered):
+            for idx, (label, count) in enumerate(items):
                 color = palette[idx % len(palette)]
                 pct_value = (count / total * 100.0) if total else 0.0
                 dash = circumference * (count / total) if total else 0.0
                 gap = max(0.0, circumference - dash)
-                circles.append(
-                    f'<circle cx="{cx}" cy="{cy}" r="{radius}" fill="none" stroke="{color}" '
-                    f'stroke-width="{stroke}" stroke-dasharray="{dash:.3f} {gap:.3f}" '
-                    f'stroke-dashoffset="{-offset:.3f}" transform="rotate(-90 {cx} {cy})" />'
-                )
+                if count > 0:
+                    circles.append(
+                        f'<circle cx="{cx}" cy="{cy}" r="{radius}" fill="none" stroke="{color}" '
+                        f'stroke-width="{stroke}" stroke-dasharray="{dash:.3f} {gap:.3f}" '
+                        f'stroke-dashoffset="{-offset:.3f}" transform="rotate(-90 {cx} {cy})" />'
+                    )
                 offset += dash
                 legend.append(ft.Row([
-                    ft.Container(width=10, height=10, bgcolor=color, border_radius=2),
-                    ft.Text(f'{brand}: {count} ({pct_value:.1f}%)', size=9.5, color=TEXT_MAIN),
+                    ft.Container(width=9, height=9, bgcolor=color, border_radius=2),
+                    ft.Text(f'{label}: {count} ({pct_value:.1f}%)', size=9.2, color=TEXT_MAIN),
                 ], spacing=6))
             svg = (
-                '<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200" viewBox="0 0 200 200">'
-                '<circle cx="100" cy="100" r="62" fill="none" stroke="#E2E8F0" stroke-width="30" />'
+                '<svg xmlns="http://www.w3.org/2000/svg" width="164" height="164" viewBox="0 0 164 164">'
+                '<circle cx="82" cy="82" r="50" fill="none" stroke="#E2E8F0" stroke-width="24" />'
                 + ''.join(circles) +
-                f'<text x="100" y="96" text-anchor="middle" font-family="Arial" font-size="25" font-weight="700" fill="#172033">{total}</text>'
-                '<text x="100" y="116" text-anchor="middle" font-family="Arial" font-size="11" fill="#64748B">Total</text>'
+                f'<text x="82" y="79" text-anchor="middle" font-family="Arial" font-size="23" font-weight="700" fill="#172033">{total}</text>'
+                f'<text x="82" y="98" text-anchor="middle" font-family="Arial" font-size="10" fill="#64748B">{center_label}</text>'
                 '</svg>'
             )
             svg_b64 = base64.b64encode(svg.encode('utf-8')).decode('ascii')
-            chart = ft.Image(src="data:image/svg+xml;base64," + svg_b64, width=200, height=200, fit=ft.BoxFit.CONTAIN)
-            return ft.Column([
-                chart,
-                *legend,
-            ], spacing=5, horizontal_alignment=ft.CrossAxisAlignment.CENTER)
+            chart = ft.Image(src='data:image/svg+xml;base64,' + svg_b64, width=164, height=164, fit=ft.BoxFit.CONTAIN)
+            controls = [
+                ft.Row([chart, ft.Column(legend, spacing=5)], spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER)
+            ]
+            if legend_lines:
+                controls.append(
+                    ft.Container(
+                        width=285,
+                        border=ft.Border.all(1, '#CBD5E1'),
+                        border_radius=8,
+                        padding=8,
+                        content=ft.Column([
+                            ft.Text('LEYENDA / CRITERIO', size=9, weight=ft.FontWeight.BOLD, color=TEXT_MAIN),
+                            *[ft.Text(line, size=8.5, color=TEXT_MAIN) for line in legend_lines],
+                        ], spacing=3),
+                    )
+                )
+            return ft.Column(controls, spacing=6, horizontal_alignment=ft.CrossAxisAlignment.CENTER)
+
+        def brand_pie_chart(brand_counts):
+            if not brand_counts:
+                return ft.Text('Sin datos suficientes para graficar.', size=11, color=TEXT_MUTED)
+            ordered = sorted(brand_counts.items(), key=lambda x: (-x[1], x[0]))
+            return donut_svg_chart(ordered, palette=['#1D4ED8', '#16A34A', '#EA580C', '#A855F7', '#DC2626', '#0D9488'])
+
+        def pressure_pie_chart(counts):
+            items = [
+                ('± 5 psi (OK)', counts.get('green', 0)),
+                ('> 5 a 10 psi', counts.get('orange', 0)),
+                ('> 10 psi', counts.get('red', 0)),
+            ]
+            return donut_svg_chart(
+                items,
+                palette=['#16A34A', '#F59E0B', '#DC2626'],
+                legend_lines=[
+                    '± 5 psi = VERDE (OK)',
+                    '> 5 a 10 psi = NARANJA (ATENCIÓN)',
+                    '> 10 psi = ROJO (ALTO RIESGO)',
+                ],
+            )
+
+        def valve_pie_chart(counts):
+            items = [
+                ('Con tapa', counts.get('yes', 0)),
+                ('Sin tapa', counts.get('no', 0)),
+            ]
+            return donut_svg_chart(items, palette=['#16A34A', '#DC2626'])
 
         def dashboard_card(title, subtitle, body):
             return ft.Container(
@@ -1147,8 +1192,12 @@ def main(page: ft.Page):
                 dashboard_card('HORAS ACUMULADAS POR POSICIÓN (h)', 'Eje X: equipos · P1, P2, P3 y P4 · Eje Y: horas acumuladas', hours_chart_body),
             ], expand=True, spacing=12),
             ft.Container(
-                width=330,
-                content=dashboard_card('DISTRIBUCIÓN POR MARCA', 'Participación de neumáticos actualmente en servicio', brand_pie_body),
+                width=345,
+                content=ft.Column([
+                    dashboard_card('DISTRIBUCIÓN POR MARCA', 'Participación de neumáticos actualmente en servicio', brand_pie_body),
+                    dashboard_card('PRESIONES VS. PRESIÓN RECOMENDADA', 'Diferencia absoluta entre presión actual y recomendada', pressure_pie_body),
+                    dashboard_card('TAPA VÁLVULA', 'Estado de tapa de válvula en neumáticos en servicio', valve_pie_body),
+                ], spacing=12),
             ),
         ], spacing=12, vertical_alignment=ft.CrossAxisAlignment.START)
 
@@ -1546,6 +1595,34 @@ def main(page: ft.Page):
                 brand = str(r['brand'] or 'Sin marca').strip() or 'Sin marca'
                 brand_counts[brand] = brand_counts.get(brand, 0) + 1
             brand_pie_body.controls = [brand_pie_chart(brand_counts)]
+
+            # Distribución de presión por diferencia absoluta respecto a la presión recomendada.
+            # Criterio: <= 5 psi verde; >5 y <=10 psi naranja; >10 psi rojo.
+            pressure_counts = {'green': 0, 'orange': 0, 'red': 0}
+            for r, od in ops:
+                rec = r['recommended_pressure']
+                act = od['last_pressure']
+                if rec is None or act is None:
+                    continue
+                try:
+                    diff = abs(float(act) - float(rec))
+                except Exception:
+                    continue
+                if diff <= 5:
+                    pressure_counts['green'] += 1
+                elif diff <= 10:
+                    pressure_counts['orange'] += 1
+                else:
+                    pressure_counts['red'] += 1
+            pressure_pie_body.controls = [pressure_pie_chart(pressure_counts)]
+
+            valve_counts = {'yes': 0, 'no': 0}
+            for _r, od in ops:
+                if str(od['valve_cap'] or '').strip().upper() == 'SI':
+                    valve_counts['yes'] += 1
+                else:
+                    valve_counts['no'] += 1
+            valve_pie_body.controls = [valve_pie_chart(valve_counts)]
 
             if equipment_state['id'] not in (None, '', ALL):
                 er = query('SELECT * FROM equipment WHERE id=?', (int(equipment_state['id']),))
