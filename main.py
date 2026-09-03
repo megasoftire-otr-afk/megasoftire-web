@@ -950,7 +950,7 @@ def main(page: ft.Page):
         # Dashboard visual tipo Power BI. Se alimenta exclusivamente de los
         # mismos datos calculados para la tabla de neumáticos en servicio.
         rem_chart_body = ft.Column([], spacing=7)
-        cost_chart_body = ft.Column([], spacing=7)
+        hours_chart_body = ft.Column([], spacing=7)
 
         def dashboard_bar(label, value, max_value, suffix='', decimals=1):
             try:
@@ -972,18 +972,22 @@ def main(page: ft.Page):
             ], spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER)
 
         def grouped_remanente_chart(groups):
-            """Gráfico vertical: eje X equipos; dentro de cada equipo P1-P4; eje Y % remanente."""
-            chart_h = 150
-            bar_w = 14
+            """Gráfico compacto: equipos en X, P1-P4 agrupadas, % remanente en Y."""
             pos_order = ['P1', 'P2', 'P3', 'P4']
+            all_vals = [float(v) for vals in groups.values() for v in vals.values() if v is not None]
+            if not all_vals:
+                return ft.Text('Sin datos suficientes para graficar.', size=11, color=TEXT_MUTED)
 
+            # Escala dinámica alineada con los porcentajes reales, redondeada a 10.
+            max_val = min(100.0, max(all_vals))
+            y_max = max(20.0, min(100.0, ((int(max_val) + 9) // 10) * 10.0))
+            chart_h = 150
+            bar_w = 15
+            tick_count = 5
+            ticks = [y_max * (tick_count-i-1)/(tick_count-1) for i in range(tick_count)]
             y_axis = ft.Column([
-                ft.Text('100%', size=9, color=TEXT_MUTED),
-                ft.Text('75%', size=9, color=TEXT_MUTED),
-                ft.Text('50%', size=9, color=TEXT_MUTED),
-                ft.Text('25%', size=9, color=TEXT_MUTED),
-                ft.Text('0%', size=9, color=TEXT_MUTED),
-            ], height=chart_h, alignment=ft.MainAxisAlignment.SPACE_BETWEEN, horizontal_alignment=ft.CrossAxisAlignment.END)
+                ft.Text(f'{t:.0f}%', size=8.5, color=TEXT_MUTED) for t in ticks
+            ], height=chart_h+20, alignment=ft.MainAxisAlignment.SPACE_BETWEEN, horizontal_alignment=ft.CrossAxisAlignment.END)
 
             eq_controls = []
             for eq, pos_values in groups.items():
@@ -991,43 +995,38 @@ def main(page: ft.Page):
                 for pos in pos_order:
                     val = pos_values.get(pos)
                     if val is None:
-                        bar = ft.Container(width=bar_w, height=2, bgcolor='#CBD5E1', border_radius=2)
-                        val_text = '—'
+                        h = 2
+                        value_label = '—'
+                        bar = ft.Container(width=bar_w, height=h, bgcolor='#CBD5E1', border_radius=2)
                     else:
-                        h = max(3, chart_h * max(0, min(100, float(val))) / 100.0)
+                        v = max(0.0, min(y_max, float(val)))
+                        h = max(3, chart_h * v / y_max)
+                        value_label = f'{float(val):.0f}%'
                         bar = ft.Container(width=bar_w, height=h, bgcolor=NAV_ACCENT, border_radius=3)
-                        val_text = f'{float(val):.0f}%'
                     bars.append(
                         ft.Column([
-                            ft.Container(
-                                height=chart_h,
-                                alignment=ft.Alignment.BOTTOM_CENTER,
-                                content=bar,
-                            ),
-                            ft.Text(pos, size=9, weight=ft.FontWeight.BOLD, color=TEXT_MAIN),
-                            ft.Text(val_text, size=8, color=TEXT_MUTED),
-                        ], spacing=2, horizontal_alignment=ft.CrossAxisAlignment.CENTER)
+                            ft.Text(value_label, size=8, weight=ft.FontWeight.BOLD, color=TEXT_MAIN),
+                            ft.Container(height=chart_h, alignment=ft.Alignment.BOTTOM_CENTER, content=bar),
+                            ft.Text(pos, size=7.5, weight=ft.FontWeight.BOLD, color=TEXT_MUTED, text_align=ft.TextAlign.CENTER),
+                        ], spacing=1, horizontal_alignment=ft.CrossAxisAlignment.CENTER)
                     )
                 eq_controls.append(
                     ft.Column([
-                        ft.Row(bars, spacing=5, vertical_alignment=ft.CrossAxisAlignment.END),
-                        ft.Text(eq, size=10, weight=ft.FontWeight.BOLD, color=TEXT_MAIN),
-                    ], spacing=3, horizontal_alignment=ft.CrossAxisAlignment.CENTER)
+                        ft.Row(bars, spacing=2, vertical_alignment=ft.CrossAxisAlignment.END),
+                        ft.Text(eq, size=9, weight=ft.FontWeight.BOLD, color=TEXT_MAIN),
+                    ], spacing=2, horizontal_alignment=ft.CrossAxisAlignment.CENTER)
                 )
-
-            if not eq_controls:
-                return ft.Text('Sin datos suficientes para graficar.', size=11, color=TEXT_MUTED)
 
             return ft.Row([
                 ft.Column([
-                    ft.Text('% Rem.', size=9, color=TEXT_MUTED),
+                    ft.Text('% Rem.', size=8.5, color=TEXT_MUTED),
                     y_axis,
-                ], spacing=2, horizontal_alignment=ft.CrossAxisAlignment.END),
+                ], spacing=1, horizontal_alignment=ft.CrossAxisAlignment.END),
                 ft.Container(
                     expand=True,
-                    content=ft.Row(eq_controls, spacing=18, scroll=ft.ScrollMode.AUTO, vertical_alignment=ft.CrossAxisAlignment.END),
+                    content=ft.Row(eq_controls, spacing=12, scroll=ft.ScrollMode.AUTO, vertical_alignment=ft.CrossAxisAlignment.END),
                 ),
-            ], spacing=10, vertical_alignment=ft.CrossAxisAlignment.END)
+            ], spacing=8, vertical_alignment=ft.CrossAxisAlignment.END)
 
         def dashboard_card(title, subtitle, body):
             return ft.Container(
@@ -1046,7 +1045,7 @@ def main(page: ft.Page):
 
         dashboard = ft.Row([
             dashboard_card('REMANENTE POR POSICIÓN (%)', 'Eje X: equipos · P1, P2, P3 y P4 · Eje Y: % remanente', rem_chart_body),
-            dashboard_card('COSTO POR HORA (US$/h)', 'Promedio por equipo · costo de adquisición / horas acumuladas', cost_chart_body),
+            dashboard_card('HORAS ACUMULADAS', 'Promedio de horas trabajadas por equipo', hours_chart_body),
         ], spacing=12, vertical_alignment=ft.CrossAxisAlignment.START)
 
         # Tabla técnica compacta: encabezado fijo + desplazamiento vertical interno.
@@ -1103,13 +1102,8 @@ def main(page: ft.Page):
                 content=ft.Column([service_header, service_body], spacing=0),
             )
         ], scroll=ft.ScrollMode.ALWAYS, spacing=0)
-        history = ft.DataTable(
-            columns=[ft.DataColumn(ft.Text(x)) for x in [
-                'Fecha','Evento','Neumático','Equipo','Pos.','Lectura',
-                'Cocada I/E','Presión','Condición','Ubicación','Motivo'
-            ]],
-            rows=[]
-        )
+        # Historial operativo retirado de este módulo; los datos históricos se conservan en la base.
+
 
         def fmt(v, dec=0):
             if v in (None, ''):
@@ -1425,22 +1419,25 @@ def main(page: ft.Page):
                 rem = None
                 if original_vals and current_vals and min(original_vals) not in (None, 0):
                     rem = max(0, min(100, float(min(current_vals)) / float(min(original_vals)) * 100))
-                cph = None
-                if r['cost_usd'] is not None and od['worked'] is not None and float(od['worked']) > 0:
-                    cph = float(r['cost_usd']) / float(od['worked'])
-                g = chart_groups.setdefault(eq, {'rem_by_pos': {}, 'cost': []})
+                worked = None
+                if od['worked'] is not None:
+                    try:
+                        worked = max(0.0, float(od['worked']))
+                    except Exception:
+                        worked = None
+                g = chart_groups.setdefault(eq, {'rem_by_pos': {}, 'hours': []})
                 if rem is not None and pos in ('P1','P2','P3','P4'):
                     g['rem_by_pos'][pos] = rem
-                if cph is not None:
-                    g['cost'].append(cph)
+                if worked is not None:
+                    g['hours'].append(worked)
 
             rem_groups = {k: v['rem_by_pos'] for k, v in chart_groups.items() if v['rem_by_pos']}
-            cost_avgs = {k: sum(v['cost'])/len(v['cost']) for k,v in chart_groups.items() if v['cost']}
-            max_cost = max(cost_avgs.values(), default=1.0)
+            hours_avgs = {k: sum(v['hours'])/len(v['hours']) for k,v in chart_groups.items() if v['hours']}
+            max_hours = max(hours_avgs.values(), default=1.0)
             rem_chart_body.controls = [grouped_remanente_chart(rem_groups)]
-            cost_chart_body.controls = [dashboard_bar(eq, val, max_cost, '/h', 2) for eq,val in cost_avgs.items()]
-            if not cost_chart_body.controls:
-                cost_chart_body.controls = [ft.Text('Sin datos suficientes para graficar.', size=11, color=TEXT_MUTED)]
+            hours_chart_body.controls = [dashboard_bar(eq, val, max_hours, ' h', 1) for eq,val in hours_avgs.items()]
+            if not hours_chart_body.controls:
+                hours_chart_body.controls = [ft.Text('Sin datos suficientes para graficar.', size=11, color=TEXT_MUTED)]
 
             if equipment_state['id'] not in (None, '', ALL):
                 er = query('SELECT * FROM equipment WHERE id=?', (int(equipment_state['id']),))
@@ -1482,40 +1479,7 @@ def main(page: ft.Page):
                     ], spacing=9), width=300)
                 )
 
-            hsql = """
-                SELECT o.event_date,o.event_code,t.code tire_code,e.code equipment_code,
-                       o.position,o.meter,o.tread_inner,o.tread_outer,o.pressure,
-                       o.pressure_condition,o.location,o.reason
-                FROM occurrences o
-                JOIN tires t ON t.id=o.tire_id
-                LEFT JOIN equipment e ON e.id=o.equipment_id
-                WHERE 1=1
-            """
-            hp = []
-            if equipment_state['id'] not in (None, '', ALL):
-                hsql += ' AND o.equipment_id=?'
-                hp.append(int(equipment_state['id']))
-            if tid:
-                hsql += ' AND o.tire_id=?'
-                hp.append(tid)
-            if term:
-                hsql += ' AND (t.code LIKE ? OR t.serial LIKE ?)'
-                hp += [f'%{term}%', f'%{term}%']
-            hsql += ' ORDER BY o.event_date DESC,o.id DESC LIMIT 120'
-            hrows = query(hsql, tuple(hp))
-            history.rows = [
-                ft.DataRow(cells=[ft.DataCell(ft.Text(fmt(v))) for v in [
-                    format_date(r['event_date']), r['event_code'], r['tire_code'], r['equipment_code'],
-                    r['position'], r['meter'],
-                    f"{fmt(r['tread_inner'])}/{fmt(r['tread_outer'])}",
-                    r['pressure'], r['pressure_condition'], r['location'], r['reason']
-                ]]) for r in hrows
-            ]
-
-            summary.value = (
-                f"{len(rows)} neumático(s) mostrado(s) · "
-                f"Historial: {len(hrows)} movimiento(s)"
-            )
+            summary.value = f"{len(rows)} neumático(s) mostrado(s)"
             page.update()
 
         def resolve_equipment_from_event(e):
@@ -1665,7 +1629,7 @@ def main(page: ft.Page):
         content.content = ft.Column([
             page_title(
                 'Neumáticos en servicio',
-                'Estado actual, posiciones, horas de trabajo e historial operativo por equipo'
+                'Estado actual, posiciones y horas de trabajo por equipo'
             ),
             metrics,
             dashboard,
@@ -1680,13 +1644,7 @@ def main(page: ft.Page):
                     size=10, color=TEXT_MUTED
                 ),
                 service_table_view
-            ])),
-            card(ft.Column([
-                ft.Text('Historial operativo', size=17, weight=ft.FontWeight.BOLD, color=TEXT_MAIN),
-                ft.Text('Muestra INST, INSP, INSC, ROT, INVE, DINS, REPA y BAJA según los filtros seleccionados.', size=11, color=TEXT_MUTED),
-                ft.Row([history], scroll=ft.ScrollMode.AUTO)
-            ]))
-        ], scroll=ft.ScrollMode.AUTO, spacing=16)
+            ]))        ], scroll=ft.ScrollMode.AUTO, spacing=16)
         page.update()
 
     def movement_view():
