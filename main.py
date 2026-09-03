@@ -947,13 +947,31 @@ def main(page: ft.Page):
         metrics = ft.Row([], wrap=True, spacing=12, run_spacing=12)
         position_grid = ft.Row([], wrap=True, spacing=12, run_spacing=12)
 
+        service_columns = [
+            'CÓDIGO DE EQUIPO',
+            'POSICIÓN',
+            'CÓDIGO DE NEUMÁTICO',
+            'SERIE',
+            'MARCA DE NEUMÁTICO',
+            'MODELO',
+            'CONDICIÓN',
+            'HORAS ACUMULADAS',
+            'COSTO X HRS',
+            'COCADA ORIGINAL',
+            'COCADA EXT/INT',
+            '% REMANENTE',
+            'Hs/mm',
+            'PROYECCIÓN DE VIDA',
+            'PRESIÓN RECOMENDADA',
+            'PRESIÓN ACTUAL',
+            'TAPA VÁLVULA',
+            'FECHA ÚLTIMA INSPECCIÓN',
+            'ÚLTIMO HORÓMETRO',
+        ]
         table = ft.DataTable(
-            columns=[ft.DataColumn(ft.Text(x)) for x in [
-                'Pos.','Código','Serie','Marca','Medida','Diseño',
-                'Horóm. actual','Horóm. instal.','Horas trab.','Cocada I/E',
-                'Desgaste','Remanente','Pres. últ./ref.','Vida proy.'
-            ]],
-            rows=[]
+            columns=[ft.DataColumn(ft.Text(x, size=11, weight=ft.FontWeight.BOLD)) for x in service_columns],
+            rows=[],
+            column_spacing=18,
         )
         history = ft.DataTable(
             columns=[ft.DataColumn(ft.Text(x)) for x in [
@@ -1015,11 +1033,22 @@ def main(page: ft.Page):
             inst_date = inst[0]['event_date'] if inst else ''
             last = query("""
                 SELECT event_date,event_code,meter,tread_inner,tread_outer,pressure,
-                       pressure_condition,location,reason
+                       pressure_condition,location,reason,notes
                 FROM occurrences WHERE tire_id=?
                 ORDER BY event_date DESC,id DESC LIMIT 1
             """, (tid,))
             last_row = last[0] if last else None
+
+            # Para la tabla de Neumáticos en servicio, los campos de inspección
+            # se toman de la última INSP/INSC registrada del neumático.
+            insp = query("""
+                SELECT event_date,event_code,meter,tread_inner,tread_outer,pressure,
+                       pressure_condition,location,reason,notes
+                FROM occurrences
+                WHERE tire_id=? AND event_code IN ('INSP','INSC')
+                ORDER BY event_date DESC,id DESC LIMIT 1
+            """, (tid,))
+            inspection_row = insp[0] if insp else last_row
 
             current_meter = r['current_meter']
             worked = None
@@ -1039,13 +1068,18 @@ def main(page: ft.Page):
                 if worked is not None and wear > 0:
                     hpmm = worked / wear
 
-            last_pressure = last_row['pressure'] if last_row and last_row['pressure'] is not None else None
+            last_pressure = inspection_row['pressure'] if inspection_row and inspection_row['pressure'] is not None else None
+            note_text = str(inspection_row['notes'] or '').upper() if inspection_row else ''
+            valve_cap = 'SI' if ('TAPA' in note_text or 'VALVULA' in note_text or 'VÁLVULA' in note_text) else 'NO'
             return {
                 'inst_meter': inst_meter, 'inst_date': inst_date, 'worked': worked,
                 'min_tread': min_tread, 'wear': wear, 'rem': rem, 'hpmm': hpmm,
                 'last_pressure': last_pressure,
                 'last_event': last_row['event_code'] if last_row else '',
                 'last_date': last_row['event_date'] if last_row else '',
+                'inspection_date': inspection_row['event_date'] if inspection_row else '',
+                'inspection_meter': inspection_row['meter'] if inspection_row else None,
+                'valve_cap': valve_cap,
             }
 
         def goto_movement(event_code=None):
@@ -1158,27 +1192,74 @@ def main(page: ft.Page):
             rem_values = []
             worked_values = []
 
+            previous_equipment = None
             for r, od in ops:
                 if od['rem'] is not None:
                     rem_values.append(od['rem'])
                 if od['worked'] is not None:
                     worked_values.append(od['worked'])
-                ptxt = f"{fmt(od['last_pressure'])}/{fmt(r['recommended_pressure'])}"
+
+                equipment_code = r['equipment_code'] or '—'
+
+                # Separador horizontal entre equipos, manteniendo una sola tabla.
+                if previous_equipment is not None and equipment_code != previous_equipment:
+                    table.rows.append(ft.DataRow(
+                        cells=[ft.DataCell(ft.Container(height=10)) for _ in service_columns],
+                        color=BG,
+                    ))
+                previous_equipment = equipment_code
+
+                original_outer = r['new_tread_outer'] if 'new_tread_outer' in r.keys() else None
+                original_inner = r['new_tread_inner'] if 'new_tread_inner' in r.keys() else None
+                if original_outer is None:
+                    original_outer = r['new_tread']
+                if original_inner is None:
+                    original_inner = r['new_tread']
+
+                original_vals = [v for v in (original_outer, original_inner) if isinstance(v, (int, float))]
+                current_vals = [v for v in (r['tread_outer'], r['tread_inner']) if isinstance(v, (int, float))]
+                original_min = min(original_vals) if original_vals else None
+                current_min = min(current_vals) if current_vals else None
+                rem_pct = None
+                wear_mm = None
+                hs_mm = None
+                if original_min not in (None, 0) and current_min is not None:
+                    rem_pct = max(0, min(100, float(current_min) / float(original_min) * 100))
+                    wear_mm = max(0, float(original_min) - float(current_min))
+                    if od['worked'] is not None and wear_mm > 0:
+                        hs_mm = float(od['worked']) / wear_mm
+
+                cost_hour = None
+                if r['cost_usd'] is not None and od['worked'] is not None and float(od['worked']) > 0:
+                    cost_hour = float(r['cost_usd']) / float(od['worked'])
+
+                life_value = r['projected_life_target'] if r['projected_life_target'] is not None else r['projected_life']
+                condition_value = r['tire_condition'] if 'tire_condition' in r.keys() else ''
+
+                row_values = [
+                    equipment_code,
+                    f"P{r['position']}" if r['position'] not in (None, '') else '—',
+                    r['code'] or '—',
+                    r['serial'] or '—',
+                    r['brand'] or '—',
+                    r['design'] or '—',
+                    condition_value or '—',
+                    f"{od['worked']:.1f}" if od['worked'] is not None else '—',
+                    f"$ {cost_hour:.2f}/h" if cost_hour is not None else '—',
+                    f"{fmt(original_outer,1)}/{fmt(original_inner,1)}" if original_vals else '—',
+                    f"{fmt(r['tread_outer'],1)}/{fmt(r['tread_inner'],1)}" if current_vals else '—',
+                    f"{rem_pct:.1f}%" if rem_pct is not None else '—',
+                    f"{hs_mm:.2f}" if hs_mm is not None else '—',
+                    fmt(life_value) or '—',
+                    fmt(r['recommended_pressure']) or '—',
+                    fmt(od['last_pressure']) or '—',
+                    od['valve_cap'],
+                    format_date(od['inspection_date']) or '—',
+                    fmt(od['inspection_meter'],1) or '—',
+                ]
                 table.rows.append(ft.DataRow(cells=[
-                    ft.DataCell(ft.Text(fmt(r['position']))),
-                    ft.DataCell(ft.Text(fmt(r['code']), weight=ft.FontWeight.BOLD)),
-                    ft.DataCell(ft.Text(fmt(r['serial']))),
-                    ft.DataCell(ft.Text(fmt(r['brand']))),
-                    ft.DataCell(ft.Text(fmt(r['size']))),
-                    ft.DataCell(ft.Text(fmt(r['design']))),
-                    ft.DataCell(ft.Text(fmt(r['current_meter']))),
-                    ft.DataCell(ft.Text(fmt(od['inst_meter']))),
-                    ft.DataCell(ft.Text(fmt(od['worked']))),
-                    ft.DataCell(ft.Text(f"{fmt(r['tread_inner'])}/{fmt(r['tread_outer'])}")),
-                    ft.DataCell(ft.Text(fmt(od['wear'], 1) + (' mm' if od['wear'] is not None else ''))),
-                    ft.DataCell(ft.Text(pct(od['rem']))),
-                    ft.DataCell(ft.Text(ptxt)),
-                    ft.DataCell(ft.Text(fmt(r['projected_life']))),
+                    ft.DataCell(ft.Text(str(v), size=11, weight=ft.FontWeight.BOLD if idx in (0,2) else None))
+                    for idx, v in enumerate(row_values)
                 ]))
 
             total_service = len(rows)
@@ -1433,8 +1514,7 @@ def main(page: ft.Page):
                     summary
                 ]),
                 ft.Text(
-                    'Horas trabajadas = lectura actual − horómetro de la última instalación. '
-                    'Remanente = menor cocada actual / profundidad nueva.',
+                    'Una fila por neumático instalado. Los equipos se muestran agrupados y separados horizontalmente.',
                     size=10, color=TEXT_MUTED
                 ),
                 ft.Row([table], scroll=ft.ScrollMode.AUTO)
