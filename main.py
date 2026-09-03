@@ -1066,10 +1066,9 @@ def main(page: ft.Page):
             if not all_vals:
                 return ft.Text('Sin datos suficientes para graficar.', size=11, color=TEXT_MUTED)
 
-            max_val = max(all_vals)
             step = 500
-            y_max = max(step, ((int(max_val) + step - 1) // step) * step)
-            ticks = list(range(int(y_max), -1, -step))
+            y_max = 4000
+            ticks = list(range(y_max, -1, -step))
             chart_h = 150
             bar_w = 10
             y_axis = ft.Column(
@@ -1236,16 +1235,16 @@ def main(page: ft.Page):
                 ], spacing=5),
             )
 
-        # Dashboard reordenado: dos gráficos de barras a todo el ancho y,
-        # debajo, las tres donas simétricas en una sola fila.
+        # Dashboard: primero las tres donas simétricas; debajo,
+        # remanente y horas acumuladas a todo el ancho.
         dashboard = ft.Column([
-            dashboard_card('REMANENTE POR POSICIÓN (%)', 'Eje X: equipos · P1, P2, P3 y P4 · Eje Y: % remanente', rem_chart_body),
-            dashboard_card('HORAS ACUMULADAS POR POSICIÓN (h)', 'Eje X: equipos · P1, P2, P3 y P4 · Eje Y: horas acumuladas', hours_chart_body),
             ft.Row([
                 dashboard_card('DISTRIBUCIÓN POR MARCA', 'Participación de neumáticos actualmente en servicio', brand_pie_body, height=245),
                 dashboard_card('PRESIONES VS. PRESIÓN RECOMENDADA', 'Diferencia absoluta entre presión actual y recomendada', pressure_pie_body, height=245),
                 dashboard_card('TAPA VÁLVULA', 'Estado de tapa de válvula en neumáticos en servicio', valve_pie_body, height=245),
             ], spacing=12, vertical_alignment=ft.CrossAxisAlignment.START),
+            dashboard_card('REMANENTE POR POSICIÓN (%)', 'Eje X: equipos · P1, P2, P3 y P4 · Eje Y: % remanente', rem_chart_body),
+            dashboard_card('HORAS ACUMULADAS POR POSICIÓN (h)', 'Eje X: equipos · P1, P2, P3 y P4 · Eje Y: horas acumuladas', hours_chart_body),
         ], spacing=12)
 
         # Tabla técnica compacta: encabezado fijo + desplazamiento vertical interno.
