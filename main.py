@@ -1264,14 +1264,13 @@ def main(page: ft.Page):
             'COCADA\nEXT/INT',
             '%\nREMANENTE',
             'Hs/mm',
-            'PROYECCIÓN\nDE VIDA',
             'PRESIÓN\nRECOMENDADA',
             'PRESIÓN\nACTUAL',
             'TAPA\nVÁLVULA',
             'FECHA ÚLTIMA\nINSPECCIÓN',
             'ÚLTIMO\nHORÓMETRO',
         ]
-        service_widths = [112,72,78,112,92,82,82,100,90,105,100,90,65,105,112,92,82,120,105]
+        service_widths = [112,72,78,112,92,82,82,100,90,105,100,90,65,112,92,82,120,105]
         service_total_width = sum(service_widths)
 
         def service_cell(value, width, header=False, bold=False):
@@ -1554,7 +1553,6 @@ def main(page: ft.Page):
                 if r['cost_usd'] is not None and od['worked'] is not None and float(od['worked']) > 0:
                     cost_hour = float(r['cost_usd']) / float(od['worked'])
 
-                life_value = r['projected_life_target'] if r['projected_life_target'] is not None else r['projected_life']
                 condition_value = r['tire_condition'] if 'tire_condition' in r.keys() else ''
 
                 row_values = [
@@ -1565,18 +1563,17 @@ def main(page: ft.Page):
                     r['brand'] or '—',
                     r['design'] or '—',
                     condition_value or '—',
-                    f"{od['worked']:.1f}" if od['worked'] is not None else '—',
+                    fmt(od['worked']) or '—',
                     f"$ {cost_hour:.2f}/h" if cost_hour is not None else '—',
-                    f"{fmt(original_outer,1)}/{fmt(original_inner,1)}" if original_vals else '—',
-                    f"{fmt(r['tread_outer'],1)}/{fmt(r['tread_inner'],1)}" if current_vals else '—',
+                    fmt(original_min) if original_min is not None else '—',
+                    f"{fmt(r['tread_outer'])}/{fmt(r['tread_inner'])}" if current_vals else '—',
                     f"{rem_pct:.1f}%" if rem_pct is not None else '—',
                     f"{hs_mm:.2f}" if hs_mm is not None else '—',
-                    fmt(life_value) or '—',
                     fmt(r['recommended_pressure']) or '—',
                     fmt(od['last_pressure']) or '—',
                     od['valve_cap'],
                     format_date(od['inspection_date']) or '—',
-                    fmt(od['inspection_meter'],1) or '—',
+                    fmt(od['inspection_meter']) or '—',
                 ]
                 service_body.controls.append(ft.Row([
                     service_cell(v, service_widths[idx], bold=idx in (0,2))
@@ -2689,7 +2686,6 @@ def main(page: ft.Page):
                 values['Psi Act(F/C)-Rec'].value = (
                     f"{fmt(evt_press) or '-'} ({evt_cond or '-'}) / {fmt(rec_press) or '-'}"
                 )
-                life_value = r['projected_life_target'] if r['projected_life_target'] is not None else r['projected_life']
                 values['Proyección Hrs'].value = fmt(life_value) or '—'
                 values['Horas Acumuladas'].value = (
                     f"{event_hours:.1f}" if event_hours is not None else '—'
