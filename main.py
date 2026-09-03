@@ -1186,20 +1186,17 @@ def main(page: ft.Page):
                 ], spacing=5),
             )
 
-        dashboard = ft.Row([
-            ft.Column([
-                dashboard_card('REMANENTE POR POSICIÓN (%)', 'Eje X: equipos · P1, P2, P3 y P4 · Eje Y: % remanente', rem_chart_body),
-                dashboard_card('HORAS ACUMULADAS POR POSICIÓN (h)', 'Eje X: equipos · P1, P2, P3 y P4 · Eje Y: horas acumuladas', hours_chart_body),
-            ], expand=True, spacing=12),
-            ft.Container(
-                width=345,
-                content=ft.Column([
-                    dashboard_card('DISTRIBUCIÓN POR MARCA', 'Participación de neumáticos actualmente en servicio', brand_pie_body),
-                    dashboard_card('PRESIONES VS. PRESIÓN RECOMENDADA', 'Diferencia absoluta entre presión actual y recomendada', pressure_pie_body),
-                    dashboard_card('TAPA VÁLVULA', 'Estado de tapa de válvula en neumáticos en servicio', valve_pie_body),
-                ], spacing=12),
-            ),
-        ], spacing=12, vertical_alignment=ft.CrossAxisAlignment.START)
+        # Dashboard reordenado: dos gráficos de barras a todo el ancho y,
+        # debajo, las tres donas simétricas en una sola fila.
+        dashboard = ft.Column([
+            dashboard_card('REMANENTE POR POSICIÓN (%)', 'Eje X: equipos · P1, P2, P3 y P4 · Eje Y: % remanente', rem_chart_body),
+            dashboard_card('HORAS ACUMULADAS POR POSICIÓN (h)', 'Eje X: equipos · P1, P2, P3 y P4 · Eje Y: horas acumuladas', hours_chart_body),
+            ft.Row([
+                dashboard_card('DISTRIBUCIÓN POR MARCA', 'Participación de neumáticos actualmente en servicio', brand_pie_body),
+                dashboard_card('PRESIONES VS. PRESIÓN RECOMENDADA', 'Diferencia absoluta entre presión actual y recomendada', pressure_pie_body),
+                dashboard_card('TAPA VÁLVULA', 'Estado de tapa de válvula en neumáticos en servicio', valve_pie_body),
+            ], spacing=12, vertical_alignment=ft.CrossAxisAlignment.START),
+        ], spacing=12)
 
         # Tabla técnica compacta: encabezado fijo + desplazamiento vertical interno.
         # El contenedor horizontal usa ScrollMode.ALWAYS para mantener disponible
@@ -1552,8 +1549,6 @@ def main(page: ft.Page):
                 metric_card('En servicio', total_service, ft.Icons.TIRE_REPAIR, 'Neumáticos del filtro actual'),
                 metric_card('Equipos con neumáticos', eq_count, ft.Icons.PRECISION_MANUFACTURING_OUTLINED, 'Flota del filtro actual'),
                 metric_card('Remanente promedio', pct(avg_rem) if avg_rem is not None else '—', ft.Icons.ASSESSMENT_OUTLINED, 'Sobre profundidad nueva'),
-                metric_card('Lectura actual', fmt(current_meter) if current_meter is not None else '—', ft.Icons.DIRECTIONS_CAR, 'Horómetro / km del equipo'),
-                metric_card('Último evento', format_date(latest_date) or '—', ft.Icons.SWAP_HORIZ, 'Fecha más reciente'),
             ]
 
             # Dashboard por equipo y posición. En Remanente, el eje X son los equipos
