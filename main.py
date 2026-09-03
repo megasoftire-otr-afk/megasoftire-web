@@ -1049,35 +1049,60 @@ def main(page: ft.Page):
             dashboard_card('COSTO POR HORA (US$/h)', 'Promedio por equipo · costo de adquisición / horas acumuladas', cost_chart_body),
         ], spacing=12, vertical_alignment=ft.CrossAxisAlignment.START)
 
+        # Tabla técnica compacta: encabezado fijo + desplazamiento vertical interno.
+        # El contenedor horizontal usa ScrollMode.ALWAYS para mantener disponible
+        # la barra horizontal durante todo el recorrido de la tabla.
         service_columns = [
-            'CÓDIGO DE EQUIPO',
+            'CÓDIGO DE\nEQUIPO',
             'POSICIÓN',
-            'CÓDIGO DE NEUMÁTICO',
+            'CÓDIGO',
             'SERIE',
-            'MARCA DE NEUMÁTICO',
+            'MARCA',
             'MODELO',
             'CONDICIÓN',
-            'HORAS ACUMULADAS',
-            'COSTO X HRS',
-            'COCADA ORIGINAL',
-            'COCADA EXT/INT',
-            '% REMANENTE',
+            'HORAS\nACUMULADAS',
+            'COSTO X\nHRS',
+            'COCADA\nORIGINAL',
+            'COCADA\nEXT/INT',
+            '%\nREMANENTE',
             'Hs/mm',
-            'PROYECCIÓN DE VIDA',
-            'PRESIÓN RECOMENDADA',
-            'PRESIÓN ACTUAL',
-            'TAPA VÁLVULA',
-            'FECHA ÚLTIMA INSPECCIÓN',
-            'ÚLTIMO HORÓMETRO',
+            'PROYECCIÓN\nDE VIDA',
+            'PRESIÓN\nRECOMENDADA',
+            'PRESIÓN\nACTUAL',
+            'TAPA\nVÁLVULA',
+            'FECHA ÚLTIMA\nINSPECCIÓN',
+            'ÚLTIMO\nHORÓMETRO',
         ]
-        table = ft.DataTable(
-            columns=[ft.DataColumn(ft.Text(x, size=10, weight=ft.FontWeight.BOLD)) for x in service_columns],
-            rows=[],
-            column_spacing=14,
-            heading_row_height=32,
-            data_row_min_height=26,
-            data_row_max_height=26,
+        service_widths = [112,72,78,112,92,82,82,100,90,105,100,90,65,105,112,92,82,120,105]
+        service_total_width = sum(service_widths)
+
+        def service_cell(value, width, header=False, bold=False):
+            return ft.Container(
+                width=width,
+                height=36 if header else 22,
+                padding=ft.Padding(left=4, top=0, right=4, bottom=0),
+                alignment=ft.Alignment(0, 0),
+                content=ft.Text(
+                    str(value),
+                    size=9 if header else 9.5,
+                    weight=ft.FontWeight.BOLD if header or bold else None,
+                    text_align=ft.TextAlign.CENTER,
+                    max_lines=2 if header else 1,
+                ),
+                border=ft.Border(bottom=ft.BorderSide(1, '#D7DEE8')),
+            )
+
+        service_header = ft.Row(
+            [service_cell(label, width, header=True) for label, width in zip(service_columns, service_widths)],
+            spacing=0,
         )
+        service_body = ft.ListView(height=410, spacing=0, padding=0)
+        service_table_view = ft.Row([
+            ft.Container(
+                width=service_total_width,
+                content=ft.Column([service_header, service_body], spacing=0),
+            )
+        ], scroll=ft.ScrollMode.ALWAYS, spacing=0)
         history = ft.DataTable(
             columns=[ft.DataColumn(ft.Text(x)) for x in [
                 'Fecha','Evento','Neumático','Equipo','Pos.','Lectura',
@@ -1293,7 +1318,7 @@ def main(page: ft.Page):
                 btn.disabled = (not can_open) or code in ('INST', 'ROT')
 
             ops = [(r, tire_operational_data(r)) for r in rows]
-            table.rows = []
+            service_body.controls = []
             rem_values = []
             worked_values = []
 
@@ -1308,10 +1333,7 @@ def main(page: ft.Page):
 
                 # Separador horizontal entre equipos, manteniendo una sola tabla.
                 if previous_equipment is not None and equipment_code != previous_equipment:
-                    table.rows.append(ft.DataRow(
-                        cells=[ft.DataCell(ft.Container(height=5)) for _ in service_columns],
-                        color=BG,
-                    ))
+                    service_body.controls.append(ft.Container(height=7, bgcolor=BG))
                 previous_equipment = equipment_code
 
                 original_outer = r['new_tread_outer'] if 'new_tread_outer' in r.keys() else None
@@ -1362,19 +1384,10 @@ def main(page: ft.Page):
                     format_date(od['inspection_date']) or '—',
                     fmt(od['inspection_meter'],1) or '—',
                 ]
-                table.rows.append(ft.DataRow(cells=[
-                    ft.DataCell(
-                        ft.Container(
-                            padding=ft.Padding(left=0, top=0, right=0, bottom=0),
-                            content=ft.Text(
-                                str(v),
-                                size=10,
-                                weight=ft.FontWeight.BOLD if idx in (0,2) else None,
-                            ),
-                        )
-                    )
+                service_body.controls.append(ft.Row([
+                    service_cell(v, service_widths[idx], bold=idx in (0,2))
                     for idx, v in enumerate(row_values)
-                ]))
+                ], spacing=0))
 
             total_service = len(rows)
             eq_count = len({r['equipment_id'] for r in rows if r['equipment_id'] is not None})
@@ -1666,7 +1679,7 @@ def main(page: ft.Page):
                     'Una fila por neumático instalado. Cada equipo muestra P1, P2, P3 y P4 en orden, con separación antes del siguiente equipo.',
                     size=10, color=TEXT_MUTED
                 ),
-                ft.Row([table], scroll=ft.ScrollMode.AUTO)
+                service_table_view
             ])),
             card(ft.Column([
                 ft.Text('Historial operativo', size=17, weight=ft.FontWeight.BOLD, color=TEXT_MAIN),
