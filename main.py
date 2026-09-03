@@ -971,6 +971,64 @@ def main(page: ft.Page):
                 ft.Text(f'{val:.{decimals}f}{suffix}', width=72, size=10, text_align=ft.TextAlign.RIGHT, color=TEXT_MAIN),
             ], spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER)
 
+        def grouped_remanente_chart(groups):
+            """Gráfico vertical: eje X equipos; dentro de cada equipo P1-P4; eje Y % remanente."""
+            chart_h = 150
+            bar_w = 14
+            pos_order = ['P1', 'P2', 'P3', 'P4']
+
+            y_axis = ft.Column([
+                ft.Text('100%', size=9, color=TEXT_MUTED),
+                ft.Text('75%', size=9, color=TEXT_MUTED),
+                ft.Text('50%', size=9, color=TEXT_MUTED),
+                ft.Text('25%', size=9, color=TEXT_MUTED),
+                ft.Text('0%', size=9, color=TEXT_MUTED),
+            ], height=chart_h, alignment=ft.MainAxisAlignment.SPACE_BETWEEN, horizontal_alignment=ft.CrossAxisAlignment.END)
+
+            eq_controls = []
+            for eq, pos_values in groups.items():
+                bars = []
+                for pos in pos_order:
+                    val = pos_values.get(pos)
+                    if val is None:
+                        bar = ft.Container(width=bar_w, height=2, bgcolor='#CBD5E1', border_radius=2)
+                        val_text = '—'
+                    else:
+                        h = max(3, chart_h * max(0, min(100, float(val))) / 100.0)
+                        bar = ft.Container(width=bar_w, height=h, bgcolor=NAV_ACCENT, border_radius=3)
+                        val_text = f'{float(val):.0f}%'
+                    bars.append(
+                        ft.Column([
+                            ft.Container(
+                                height=chart_h,
+                                alignment=ft.Alignment.BOTTOM_CENTER,
+                                content=bar,
+                            ),
+                            ft.Text(pos, size=9, weight=ft.FontWeight.BOLD, color=TEXT_MAIN),
+                            ft.Text(val_text, size=8, color=TEXT_MUTED),
+                        ], spacing=2, horizontal_alignment=ft.CrossAxisAlignment.CENTER)
+                    )
+                eq_controls.append(
+                    ft.Column([
+                        ft.Row(bars, spacing=5, vertical_alignment=ft.CrossAxisAlignment.END),
+                        ft.Text(eq, size=10, weight=ft.FontWeight.BOLD, color=TEXT_MAIN),
+                    ], spacing=3, horizontal_alignment=ft.CrossAxisAlignment.CENTER)
+                )
+
+            if not eq_controls:
+                return ft.Text('Sin datos suficientes para graficar.', size=11, color=TEXT_MUTED)
+
+            return ft.Row([
+                ft.Column([
+                    ft.Text('% Rem.', size=9, color=TEXT_MUTED),
+                    y_axis,
+                ], spacing=2, horizontal_alignment=ft.CrossAxisAlignment.END),
+                ft.Container(
+                    expand=True,
+                    content=ft.Row(eq_controls, spacing=18, scroll=ft.ScrollMode.AUTO, vertical_alignment=ft.CrossAxisAlignment.END),
+                ),
+            ], spacing=10, vertical_alignment=ft.CrossAxisAlignment.END)
+
         def dashboard_card(title, subtitle, body):
             return ft.Container(
                 expand=True,
@@ -987,7 +1045,7 @@ def main(page: ft.Page):
             )
 
         dashboard = ft.Row([
-            dashboard_card('REMANENTE POR POSICIÓN (%)', 'Promedio por equipo · datos de la última inspección', rem_chart_body),
+            dashboard_card('REMANENTE POR POSICIÓN (%)', 'Eje X: equipos · P1, P2, P3 y P4 · Eje Y: % remanente', rem_chart_body),
             dashboard_card('COSTO POR HORA (US$/h)', 'Promedio por equipo · costo de adquisición / horas acumuladas', cost_chart_body),
         ], spacing=12, vertical_alignment=ft.CrossAxisAlignment.START)
 
@@ -1013,9 +1071,12 @@ def main(page: ft.Page):
             'ÚLTIMO HORÓMETRO',
         ]
         table = ft.DataTable(
-            columns=[ft.DataColumn(ft.Text(x, size=11, weight=ft.FontWeight.BOLD)) for x in service_columns],
+            columns=[ft.DataColumn(ft.Text(x, size=10, weight=ft.FontWeight.BOLD)) for x in service_columns],
             rows=[],
-            column_spacing=18,
+            column_spacing=14,
+            heading_row_height=32,
+            data_row_min_height=26,
+            data_row_max_height=26,
         )
         history = ft.DataTable(
             columns=[ft.DataColumn(ft.Text(x)) for x in [
@@ -1248,7 +1309,7 @@ def main(page: ft.Page):
                 # Separador horizontal entre equipos, manteniendo una sola tabla.
                 if previous_equipment is not None and equipment_code != previous_equipment:
                     table.rows.append(ft.DataRow(
-                        cells=[ft.DataCell(ft.Container(height=10)) for _ in service_columns],
+                        cells=[ft.DataCell(ft.Container(height=5)) for _ in service_columns],
                         color=BG,
                     ))
                 previous_equipment = equipment_code
@@ -1302,7 +1363,16 @@ def main(page: ft.Page):
                     fmt(od['inspection_meter'],1) or '—',
                 ]
                 table.rows.append(ft.DataRow(cells=[
-                    ft.DataCell(ft.Text(str(v), size=11, weight=ft.FontWeight.BOLD if idx in (0,2) else None))
+                    ft.DataCell(
+                        ft.Container(
+                            padding=ft.Padding(left=0, top=0, right=0, bottom=0),
+                            content=ft.Text(
+                                str(v),
+                                size=10,
+                                weight=ft.FontWeight.BOLD if idx in (0,2) else None,
+                            ),
+                        )
+                    )
                     for idx, v in enumerate(row_values)
                 ]))
 
@@ -1325,11 +1395,12 @@ def main(page: ft.Page):
                 metric_card('Último evento', format_date(latest_date) or '—', ft.Icons.SWAP_HORIZ, 'Fecha más reciente'),
             ]
 
-            # Resumen gráfico por equipo. Cada barra consolida P1-P4 del equipo
-            # para mantener el dashboard legible aun con toda la flota visible.
+            # Dashboard por equipo y posición. En Remanente, el eje X son los equipos
+            # y dentro de cada equipo se muestran P1, P2, P3 y P4; eje Y = % remanente.
             chart_groups = {}
             for r, od in ops:
                 eq = r['equipment_code'] or '—'
+                pos = f"P{r['position']}" if r['position'] not in (None, '') else '—'
                 original_outer = r['new_tread_outer'] if 'new_tread_outer' in r.keys() else None
                 original_inner = r['new_tread_inner'] if 'new_tread_inner' in r.keys() else None
                 if original_outer is None:
@@ -1344,19 +1415,17 @@ def main(page: ft.Page):
                 cph = None
                 if r['cost_usd'] is not None and od['worked'] is not None and float(od['worked']) > 0:
                     cph = float(r['cost_usd']) / float(od['worked'])
-                g = chart_groups.setdefault(eq, {'rem': [], 'cost': []})
-                if rem is not None:
-                    g['rem'].append(rem)
+                g = chart_groups.setdefault(eq, {'rem_by_pos': {}, 'cost': []})
+                if rem is not None and pos in ('P1','P2','P3','P4'):
+                    g['rem_by_pos'][pos] = rem
                 if cph is not None:
                     g['cost'].append(cph)
 
-            rem_avgs = {k: sum(v['rem'])/len(v['rem']) for k,v in chart_groups.items() if v['rem']}
+            rem_groups = {k: v['rem_by_pos'] for k, v in chart_groups.items() if v['rem_by_pos']}
             cost_avgs = {k: sum(v['cost'])/len(v['cost']) for k,v in chart_groups.items() if v['cost']}
             max_cost = max(cost_avgs.values(), default=1.0)
-            rem_chart_body.controls = [dashboard_bar(eq, val, 100, '%', 1) for eq,val in rem_avgs.items()]
+            rem_chart_body.controls = [grouped_remanente_chart(rem_groups)]
             cost_chart_body.controls = [dashboard_bar(eq, val, max_cost, '/h', 2) for eq,val in cost_avgs.items()]
-            if not rem_chart_body.controls:
-                rem_chart_body.controls = [ft.Text('Sin datos suficientes para graficar.', size=11, color=TEXT_MUTED)]
             if not cost_chart_body.controls:
                 cost_chart_body.controls = [ft.Text('Sin datos suficientes para graficar.', size=11, color=TEXT_MUTED)]
 
