@@ -1083,36 +1083,46 @@ def main(page: ft.Page):
             ], spacing=8, vertical_alignment=ft.CrossAxisAlignment.END)
 
         def brand_pie_chart(brand_counts):
+            # Gráfico tipo dona compatible con versiones de Flet sin PieChart/PieChartSection.
+            # Se genera como SVG embebido, evitando depender de controles de gráficos opcionales.
             if not brand_counts:
                 return ft.Text('Sin datos suficientes para graficar.', size=11, color=TEXT_MUTED)
+            import base64, math
             total = sum(brand_counts.values())
-            palette = [ft.Colors.BLUE_700, ft.Colors.GREEN_600, ft.Colors.ORANGE_600, ft.Colors.PURPLE_500, ft.Colors.RED_500, ft.Colors.TEAL_500]
-            sections = []
+            palette = ['#1D4ED8', '#16A34A', '#EA580C', '#A855F7', '#DC2626', '#0D9488', '#CA8A04', '#475569']
+            ordered = sorted(brand_counts.items(), key=lambda x: (-x[1], x[0]))
+            cx, cy, radius, stroke = 100, 100, 62, 30
+            circumference = 2 * math.pi * radius
+            offset = 0.0
+            circles = []
             legend = []
-            for idx, (brand, count) in enumerate(sorted(brand_counts.items(), key=lambda x: (-x[1], x[0]))):
+            for idx, (brand, count) in enumerate(ordered):
                 color = palette[idx % len(palette)]
                 pct_value = (count / total * 100.0) if total else 0.0
-                sections.append(ft.PieChartSection(
-                    value=count,
-                    title=f'{pct_value:.0f}%',
-                    title_style=ft.TextStyle(size=10, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE),
-                    color=color,
-                    radius=72,
-                ))
+                dash = circumference * (count / total) if total else 0.0
+                gap = max(0.0, circumference - dash)
+                circles.append(
+                    f'<circle cx="{cx}" cy="{cy}" r="{radius}" fill="none" stroke="{color}" '
+                    f'stroke-width="{stroke}" stroke-dasharray="{dash:.3f} {gap:.3f}" '
+                    f'stroke-dashoffset="{-offset:.3f}" transform="rotate(-90 {cx} {cy})" />'
+                )
+                offset += dash
                 legend.append(ft.Row([
                     ft.Container(width=10, height=10, bgcolor=color, border_radius=2),
                     ft.Text(f'{brand}: {count} ({pct_value:.1f}%)', size=9.5, color=TEXT_MAIN),
                 ], spacing=6))
-            chart = ft.PieChart(
-                sections=sections,
-                sections_space=2,
-                center_space_radius=38,
-                center_space_color=CARD_BG,
-                height=190,
+            svg = (
+                '<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200" viewBox="0 0 200 200">'
+                '<circle cx="100" cy="100" r="62" fill="none" stroke="#E2E8F0" stroke-width="30" />'
+                + ''.join(circles) +
+                f'<text x="100" y="96" text-anchor="middle" font-family="Arial" font-size="25" font-weight="700" fill="#172033">{total}</text>'
+                '<text x="100" y="116" text-anchor="middle" font-family="Arial" font-size="11" fill="#64748B">Total</text>'
+                '</svg>'
             )
+            svg_b64 = base64.b64encode(svg.encode('utf-8')).decode('ascii')
+            chart = ft.Image(src_base64=svg_b64, width=200, height=200, fit=ft.BoxFit.CONTAIN)
             return ft.Column([
-                ft.Container(height=195, content=chart),
-                ft.Text(f'{total} neumáticos', size=12, weight=ft.FontWeight.BOLD, color=TEXT_MAIN),
+                chart,
                 *legend,
             ], spacing=5, horizontal_alignment=ft.CrossAxisAlignment.CENTER)
 
