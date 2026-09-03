@@ -951,6 +951,7 @@ def main(page: ft.Page):
         # mismos datos calculados para la tabla de neumáticos en servicio.
         rem_chart_body = ft.Column([], spacing=7)
         hours_chart_body = ft.Column([], spacing=7)
+        brand_pie_body = ft.Column([], spacing=8, horizontal_alignment=ft.CrossAxisAlignment.CENTER)
 
         def dashboard_bar(label, value, max_value, suffix='', decimals=1):
             try:
@@ -1028,6 +1029,93 @@ def main(page: ft.Page):
                 ),
             ], spacing=8, vertical_alignment=ft.CrossAxisAlignment.END)
 
+        def grouped_hours_chart(groups):
+            """Equipos en X, horas acumuladas en Y y P1-P4 agrupadas."""
+            pos_order = ['P1', 'P2', 'P3', 'P4']
+            all_vals = [float(v) for vals in groups.values() for v in vals.values() if v is not None]
+            if not all_vals:
+                return ft.Text('Sin datos suficientes para graficar.', size=11, color=TEXT_MUTED)
+
+            max_val = max(all_vals)
+            # Escala superior redondeada para aprovechar todo el alto del gráfico.
+            step = 500.0 if max_val > 1500 else 250.0 if max_val > 750 else 100.0
+            y_max = max(step, ((int(max_val) + int(step) - 1) // int(step)) * step)
+            chart_h = 145
+            bar_w = 15
+            tick_count = 5
+            ticks = [y_max * (tick_count-i-1)/(tick_count-1) for i in range(tick_count)]
+            y_axis = ft.Column([
+                ft.Text(f'{t:.0f}', size=8.5, color=TEXT_MUTED) for t in ticks
+            ], height=chart_h+20, alignment=ft.MainAxisAlignment.SPACE_BETWEEN, horizontal_alignment=ft.CrossAxisAlignment.END)
+
+            eq_controls = []
+            for eq, pos_values in groups.items():
+                bars = []
+                for pos in pos_order:
+                    val = pos_values.get(pos)
+                    if val is None:
+                        h = 2
+                        value_label = '—'
+                        bar = ft.Container(width=bar_w, height=h, bgcolor='#CBD5E1', border_radius=2)
+                    else:
+                        v = max(0.0, min(y_max, float(val)))
+                        h = max(3, chart_h * v / y_max)
+                        value_label = f'{float(val):.0f}'
+                        bar = ft.Container(width=bar_w, height=h, bgcolor=NAV_ACCENT, border_radius=3)
+                    bars.append(ft.Column([
+                        ft.Text(value_label, size=8, weight=ft.FontWeight.BOLD, color=TEXT_MAIN),
+                        ft.Container(height=chart_h, alignment=ft.Alignment.BOTTOM_CENTER, content=bar),
+                        ft.Text(pos, size=7.5, weight=ft.FontWeight.BOLD, color=TEXT_MUTED, text_align=ft.TextAlign.CENTER),
+                    ], spacing=1, horizontal_alignment=ft.CrossAxisAlignment.CENTER))
+                eq_controls.append(ft.Column([
+                    ft.Row(bars, spacing=2, vertical_alignment=ft.CrossAxisAlignment.END),
+                    ft.Text(eq, size=9, weight=ft.FontWeight.BOLD, color=TEXT_MAIN),
+                ], spacing=2, horizontal_alignment=ft.CrossAxisAlignment.CENTER))
+
+            return ft.Row([
+                ft.Column([
+                    ft.Text('Horas', size=8.5, color=TEXT_MUTED),
+                    y_axis,
+                ], spacing=1, horizontal_alignment=ft.CrossAxisAlignment.END),
+                ft.Container(expand=True, content=ft.Row(
+                    eq_controls, spacing=12, scroll=ft.ScrollMode.AUTO, vertical_alignment=ft.CrossAxisAlignment.END
+                )),
+            ], spacing=8, vertical_alignment=ft.CrossAxisAlignment.END)
+
+        def brand_pie_chart(brand_counts):
+            if not brand_counts:
+                return ft.Text('Sin datos suficientes para graficar.', size=11, color=TEXT_MUTED)
+            total = sum(brand_counts.values())
+            palette = [ft.Colors.BLUE_700, ft.Colors.GREEN_600, ft.Colors.ORANGE_600, ft.Colors.PURPLE_500, ft.Colors.RED_500, ft.Colors.TEAL_500]
+            sections = []
+            legend = []
+            for idx, (brand, count) in enumerate(sorted(brand_counts.items(), key=lambda x: (-x[1], x[0]))):
+                color = palette[idx % len(palette)]
+                pct_value = (count / total * 100.0) if total else 0.0
+                sections.append(ft.PieChartSection(
+                    value=count,
+                    title=f'{pct_value:.0f}%',
+                    title_style=ft.TextStyle(size=10, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE),
+                    color=color,
+                    radius=72,
+                ))
+                legend.append(ft.Row([
+                    ft.Container(width=10, height=10, bgcolor=color, border_radius=2),
+                    ft.Text(f'{brand}: {count} ({pct_value:.1f}%)', size=9.5, color=TEXT_MAIN),
+                ], spacing=6))
+            chart = ft.PieChart(
+                sections=sections,
+                sections_space=2,
+                center_space_radius=38,
+                center_space_color=CARD_BG,
+                height=190,
+            )
+            return ft.Column([
+                ft.Container(height=195, content=chart),
+                ft.Text(f'{total} neumáticos', size=12, weight=ft.FontWeight.BOLD, color=TEXT_MAIN),
+                *legend,
+            ], spacing=5, horizontal_alignment=ft.CrossAxisAlignment.CENTER)
+
         def dashboard_card(title, subtitle, body):
             return ft.Container(
                 expand=True,
@@ -1044,8 +1132,14 @@ def main(page: ft.Page):
             )
 
         dashboard = ft.Row([
-            dashboard_card('REMANENTE POR POSICIÓN (%)', 'Eje X: equipos · P1, P2, P3 y P4 · Eje Y: % remanente', rem_chart_body),
-            dashboard_card('HORAS ACUMULADAS', 'Promedio de horas trabajadas por equipo', hours_chart_body),
+            ft.Column([
+                dashboard_card('REMANENTE POR POSICIÓN (%)', 'Eje X: equipos · P1, P2, P3 y P4 · Eje Y: % remanente', rem_chart_body),
+                dashboard_card('HORAS ACUMULADAS POR POSICIÓN (h)', 'Eje X: equipos · P1, P2, P3 y P4 · Eje Y: horas acumuladas', hours_chart_body),
+            ], expand=True, spacing=12),
+            ft.Container(
+                width=330,
+                content=dashboard_card('DISTRIBUCIÓN POR MARCA', 'Participación de neumáticos actualmente en servicio', brand_pie_body),
+            ),
         ], spacing=12, vertical_alignment=ft.CrossAxisAlignment.START)
 
         # Tabla técnica compacta: encabezado fijo + desplazamiento vertical interno.
@@ -1095,7 +1189,8 @@ def main(page: ft.Page):
             [service_cell(label, width, header=True) for label, width in zip(service_columns, service_widths)],
             spacing=0,
         )
-        service_body = ft.ListView(height=410, spacing=0, padding=0)
+        # Tabla completa verticalmente: todas las filas forman parte del scroll general de la página.
+        service_body = ft.Column([], spacing=0)
         service_table_view = ft.Row([
             ft.Container(
                 width=service_total_width,
@@ -1425,19 +1520,22 @@ def main(page: ft.Page):
                         worked = max(0.0, float(od['worked']))
                     except Exception:
                         worked = None
-                g = chart_groups.setdefault(eq, {'rem_by_pos': {}, 'hours': []})
+                g = chart_groups.setdefault(eq, {'rem_by_pos': {}, 'hours_by_pos': {}})
                 if rem is not None and pos in ('P1','P2','P3','P4'):
                     g['rem_by_pos'][pos] = rem
-                if worked is not None:
-                    g['hours'].append(worked)
+                if worked is not None and pos in ('P1','P2','P3','P4'):
+                    g['hours_by_pos'][pos] = worked
 
             rem_groups = {k: v['rem_by_pos'] for k, v in chart_groups.items() if v['rem_by_pos']}
-            hours_avgs = {k: sum(v['hours'])/len(v['hours']) for k,v in chart_groups.items() if v['hours']}
-            max_hours = max(hours_avgs.values(), default=1.0)
+            hours_groups = {k: v['hours_by_pos'] for k, v in chart_groups.items() if v['hours_by_pos']}
             rem_chart_body.controls = [grouped_remanente_chart(rem_groups)]
-            hours_chart_body.controls = [dashboard_bar(eq, val, max_hours, ' h', 1) for eq,val in hours_avgs.items()]
-            if not hours_chart_body.controls:
-                hours_chart_body.controls = [ft.Text('Sin datos suficientes para graficar.', size=11, color=TEXT_MUTED)]
+            hours_chart_body.controls = [grouped_hours_chart(hours_groups)]
+
+            brand_counts = {}
+            for r, _od in ops:
+                brand = str(r['brand'] or 'Sin marca').strip() or 'Sin marca'
+                brand_counts[brand] = brand_counts.get(brand, 0) + 1
+            brand_pie_body.controls = [brand_pie_chart(brand_counts)]
 
             if equipment_state['id'] not in (None, '', ALL):
                 er = query('SELECT * FROM equipment WHERE id=?', (int(equipment_state['id']),))
