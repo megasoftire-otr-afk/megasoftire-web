@@ -1,6 +1,7 @@
 # MegaSoftire Web 2026 - corrección INSP + fechas dd/mm/aaaa (31/08/2026)
 import datetime as dt
 import os
+import hashlib
 import flet as ft
 from database import init_db, query, execute, authenticate
 
@@ -2603,55 +2604,94 @@ def main(page: ft.Page):
         show_login()
 
     def show_login():
-        # Portada tradicional inspirada en MegaSoftire DOS.
-        # Por el momento no solicita usuario ni contraseña: un clic ingresa al sistema.
+        # Portada tradicional centrada, con proporciones similares a la versión FoxPro.
+        # Acceso básico local: usuario fijo y contraseña comparada por hash.
+        classic_blue = '#0000AA'
+        classic_white = '#FFFFFF'
+        outer_bg = '#E5E7EB'
+        expected_user = 'admin'
+        expected_password_hash = '04445e6487736590d1ef50186b414e737e0164683cbbec64e00e73c000fd3bef'
+
+        user_field = ft.TextField(
+            label='Usuario',
+            value='',
+            width=280,
+            autofocus=True,
+            bgcolor=classic_white,
+            color='#111111',
+            border_color=classic_white,
+        )
+        password_field = ft.TextField(
+            label='Contraseña',
+            value='',
+            width=280,
+            password=True,
+            can_reveal_password=True,
+            bgcolor=classic_white,
+            color='#111111',
+            border_color=classic_white,
+        )
+        login_message = ft.Text('', size=13, color='#FFFF66', text_align=ft.TextAlign.CENTER)
+
         def enter_system(e=None):
-            users = query("SELECT * FROM users ORDER BY CASE WHEN username='admin' THEN 0 ELSE 1 END, id LIMIT 1")
+            username = (user_field.value or '').strip()
+            password = password_field.value or ''
+            password_ok = hashlib.sha256(password.encode('utf-8')).hexdigest() == expected_password_hash
+            if username != expected_user or not password_ok:
+                login_message.value = 'Usuario o contraseña incorrectos'
+                password_field.value = ''
+                page.update()
+                return
+
+            users = query("SELECT * FROM users WHERE username=? LIMIT 1", (expected_user,))
             if users:
                 session['user'] = users[0]
             else:
-                # Respaldo visual si una base antigua no tuviera tabla/usuario disponible.
-                session['user'] = {'username': 'MegaSoftire', 'full_name': 'MegaSoftire', 'role': 'ADMIN'}
+                session['user'] = {'username': 'admin', 'full_name': 'Administrador', 'role': 'ADMIN'}
             build_shell()
             page.update()
 
-        classic_blue = '#0000AA'
-        classic_white = '#FFFFFF'
-        cover = ft.Container(
-            expand=True,
+        user_field.on_submit = lambda e: password_field.focus()
+        password_field.on_submit = enter_system
+
+        login_panel = ft.Container(
+            width=760,
+            height=480,
             bgcolor=classic_blue,
-            padding=18,
-            content=ft.Container(
-                expand=True,
-                border=ft.Border(
-                    left=ft.BorderSide(2, classic_white),
-                    top=ft.BorderSide(2, classic_white),
-                    right=ft.BorderSide(2, classic_white),
-                    bottom=ft.BorderSide(2, classic_white),
-                ),
-                padding=18,
-                content=ft.Column([
-                    ft.Container(height=20),
-                    ft.Text('SISTEMA DE CONTROL DE NEUMÁTICOS OTR',
-                            size=22, weight=ft.FontWeight.BOLD, color=classic_white,
-                            text_align=ft.TextAlign.CENTER),
-                    ft.Container(height=35),
-                    ft.Text('MegaSoftire', size=76, weight=ft.FontWeight.BOLD,
-                            color=classic_white, text_align=ft.TextAlign.CENTER),
-                    ft.Container(height=16),
-                    ft.Text('VERSIÓN WEB 2026', size=20, weight=ft.FontWeight.BOLD,
-                            color=classic_white, text_align=ft.TextAlign.CENTER),
-                    ft.Container(expand=True),
-                    ft.Text('HAGA CLICK PARA INGRESAR AL SISTEMA', size=18,
-                            weight=ft.FontWeight.BOLD, color=classic_white,
-                            text_align=ft.TextAlign.CENTER),
-                    ft.Text('...', size=20, color=classic_white,
-                            text_align=ft.TextAlign.CENTER),
-                    ft.Container(height=22),
-                ], horizontal_alignment=ft.CrossAxisAlignment.CENTER)
-            )
+            padding=14,
+            border=ft.Border(
+                left=ft.BorderSide(2, classic_white),
+                top=ft.BorderSide(2, classic_white),
+                right=ft.BorderSide(2, classic_white),
+                bottom=ft.BorderSide(2, classic_white),
+            ),
+            content=ft.Column([
+                ft.Container(height=8),
+                ft.Text('SISTEMA DE CONTROL DE NEUMÁTICOS OTR',
+                        size=20, weight=ft.FontWeight.BOLD, color=classic_white,
+                        text_align=ft.TextAlign.CENTER),
+                ft.Container(height=18),
+                ft.Text('MegaSoftire', size=58, weight=ft.FontWeight.BOLD,
+                        color=classic_white, text_align=ft.TextAlign.CENTER),
+                ft.Text('VERSIÓN WEB 2026', size=17, weight=ft.FontWeight.BOLD,
+                        color=classic_white, text_align=ft.TextAlign.CENTER),
+                ft.Container(height=12),
+                ft.Text('ACCESO AL SISTEMA', size=15, weight=ft.FontWeight.BOLD,
+                        color=classic_white, text_align=ft.TextAlign.CENTER),
+                ft.Row([user_field], alignment=ft.MainAxisAlignment.CENTER),
+                ft.Row([password_field], alignment=ft.MainAxisAlignment.CENTER),
+                login_message,
+                ft.ElevatedButton('INGRESAR', icon=ft.Icons.LOGIN, on_click=enter_system),
+                ft.Container(height=4),
+            ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=8)
         )
-        app_host.content = ft.GestureDetector(content=cover, on_tap=enter_system)
+
+        app_host.content = ft.Container(
+            expand=True,
+            bgcolor=outer_bg,
+            alignment=ft.Alignment.CENTER,
+            content=login_panel,
+        )
         page.update()
 
     def adapt(e=None):
