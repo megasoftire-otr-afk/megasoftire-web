@@ -1146,7 +1146,7 @@ def main(page: ft.Page):
                 if equipment_state['id'] not in (None, '', ALL):
                     options_sql += ' AND t.equipment_id=?'
                     options_params.append(int(equipment_state['id']))
-                options_sql += " ORDER BY CAST(COALESCE(NULLIF(t.position,''),'999') AS INTEGER),t.code"
+                options_sql += " ORDER BY COALESCE(e.code,''), CAST(COALESCE(NULLIF(t.position,''),'999') AS INTEGER), t.code"
                 option_rows = query(options_sql, tuple(options_params))
 
             refresh_tire_options(option_rows)
@@ -1514,7 +1514,7 @@ def main(page: ft.Page):
                     summary
                 ]),
                 ft.Text(
-                    'Una fila por neumático instalado. Los equipos se muestran agrupados y separados horizontalmente.',
+                    'Una fila por neumático instalado. Cada equipo muestra P1, P2, P3 y P4 en orden, con separación antes del siguiente equipo.',
                     size=10, color=TEXT_MUTED
                 ),
                 ft.Row([table], scroll=ft.ScrollMode.AUTO)
