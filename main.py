@@ -3106,16 +3106,16 @@ def main(page: ft.Page):
         )
 
         condition_rows=[]
-        for label,color in [
-            ('BUEN ESTADO','#2E9B45'),
-            ('PRÓXIMO CAMBIO','#C98600'),
-            ('CAMBIO URGENTE','#D92D20'),
+        for label,text_color,row_color in [
+            ('BUEN ESTADO','#176B2C','#DDF3E3'),
+            ('PRÓXIMO CAMBIO','#8A5A00','#FFF0C2'),
+            ('CAMBIO URGENTE','#A61B12','#FAD9D6'),
         ]:
             n=counts[label]
-            condition_rows.append(ft.DataRow(cells=[
-                ft.DataCell(ft.Text(label.title(), size=10, weight=ft.FontWeight.BOLD, color=color)),
-                ft.DataCell(ft.Text(str(n), size=10)),
-                ft.DataCell(ft.Text(f'{pct(n,evaluated_total):.1f}%', size=10)),
+            condition_rows.append(ft.DataRow(color=row_color, cells=[
+                ft.DataCell(ft.Text(label.title(), size=10, weight=ft.FontWeight.BOLD, color=text_color)),
+                ft.DataCell(ft.Text(str(n), size=10, weight=ft.FontWeight.BOLD, color=text_color)),
+                ft.DataCell(ft.Text(f'{pct(n,evaluated_total):.1f}%', size=10, weight=ft.FontWeight.BOLD, color=text_color)),
             ]))
         if counts['SIN LECTURA']:
             condition_rows.append(ft.DataRow(cells=[
@@ -3123,20 +3123,21 @@ def main(page: ft.Page):
                 ft.DataCell(ft.Text(str(counts['SIN LECTURA']), size=10)),
                 ft.DataCell(ft.Text(f'{pct(counts["SIN LECTURA"],total):.1f}%', size=10)),
             ]))
-        condition_rows.append(ft.DataRow(cells=[
-            ft.DataCell(ft.Text('TOTAL', size=10, weight=ft.FontWeight.BOLD)),
-            ft.DataCell(ft.Text(str(total), size=10, weight=ft.FontWeight.BOLD)),
-            ft.DataCell(ft.Text('100.0%' if total else '0.0%', size=10, weight=ft.FontWeight.BOLD)),
+        condition_rows.append(ft.DataRow(color='#000000', cells=[
+            ft.DataCell(ft.Text('TOTAL', size=10, weight=ft.FontWeight.BOLD, color='#FFFFFF')),
+            ft.DataCell(ft.Text(str(total), size=10, weight=ft.FontWeight.BOLD, color='#FFFFFF')),
+            ft.DataCell(ft.Text('100.0%' if total else '0.0%', size=10, weight=ft.FontWeight.BOLD, color='#FFFFFF')),
         ]))
         condition_table=ft.DataTable(
             heading_row_height=34,
+            heading_row_color='#000000',
             data_row_min_height=30,
             data_row_max_height=30,
             column_spacing=34,
             columns=[
-                ft.DataColumn(ft.Text('Condición', size=11, weight=ft.FontWeight.BOLD)),
-                ft.DataColumn(ft.Text('Cantidad', size=11, weight=ft.FontWeight.BOLD), numeric=True),
-                ft.DataColumn(ft.Text('% del Total', size=11, weight=ft.FontWeight.BOLD), numeric=True),
+                ft.DataColumn(ft.Text('Condición', size=11, weight=ft.FontWeight.BOLD, color='#FFFFFF')),
+                ft.DataColumn(ft.Text('Cantidad', size=11, weight=ft.FontWeight.BOLD, color='#FFFFFF'), numeric=True),
+                ft.DataColumn(ft.Text('% del Total', size=11, weight=ft.FontWeight.BOLD, color='#FFFFFF'), numeric=True),
             ],
             rows=condition_rows
         )
