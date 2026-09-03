@@ -999,8 +999,9 @@ def main(page: ft.Page):
                 horizontal_alignment=ft.CrossAxisAlignment.END,
             )
 
-            eq_controls = []
-            for eq, pos_values in groups.items():
+            group_blocks = []
+            group_items = list(groups.items())
+            for idx, (eq, pos_values) in enumerate(group_items):
                 bars = []
                 for pos in pos_order:
                     val = pos_values.get(pos)
@@ -1016,17 +1017,24 @@ def main(page: ft.Page):
                                 text_align=ft.TextAlign.CENTER),
                     ], spacing=2, horizontal_alignment=ft.CrossAxisAlignment.CENTER))
 
-                eq_controls.append(ft.Container(
-                    width=100,
+                group_blocks.append(ft.Container(
+                    width=76,
                     content=ft.Column([
-                        ft.Row(bars, spacing=6, alignment=ft.MainAxisAlignment.CENTER,
+                        ft.Row(bars, spacing=4, alignment=ft.MainAxisAlignment.CENTER,
                                vertical_alignment=ft.CrossAxisAlignment.END),
-                        ft.Text(f'|  {eq}  |', size=9, weight=ft.FontWeight.BOLD,
+                        ft.Text(eq, size=9, weight=ft.FontWeight.BOLD,
                                 color=TEXT_MAIN, text_align=ft.TextAlign.CENTER),
                     ], spacing=3, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
                 ))
+                if idx < len(group_items) - 1:
+                    group_blocks.append(ft.Container(
+                        width=12,
+                        height=chart_h + 28,
+                        alignment=ft.Alignment.BOTTOM_CENTER,
+                        content=ft.Text('|', size=12, weight=ft.FontWeight.BOLD, color=TEXT_MUTED),
+                    ))
 
-            # Se conserva la misma estructura general de v38 y solo se añade la cuadrícula.
+            # Separación compacta entre equipos; la barra vertical queda centrada en el espacio blanco.
             plot = ft.Stack([
                 ft.Column(
                     [_soft_dotted_grid() for _ in ticks],
@@ -1035,8 +1043,9 @@ def main(page: ft.Page):
                     spacing=0,
                 ),
                 ft.Row(
-                    eq_controls,
-                    alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                    group_blocks,
+                    spacing=4,
+                    alignment=ft.MainAxisAlignment.CENTER,
                     vertical_alignment=ft.CrossAxisAlignment.END,
                 ),
             ], height=chart_h + 28)
@@ -1070,8 +1079,9 @@ def main(page: ft.Page):
                 horizontal_alignment=ft.CrossAxisAlignment.END,
             )
 
-            eq_controls = []
-            for eq, pos_values in groups.items():
+            group_blocks = []
+            group_items = list(groups.items())
+            for idx, (eq, pos_values) in enumerate(group_items):
                 bars = []
                 for pos in pos_order:
                     val = pos_values.get(pos)
@@ -1087,15 +1097,22 @@ def main(page: ft.Page):
                                 text_align=ft.TextAlign.CENTER),
                     ], spacing=2, horizontal_alignment=ft.CrossAxisAlignment.CENTER))
 
-                eq_controls.append(ft.Container(
-                    width=100,
+                group_blocks.append(ft.Container(
+                    width=76,
                     content=ft.Column([
-                        ft.Row(bars, spacing=6, alignment=ft.MainAxisAlignment.CENTER,
+                        ft.Row(bars, spacing=4, alignment=ft.MainAxisAlignment.CENTER,
                                vertical_alignment=ft.CrossAxisAlignment.END),
-                        ft.Text(f'|  {eq}  |', size=9, weight=ft.FontWeight.BOLD,
+                        ft.Text(eq, size=9, weight=ft.FontWeight.BOLD,
                                 color=TEXT_MAIN, text_align=ft.TextAlign.CENTER),
                     ], spacing=3, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
                 ))
+                if idx < len(group_items) - 1:
+                    group_blocks.append(ft.Container(
+                        width=12,
+                        height=chart_h + 28,
+                        alignment=ft.Alignment.BOTTOM_CENTER,
+                        content=ft.Text('|', size=12, weight=ft.FontWeight.BOLD, color=TEXT_MUTED),
+                    ))
 
             plot = ft.Stack([
                 ft.Column(
@@ -1105,8 +1122,9 @@ def main(page: ft.Page):
                     spacing=0,
                 ),
                 ft.Row(
-                    eq_controls,
-                    alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                    group_blocks,
+                    spacing=4,
+                    alignment=ft.MainAxisAlignment.CENTER,
                     vertical_alignment=ft.CrossAxisAlignment.END,
                 ),
             ], height=chart_h + 28)
