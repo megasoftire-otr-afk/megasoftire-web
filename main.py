@@ -1425,22 +1425,7 @@ def main(page: ft.Page):
                 'Neumáticos en servicio',
                 'Estado actual, posiciones, horas de trabajo e historial operativo por equipo'
             ),
-            card(ft.Column([
-                ft.Text('Consulta operativa', size=17, weight=ft.FontWeight.BOLD, color=TEXT_MAIN),
-                ft.Row([search, eq_filter, tire_filter], wrap=True, spacing=12, run_spacing=12),
-                eq_info,
-                ft.Text('Registrar evento', size=12, weight=ft.FontWeight.W_600, color=TEXT_MUTED),
-                ft.Row(
-                    [event_buttons[c] for c in ['INST','INSP','INSC','ROT','INVE','DINS','REPA','BAJA']],
-                    wrap=True, spacing=8, run_spacing=8
-                ),
-            ])),
             metrics,
-            card(ft.Column([
-                ft.Text('Vista de posiciones', size=17, weight=ft.FontWeight.BOLD, color=TEXT_MAIN),
-                ft.Text('Cada tarjeta representa la condición actual del neumático instalado en su posición.', size=11, color=TEXT_MUTED),
-                position_grid
-            ])),
             card(ft.Column([
                 ft.Row([
                     ft.Text('Detalle técnico de neumáticos instalados', size=17, weight=ft.FontWeight.BOLD, color=TEXT_MAIN),
