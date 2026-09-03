@@ -947,6 +947,50 @@ def main(page: ft.Page):
         metrics = ft.Row([], wrap=True, spacing=12, run_spacing=12)
         position_grid = ft.Row([], wrap=True, spacing=12, run_spacing=12)
 
+        # Dashboard visual tipo Power BI. Se alimenta exclusivamente de los
+        # mismos datos calculados para la tabla de neumáticos en servicio.
+        rem_chart_body = ft.Column([], spacing=7)
+        cost_chart_body = ft.Column([], spacing=7)
+
+        def dashboard_bar(label, value, max_value, suffix='', decimals=1):
+            try:
+                val = float(value)
+            except Exception:
+                val = 0.0
+            try:
+                mx = max(float(max_value), 0.0001)
+            except Exception:
+                mx = 1.0
+            ratio = max(0.0, min(1.0, val / mx))
+            return ft.Row([
+                ft.Text(label, width=72, size=10, weight=ft.FontWeight.BOLD, color=TEXT_MAIN),
+                ft.Stack([
+                    ft.Container(width=260, height=14, bgcolor='#E9EEF5', border_radius=7),
+                    ft.Container(width=max(3, 260 * ratio), height=14, bgcolor=NAV_ACCENT, border_radius=7),
+                ], width=260, height=14),
+                ft.Text(f'{val:.{decimals}f}{suffix}', width=72, size=10, text_align=ft.TextAlign.RIGHT, color=TEXT_MAIN),
+            ], spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER)
+
+        def dashboard_card(title, subtitle, body):
+            return ft.Container(
+                expand=True,
+                bgcolor=CARD_BG,
+                border=ft.Border.all(1, '#E2E8F0'),
+                border_radius=14,
+                padding=16,
+                content=ft.Column([
+                    ft.Text(title, size=14, weight=ft.FontWeight.BOLD, color=TEXT_MAIN),
+                    ft.Text(subtitle, size=10, color=TEXT_MUTED),
+                    ft.Divider(height=10, color='#E2E8F0'),
+                    body,
+                ], spacing=5),
+            )
+
+        dashboard = ft.Row([
+            dashboard_card('REMANENTE POR POSICIÓN (%)', 'Promedio por equipo · datos de la última inspección', rem_chart_body),
+            dashboard_card('COSTO POR HORA (US$/h)', 'Promedio por equipo · costo de adquisición / horas acumuladas', cost_chart_body),
+        ], spacing=12, vertical_alignment=ft.CrossAxisAlignment.START)
+
         service_columns = [
             'CÓDIGO DE EQUIPO',
             'POSICIÓN',
@@ -1281,6 +1325,41 @@ def main(page: ft.Page):
                 metric_card('Último evento', format_date(latest_date) or '—', ft.Icons.SWAP_HORIZ, 'Fecha más reciente'),
             ]
 
+            # Resumen gráfico por equipo. Cada barra consolida P1-P4 del equipo
+            # para mantener el dashboard legible aun con toda la flota visible.
+            chart_groups = {}
+            for r, od in ops:
+                eq = r['equipment_code'] or '—'
+                original_outer = r['new_tread_outer'] if 'new_tread_outer' in r.keys() else None
+                original_inner = r['new_tread_inner'] if 'new_tread_inner' in r.keys() else None
+                if original_outer is None:
+                    original_outer = r['new_tread']
+                if original_inner is None:
+                    original_inner = r['new_tread']
+                original_vals = [v for v in (original_outer, original_inner) if isinstance(v, (int, float))]
+                current_vals = [v for v in (r['tread_outer'], r['tread_inner']) if isinstance(v, (int, float))]
+                rem = None
+                if original_vals and current_vals and min(original_vals) not in (None, 0):
+                    rem = max(0, min(100, float(min(current_vals)) / float(min(original_vals)) * 100))
+                cph = None
+                if r['cost_usd'] is not None and od['worked'] is not None and float(od['worked']) > 0:
+                    cph = float(r['cost_usd']) / float(od['worked'])
+                g = chart_groups.setdefault(eq, {'rem': [], 'cost': []})
+                if rem is not None:
+                    g['rem'].append(rem)
+                if cph is not None:
+                    g['cost'].append(cph)
+
+            rem_avgs = {k: sum(v['rem'])/len(v['rem']) for k,v in chart_groups.items() if v['rem']}
+            cost_avgs = {k: sum(v['cost'])/len(v['cost']) for k,v in chart_groups.items() if v['cost']}
+            max_cost = max(cost_avgs.values(), default=1.0)
+            rem_chart_body.controls = [dashboard_bar(eq, val, 100, '%', 1) for eq,val in rem_avgs.items()]
+            cost_chart_body.controls = [dashboard_bar(eq, val, max_cost, '/h', 2) for eq,val in cost_avgs.items()]
+            if not rem_chart_body.controls:
+                rem_chart_body.controls = [ft.Text('Sin datos suficientes para graficar.', size=11, color=TEXT_MUTED)]
+            if not cost_chart_body.controls:
+                cost_chart_body.controls = [ft.Text('Sin datos suficientes para graficar.', size=11, color=TEXT_MUTED)]
+
             if equipment_state['id'] not in (None, '', ALL):
                 er = query('SELECT * FROM equipment WHERE id=?', (int(equipment_state['id']),))
                 if er:
@@ -1507,6 +1586,7 @@ def main(page: ft.Page):
                 'Estado actual, posiciones, horas de trabajo e historial operativo por equipo'
             ),
             metrics,
+            dashboard,
             card(ft.Column([
                 ft.Row([
                     ft.Text('Detalle técnico de neumáticos instalados', size=17, weight=ft.FontWeight.BOLD, color=TEXT_MAIN),
