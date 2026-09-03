@@ -3153,20 +3153,20 @@ def main(page: ft.Page):
                            f'{attention} neumáticos', '#C81D2A'),
             ], wrap=True, spacing=12, run_spacing=12),
             ft.Row([
-                card(ft.Column([
+                ft.Container(expand=1, content=card(ft.Column([
                     ft.Text('SCOOP POR MODELO', size=14, weight=ft.FontWeight.BOLD, color=TEXT_MAIN),
                     ft.Row([scoop_table], scroll=ft.ScrollMode.AUTO),
                     ft.Text('Modelos tomados del registro de equipos.', size=9.5, italic=True, color=TEXT_MUTED),
-                ], spacing=8), expand=1),
-                card(ft.Column([
+                ], spacing=8))),
+                ft.Container(expand=1, content=card(ft.Column([
                     ft.Text('CONDICIÓN GENERAL DE NEUMÁTICOS (RTD)', size=14, weight=ft.FontWeight.BOLD, color=TEXT_MAIN),
                     ft.Row([condition_table], scroll=ft.ScrollMode.AUTO),
-                ], spacing=8), expand=1),
-                card(ft.Column([
+                ], spacing=8))),
+                ft.Container(expand=1, content=card(ft.Column([
                     ft.Text('GRÁFICO DE CONDICIÓN RTD', size=14, weight=ft.FontWeight.BOLD, color=TEXT_MAIN),
                     rtd_donut_chart(),
                     ft.Text('Evaluación según la menor lectura RTD disponible.', size=9.5, italic=True, color=TEXT_MUTED),
-                ], spacing=8), expand=1),
+                ], spacing=8))),
             ], spacing=12, vertical_alignment=ft.CrossAxisAlignment.START),
         ], scroll=ft.ScrollMode.AUTO, spacing=16)
         page.update()
