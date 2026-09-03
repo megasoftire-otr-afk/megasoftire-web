@@ -3086,16 +3086,23 @@ def main(page: ft.Page):
             if 'SCOOP' in vehicle:
                 model=(str(r['equipment_model']).strip().upper() if r['equipment_model'] else 'SIN MODELO')
                 scoop_summary[model]=scoop_summary.get(model,0)+1
+        scoop_total=sum(scoop_summary.values())
         scoop_table=ft.DataTable(
-            heading_row_height=34, data_row_min_height=30, data_row_max_height=30, column_spacing=22,
+            heading_row_height=34, data_row_min_height=30, data_row_max_height=30, column_spacing=18,
             columns=[
                 ft.DataColumn(ft.Text('Modelo Scoop',size=11,weight=ft.FontWeight.BOLD)),
                 ft.DataColumn(ft.Text('N° Neumáticos',size=11,weight=ft.FontWeight.BOLD),numeric=True),
+                ft.DataColumn(ft.Text('% del Total',size=11,weight=ft.FontWeight.BOLD),numeric=True),
             ],
             rows=[ft.DataRow(cells=[
                 ft.DataCell(ft.Text(model,size=10)),
                 ft.DataCell(ft.Text(str(n),size=10)),
-            ]) for model,n in sorted(scoop_summary.items())]
+                ft.DataCell(ft.Text(f'{pct(n,scoop_total):.1f}%',size=10)),
+            ]) for model,n in sorted(scoop_summary.items())] + ([ft.DataRow(cells=[
+                ft.DataCell(ft.Text('TOTAL',size=10,weight=ft.FontWeight.BOLD)),
+                ft.DataCell(ft.Text(str(scoop_total),size=10,weight=ft.FontWeight.BOLD)),
+                ft.DataCell(ft.Text('100.0%' if scoop_total else '0.0%',size=10,weight=ft.FontWeight.BOLD)),
+            ])] if scoop_total else [])
         )
 
         condition_rows=[]
@@ -3147,20 +3154,20 @@ def main(page: ft.Page):
             ], wrap=True, spacing=12, run_spacing=12),
             ft.Row([
                 card(ft.Column([
-                    ft.Text('CONDICIÓN GENERAL DE NEUMÁTICOS (RTD)', size=14, weight=ft.FontWeight.BOLD, color=TEXT_MAIN),
-                    rtd_donut_chart(),
-                    ft.Text('Evaluación según la menor lectura RTD disponible.', size=9.5, italic=True, color=TEXT_MUTED),
-                ], spacing=8), width=390),
-                card(ft.Column([
-                    ft.Text('RESUMEN POR TIPO DE VEHÍCULO', size=14, weight=ft.FontWeight.BOLD, color=TEXT_MAIN),
-                    ft.Row([vehicle_table], scroll=ft.ScrollMode.AUTO),
-                ], spacing=8), width=430),
-                card(ft.Column([
                     ft.Text('SCOOP POR MODELO', size=14, weight=ft.FontWeight.BOLD, color=TEXT_MAIN),
                     ft.Row([scoop_table], scroll=ft.ScrollMode.AUTO),
                     ft.Text('Modelos tomados del registro de equipos.', size=9.5, italic=True, color=TEXT_MUTED),
-                ], spacing=8), width=330),
-            ], wrap=True, spacing=12, run_spacing=12),
+                ], spacing=8), expand=1),
+                card(ft.Column([
+                    ft.Text('CONDICIÓN GENERAL DE NEUMÁTICOS (RTD)', size=14, weight=ft.FontWeight.BOLD, color=TEXT_MAIN),
+                    ft.Row([condition_table], scroll=ft.ScrollMode.AUTO),
+                ], spacing=8), expand=1),
+                card(ft.Column([
+                    ft.Text('GRÁFICO DE CONDICIÓN RTD', size=14, weight=ft.FontWeight.BOLD, color=TEXT_MAIN),
+                    rtd_donut_chart(),
+                    ft.Text('Evaluación según la menor lectura RTD disponible.', size=9.5, italic=True, color=TEXT_MUTED),
+                ], spacing=8), expand=1),
+            ], spacing=12, vertical_alignment=ft.CrossAxisAlignment.START),
         ], scroll=ft.ScrollMode.AUTO, spacing=16)
         page.update()
 
