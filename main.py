@@ -985,7 +985,7 @@ def main(page: ft.Page):
             max_val = min(100.0, max(all_vals))
             y_max = max(20.0, min(100.0, ((int(max_val) + 9) // 10) * 10.0))
             chart_h = 150
-            bar_w = 15
+            bar_w = 14
             tick_count = 5
             ticks = [y_max * (tick_count-i-1)/(tick_count-1) for i in range(tick_count)]
             y_axis = ft.Column([
@@ -1027,7 +1027,11 @@ def main(page: ft.Page):
                 ], spacing=1, horizontal_alignment=ft.CrossAxisAlignment.END),
                 ft.Container(
                     expand=True,
-                    content=ft.Row(eq_controls, spacing=12, scroll=ft.ScrollMode.AUTO, vertical_alignment=ft.CrossAxisAlignment.END),
+                    content=ft.Row(
+                        eq_controls,
+                        alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                        vertical_alignment=ft.CrossAxisAlignment.END,
+                    ),
                 ),
             ], spacing=8, vertical_alignment=ft.CrossAxisAlignment.END)
 
@@ -1043,7 +1047,7 @@ def main(page: ft.Page):
             step = 500.0 if max_val > 1500 else 250.0 if max_val > 750 else 100.0
             y_max = max(step, ((int(max_val) + int(step) - 1) // int(step)) * step)
             chart_h = 145
-            bar_w = 15
+            bar_w = 14
             tick_count = 5
             ticks = [y_max * (tick_count-i-1)/(tick_count-1) for i in range(tick_count)]
             y_axis = ft.Column([
@@ -1080,7 +1084,9 @@ def main(page: ft.Page):
                     y_axis,
                 ], spacing=1, horizontal_alignment=ft.CrossAxisAlignment.END),
                 ft.Container(expand=True, content=ft.Row(
-                    eq_controls, spacing=12, scroll=ft.ScrollMode.AUTO, vertical_alignment=ft.CrossAxisAlignment.END
+                    eq_controls,
+                    alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                    vertical_alignment=ft.CrossAxisAlignment.END,
                 )),
             ], spacing=8, vertical_alignment=ft.CrossAxisAlignment.END)
 
@@ -1157,11 +1163,6 @@ def main(page: ft.Page):
             return donut_svg_chart(
                 items,
                 palette=['#16A34A', '#F59E0B', '#DC2626'],
-                legend_lines=[
-                    '± 5 psi = VERDE (OK)',
-                    '> 5 a 10 psi = NARANJA (ATENCIÓN)',
-                    '> 10 psi = ROJO (ALTO RIESGO)',
-                ],
             )
 
         def valve_pie_chart(counts):
@@ -1171,9 +1172,10 @@ def main(page: ft.Page):
             ]
             return donut_svg_chart(items, palette=['#16A34A', '#DC2626'])
 
-        def dashboard_card(title, subtitle, body):
+        def dashboard_card(title, subtitle, body, height=None):
             return ft.Container(
                 expand=True,
+                height=height,
                 bgcolor=CARD_BG,
                 border=ft.Border.all(1, '#E2E8F0'),
                 border_radius=14,
@@ -1192,9 +1194,9 @@ def main(page: ft.Page):
             dashboard_card('REMANENTE POR POSICIÓN (%)', 'Eje X: equipos · P1, P2, P3 y P4 · Eje Y: % remanente', rem_chart_body),
             dashboard_card('HORAS ACUMULADAS POR POSICIÓN (h)', 'Eje X: equipos · P1, P2, P3 y P4 · Eje Y: horas acumuladas', hours_chart_body),
             ft.Row([
-                dashboard_card('DISTRIBUCIÓN POR MARCA', 'Participación de neumáticos actualmente en servicio', brand_pie_body),
-                dashboard_card('PRESIONES VS. PRESIÓN RECOMENDADA', 'Diferencia absoluta entre presión actual y recomendada', pressure_pie_body),
-                dashboard_card('TAPA VÁLVULA', 'Estado de tapa de válvula en neumáticos en servicio', valve_pie_body),
+                dashboard_card('DISTRIBUCIÓN POR MARCA', 'Participación de neumáticos actualmente en servicio', brand_pie_body, height=245),
+                dashboard_card('PRESIONES VS. PRESIÓN RECOMENDADA', 'Diferencia absoluta entre presión actual y recomendada', pressure_pie_body, height=245),
+                dashboard_card('TAPA VÁLVULA', 'Estado de tapa de válvula en neumáticos en servicio', valve_pie_body, height=245),
             ], spacing=12, vertical_alignment=ft.CrossAxisAlignment.START),
         ], spacing=12)
 
