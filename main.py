@@ -3241,13 +3241,19 @@ def main(page: ft.Page):
                 password_field.value = ''
                 page.update()
                 return
-            users = query("SELECT * FROM users WHERE username=? LIMIT 1", (expected_user,))
-            if users:
-                session['user'] = users[0]
-            else:
-                session['user'] = {'username': 'admin', 'full_name': 'Administrador', 'role': 'ADMIN'}
-            build_shell()
-            page.update()
+            # Login web estable: después de validar usuario/clave usamos un perfil
+            # conocido y completo. Esto evita que una fila antigua/incompleta de la
+            # tabla users en Render bloquee la construcción de la pantalla principal.
+            session['user'] = {'username': 'admin', 'full_name': 'Administrador', 'role': 'ADMIN'}
+            try:
+                build_shell()
+                page.update()
+            except Exception as ex:
+                # Si hubiera un error al construir la pantalla principal, no dejar el
+                # botón aparentemente sin respuesta: mostramos el fallo en la portada.
+                session['user'] = None
+                login_message.value = f'ERROR AL INGRESAR: {str(ex)[:120]}'
+                page.update()
 
         user_field.on_submit = lambda e: password_field.focus()
         password_field.on_submit = enter_system
