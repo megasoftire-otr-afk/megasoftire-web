@@ -2894,21 +2894,216 @@ def main(page: ft.Page):
         page.update()
 
     def maintenance_view():
-        rows=query("SELECT t.code,t.serial,t.status,t.tread_inner,t.tread_outer,t.recommended_pressure,e.code equipment_code,t.position FROM tires t LEFT JOIN equipment e ON e.id=t.equipment_id WHERE t.status='SERVICIO' ORDER BY t.code")
-        table=ft.DataTable(columns=[ft.DataColumn(ft.Text(x)) for x in ['Neumático','Serie','Equipo','Pos.','Cocada I/E','Pres. ref.','Prioridad']],rows=[])
+        """Programa de mantenimiento - Prueba 01: evaluación de remanente (RTD)."""
+        rows = query("""
+            SELECT
+                t.code, t.serial, t.brand, t.size, t.design,
+                t.tread_inner, t.tread_outer,
+                e.id AS equipment_id, e.code AS equipment_code,
+                e.vehicle_type, t.position
+            FROM tires t
+            LEFT JOIN equipment e ON e.id=t.equipment_id
+            WHERE t.status='SERVICIO'
+            ORDER BY COALESCE(e.code,''), t.position, t.code
+        """)
+
+        def rtd_value(r):
+            vals=[]
+            for value in (r['tread_inner'], r['tread_outer']):
+                try:
+                    if value is not None and str(value).strip() != '':
+                        vals.append(float(value))
+                except Exception:
+                    pass
+            return min(vals) if vals else None
+
+        def rtd_condition(rtd):
+            # Criterio aprobado para Prueba 01:
+            # Buen estado > 30 mm
+            # Próximo cambio > 20 y <= 30 mm
+            # Cambio urgente 0 a 20 mm
+            if rtd is None or rtd < 0:
+                return 'SIN LECTURA'
+            if rtd > 30:
+                return 'BUEN ESTADO'
+            if rtd > 20:
+                return 'PRÓXIMO CAMBIO'
+            return 'CAMBIO URGENTE'
+
+        evaluated=[]
         for r in rows:
-            vals=[v for v in [r['tread_inner'],r['tread_outer']] if isinstance(v,(int,float))]
-            min_t=min(vals) if vals else None
-            priority='ALTA' if min_t is not None and min_t <= 20 else ('MEDIA' if min_t is not None and min_t <= 35 else 'NORMAL')
-            table.rows.append(ft.DataRow(cells=[ft.DataCell(ft.Text(str(v or ''))) for v in [r['code'],r['serial'],r['equipment_code'],r['position'],f"{r['tread_inner'] or ''}/{r['tread_outer'] or ''}",r['recommended_pressure'],priority]]))
+            rtd=rtd_value(r)
+            evaluated.append((r, rtd, rtd_condition(rtd)))
+
+        total=len(rows)
+        equipment_count=len({r['equipment_id'] for r in rows if r['equipment_id'] is not None})
+        counts={
+            'BUEN ESTADO': 0,
+            'PRÓXIMO CAMBIO': 0,
+            'CAMBIO URGENTE': 0,
+            'SIN LECTURA': 0,
+        }
+        for _,_,condition in evaluated:
+            counts[condition]=counts.get(condition,0)+1
+
+        evaluated_total=total-counts['SIN LECTURA']
+        good_pct=(counts['BUEN ESTADO']/evaluated_total*100) if evaluated_total else 0
+        attention=counts['PRÓXIMO CAMBIO']+counts['CAMBIO URGENTE']
+        attention_pct=(attention/evaluated_total*100) if evaluated_total else 0
+
+        def pct(value, base):
+            return (value/base*100) if base else 0
+
+        def top_metric(title, value, subtitle, value_color=TEXT_MAIN):
+            return ft.Container(
+                width=250,
+                height=108,
+                bgcolor=CARD_BG,
+                border=ft.Border.all(1, '#DDE5ED'),
+                border_radius=10,
+                padding=14,
+                content=ft.Column([
+                    ft.Text(title, size=12, weight=ft.FontWeight.BOLD, color=TEXT_MAIN,
+                            text_align=ft.TextAlign.CENTER),
+                    ft.Text(str(value), size=29, weight=ft.FontWeight.BOLD, color=value_color,
+                            text_align=ft.TextAlign.CENTER),
+                    ft.Text(subtitle, size=10, color=TEXT_MUTED, text_align=ft.TextAlign.CENTER),
+                ], spacing=3, horizontal_alignment=ft.CrossAxisAlignment.CENTER)
+            )
+
+        criteria_rows = ft.Column([
+            ft.Container(
+                bgcolor='#F5F7FA', padding=8,
+                content=ft.Row([
+                    ft.Text('CONDICIÓN', width=150, size=11, weight=ft.FontWeight.BOLD, color=TEXT_MAIN),
+                    ft.Text('CRITERIO RTD', width=150, size=11, weight=ft.FontWeight.BOLD, color=TEXT_MAIN),
+                    ft.Text('INTERPRETACIÓN', expand=True, size=11, weight=ft.FontWeight.BOLD, color=TEXT_MAIN),
+                ])
+            ),
+            ft.Container(
+                border=ft.Border(bottom=ft.BorderSide(1,'#E6EBF0')), padding=8,
+                content=ft.Row([
+                    ft.Container(width=8, height=28, bgcolor='#2E9B45', border_radius=4),
+                    ft.Text('BUEN ESTADO', width=135, size=11, weight=ft.FontWeight.BOLD, color='#2E9B45'),
+                    ft.Text('Mayor a 30 mm', width=150, size=11, color=TEXT_MAIN),
+                    ft.Text('Continuar en servicio.', expand=True, size=11, color=TEXT_MUTED),
+                ], spacing=8)
+            ),
+            ft.Container(
+                border=ft.Border(bottom=ft.BorderSide(1,'#E6EBF0')), padding=8,
+                content=ft.Row([
+                    ft.Container(width=8, height=28, bgcolor='#F2A900', border_radius=4),
+                    ft.Text('PRÓXIMO CAMBIO', width=135, size=11, weight=ft.FontWeight.BOLD, color='#C98600'),
+                    ft.Text('20 a 30 mm', width=150, size=11, color=TEXT_MAIN),
+                    ft.Text('Programar seguimiento / próximo cambio.', expand=True, size=11, color=TEXT_MUTED),
+                ], spacing=8)
+            ),
+            ft.Container(
+                padding=8,
+                content=ft.Row([
+                    ft.Container(width=8, height=28, bgcolor='#D92D20', border_radius=4),
+                    ft.Text('CAMBIO URGENTE', width=135, size=11, weight=ft.FontWeight.BOLD, color='#D92D20'),
+                    ft.Text('0 a 20 mm', width=150, size=11, color=TEXT_MAIN),
+                    ft.Text('Programar cambio con prioridad.', expand=True, size=11, color=TEXT_MUTED),
+                ], spacing=8)
+            ),
+        ], spacing=0)
+
+        # Resumen por tipo de vehículo, basado en los neumáticos actualmente en servicio.
+        vehicle_summary={}
+        for r,_,_ in evaluated:
+            vehicle=(str(r['vehicle_type']).strip().upper() if r['vehicle_type'] else 'SIN CLASIFICAR')
+            vehicle_summary[vehicle]=vehicle_summary.get(vehicle,0)+1
+        vehicle_table=ft.DataTable(
+            heading_row_height=34,
+            data_row_min_height=30,
+            data_row_max_height=30,
+            column_spacing=26,
+            columns=[
+                ft.DataColumn(ft.Text('Tipo de Vehículo', size=11, weight=ft.FontWeight.BOLD)),
+                ft.DataColumn(ft.Text('N° Neumáticos', size=11, weight=ft.FontWeight.BOLD), numeric=True),
+                ft.DataColumn(ft.Text('% del Total', size=11, weight=ft.FontWeight.BOLD), numeric=True),
+            ],
+            rows=[
+                ft.DataRow(cells=[
+                    ft.DataCell(ft.Text(vehicle, size=10)),
+                    ft.DataCell(ft.Text(str(n), size=10)),
+                    ft.DataCell(ft.Text(f'{pct(n,total):.1f}%', size=10)),
+                ])
+                for vehicle,n in sorted(vehicle_summary.items(), key=lambda kv:(-kv[1],kv[0]))
+            ] + ([ft.DataRow(cells=[
+                ft.DataCell(ft.Text('TOTAL', size=10, weight=ft.FontWeight.BOLD)),
+                ft.DataCell(ft.Text(str(total), size=10, weight=ft.FontWeight.BOLD)),
+                ft.DataCell(ft.Text('100.0%' if total else '0.0%', size=10, weight=ft.FontWeight.BOLD)),
+            ])] if total else [])
+        )
+
+        condition_rows=[]
+        for label,color in [
+            ('BUEN ESTADO','#2E9B45'),
+            ('PRÓXIMO CAMBIO','#C98600'),
+            ('CAMBIO URGENTE','#D92D20'),
+        ]:
+            n=counts[label]
+            condition_rows.append(ft.DataRow(cells=[
+                ft.DataCell(ft.Text(label.title(), size=10, weight=ft.FontWeight.BOLD, color=color)),
+                ft.DataCell(ft.Text(str(n), size=10)),
+                ft.DataCell(ft.Text(f'{pct(n,evaluated_total):.1f}%', size=10)),
+            ]))
+        if counts['SIN LECTURA']:
+            condition_rows.append(ft.DataRow(cells=[
+                ft.DataCell(ft.Text('Sin lectura', size=10, weight=ft.FontWeight.BOLD, color=TEXT_MUTED)),
+                ft.DataCell(ft.Text(str(counts['SIN LECTURA']), size=10)),
+                ft.DataCell(ft.Text(f'{pct(counts["SIN LECTURA"],total):.1f}%', size=10)),
+            ]))
+        condition_rows.append(ft.DataRow(cells=[
+            ft.DataCell(ft.Text('TOTAL', size=10, weight=ft.FontWeight.BOLD)),
+            ft.DataCell(ft.Text(str(total), size=10, weight=ft.FontWeight.BOLD)),
+            ft.DataCell(ft.Text('100.0%' if total else '0.0%', size=10, weight=ft.FontWeight.BOLD)),
+        ]))
+        condition_table=ft.DataTable(
+            heading_row_height=34,
+            data_row_min_height=30,
+            data_row_max_height=30,
+            column_spacing=34,
+            columns=[
+                ft.DataColumn(ft.Text('Condición', size=11, weight=ft.FontWeight.BOLD)),
+                ft.DataColumn(ft.Text('Cantidad', size=11, weight=ft.FontWeight.BOLD), numeric=True),
+                ft.DataColumn(ft.Text('% del Total', size=11, weight=ft.FontWeight.BOLD), numeric=True),
+            ],
+            rows=condition_rows
+        )
+
         content.content=ft.Column([
-            page_title('Programa de mantenimiento','Priorización básica según condición actual'),
+            page_title('3. Programa de mantenimiento · 1. Evaluación de Remanente (RTD)',
+                       'Evaluación automática de neumáticos en servicio según profundidad remanente'),
+            ft.Row([
+                top_metric('NEUMÁTICOS EN SERVICIO', total, 'Total actualmente instalado', '#C81D2A'),
+                top_metric('EQUIPOS EN SERVICIO', equipment_count, 'Equipos con neumáticos instalados'),
+                top_metric('NEUMÁTICOS EN BUEN ESTADO', f'{good_pct:.1f}%',
+                           f'{counts["BUEN ESTADO"]} neumáticos', '#2E9B45'),
+                top_metric('NEUMÁTICOS QUE REQUIEREN ATENCIÓN', f'{attention_pct:.1f}%',
+                           f'{attention} neumáticos', '#C81D2A'),
+            ], wrap=True, spacing=12, run_spacing=12),
+            ft.Row([
+                card(ft.Column([
+                    ft.Text('CRITERIOS DE EVALUACIÓN (RTD)', size=14, weight=ft.FontWeight.BOLD, color=TEXT_MAIN),
+                    criteria_rows,
+                    ft.Text('RTD: Remanente de la Banda de Rodadura (Remaining Tread Depth), expresado en milímetros.',
+                            size=10, italic=True, color=TEXT_MUTED),
+                ], spacing=8), width=610),
+                card(ft.Column([
+                    ft.Text('CONDICIÓN GENERAL DE NEUMÁTICOS (RTD)', size=14, weight=ft.FontWeight.BOLD, color=TEXT_MAIN),
+                    ft.Row([condition_table], scroll=ft.ScrollMode.AUTO),
+                    ft.Text('La clasificación usa la menor lectura RTD entre EXT e INT de cada neumático.',
+                            size=10, italic=True, color=TEXT_MUTED),
+                ], spacing=8), width=520),
+            ], wrap=True, spacing=12, run_spacing=12),
             card(ft.Column([
-                ft.Text('Criterio inicial de demostración',size=16,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
-                ft.Text('ALTA ≤ 20 mm · MEDIA ≤ 35 mm · NORMAL > 35 mm. Estos límites podrán configurarse por medida/diseño.',color=TEXT_MUTED),
-            ])),
-            card(ft.Row([table],scroll=ft.ScrollMode.AUTO))
-        ],scroll=ft.ScrollMode.AUTO,spacing=16)
+                ft.Text('RESUMEN POR TIPO DE VEHÍCULO', size=14, weight=ft.FontWeight.BOLD, color=TEXT_MAIN),
+                ft.Row([vehicle_table], scroll=ft.ScrollMode.AUTO),
+            ], spacing=8)),
+        ], scroll=ft.ScrollMode.AUTO, spacing=16)
         page.update()
 
     def reports_view():
