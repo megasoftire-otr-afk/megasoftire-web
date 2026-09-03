@@ -1,7 +1,6 @@
 # MegaSoftire Web 2026 - corrección INSP + fechas dd/mm/aaaa (31/08/2026)
 import datetime as dt
 import os
-import hashlib
 import flet as ft
 from database import init_db, query, execute, authenticate
 
@@ -18,8 +17,8 @@ MODULES = [
     ('Retén / Stand-by', ft.Icons.INVENTORY_2_OUTLINED),
     ('Fuera de servicio / baja', ft.Icons.DELETE_OUTLINE),
     ('Inventarios y consumos', ft.Icons.WAREHOUSE_OUTLINED),
-    ('Administración de equipos', ft.Icons.ADMIN_PANEL_SETTINGS_OUTLINED),
-    ('Registro maestro de neumáticos', ft.Icons.TABLE_CHART_OUTLINED),
+    ('Administración', ft.Icons.ADMIN_PANEL_SETTINGS_OUTLINED),
+    ('Tablas del neumático', ft.Icons.TABLE_CHART_OUTLINED),
     ('Reportes Excel', ft.Icons.ASSESSMENT_OUTLINED),
 ]
 
@@ -31,111 +30,8 @@ TEXT_MAIN = '#1B263B'
 TEXT_MUTED = '#66788A'
 
 
-MASTER_TIRE_UPDATES_20260902 = [
-    ('1345', '08251Y10267', '01/01/2026', 3850.0, 'Goodyear', '18.00-25', 'SMO-5D', 'L-5S', 'Tire SOL', 100.0, 84.0, 84.0, 15.0, 2300.0, 'Convencional', 'Nueva'),
-    ('1350', '08251Y10009', '01/01/2026', 3850.0, 'Goodyear', '18.00-25', 'SMO-5D', 'L-5S', 'Tire SOL', 100.0, 84.0, 84.0, 15.0, 2300.0, 'Convencional', 'Nueva'),
-    ('1351', '08251Y10104', '01/01/2026', 3850.0, 'Goodyear', '18.00-25', 'SMO-5D', 'L-5S', 'Tire SOL', 100.0, 84.0, 84.0, 15.0, 2300.0, 'Convencional', 'Nueva'),
-    ('1352', '08251Y10759', '01/01/2026', 3850.0, 'Goodyear', '18.00-25', 'SMO-5D', 'L-5S', 'Tire SOL', 100.0, 84.0, 84.0, 15.0, 2300.0, 'Convencional', 'Nueva'),
-    ('1376', '12251Y10060', '01/01/2026', 3850.0, 'Goodyear', '18.00-25', 'SMO-5D', 'L-5S', 'Tire SOL', 100.0, 84.0, 84.0, 15.0, 2300.0, 'Convencional', 'Nueva'),
-    ('1362', '12251Y10747', '01/01/2026', 3850.0, 'Goodyear', '18.00-25', 'SMO-5D', 'L-5S', 'Tire SOL', 100.0, 84.0, 84.0, 15.0, 2300.0, 'Convencional', 'Nueva'),
-    ('1378', '12251Y10332', '01/01/2026', 3850.0, 'Goodyear', '18.00-25', 'SMO-5D', 'L-5S', 'Tire SOL', 100.0, 84.0, 84.0, 15.0, 2300.0, 'Convencional', 'Nueva'),
-    ('1367', '12251Y10070', '01/01/2026', 3850.0, 'Goodyear', '18.00-25', 'SMO-5D', 'L-5S', 'Tire SOL', 100.0, 84.0, 84.0, 15.0, 2300.0, 'Convencional', 'Nueva'),
-    ('1363', 'HC3MVC493', '01/01/2026', 7800.0, 'Yokohama', '29.5-29', 'Y524', 'L-5', 'Tire SOL', 100.0, 104.0, 104.0, 15.0, 2800.0, 'Convencional', 'Nueva'),
-    ('1364', 'HC7MVC174', '01/01/2026', 7800.0, 'Yokohama', '29.5-29', 'Y524', 'L-5', 'Tire SOL', 100.0, 104.0, 104.0, 15.0, 2800.0, 'Convencional', 'Nueva'),
-    ('1365', 'HC4MVC666', '01/01/2026', 7800.0, 'Yokohama', '29.5-29', 'Y524', 'L-5', 'Tire SOL', 100.0, 104.0, 104.0, 15.0, 2800.0, 'Convencional', 'Nueva'),
-    ('1366', 'HC7MVC176', '01/01/2026', 7800.0, 'Yokohama', '29.5-29', 'Y524', 'L-5', 'Tire SOL', 100.0, 104.0, 104.0, 15.0, 2800.0, 'Convencional', 'Nueva'),
-    ('1374', 'AE1HVC1933', '01/01/2026', 7800.0, 'Yokohama', '29.5-29', 'Y524', 'L-5', 'Tire SOL', 100.0, 104.0, 104.0, 15.0, 2800.0, 'Convencional', 'Nueva'),
-    ('1375', 'HC6MVC992', '01/01/2026', 7800.0, 'Yokohama', '29.5-29', 'Y524', 'L-5', 'Tire SOL', 100.0, 104.0, 104.0, 15.0, 2800.0, 'Convencional', 'Nueva'),
-    ('1354', 'XY2AVC992', '01/01/2026', 7800.0, 'Yokohama', '29.5-29', 'Y524', 'L-5', 'Tire SOL', 100.0, 104.0, 104.0, 15.0, 2800.0, 'Convencional', 'Nueva'),
-    ('1377', 'HC3MVC631', '01/01/2026', 7800.0, 'Yokohama', '29.5-29', 'Y524', 'L-5', 'Tire SOL', 100.0, 104.0, 104.0, 15.0, 2800.0, 'Convencional', 'Nueva'),
-    ('1346', 'XY3AVC183', '01/01/2026', 7800.0, 'Yokohama', '29.5-29', 'Y524', 'L-5', 'Tire SOL', 100.0, 104.0, 104.0, 15.0, 2800.0, 'Convencional', 'Nueva'),
-    ('1357', 'AE4HVC653', '01/01/2026', 7800.0, 'Yokohama', '29.5-29', 'Y524', 'L-5', 'Tire SOL', 100.0, 104.0, 104.0, 15.0, 2800.0, 'Convencional', 'Nueva'),
-    ('1320', 'AE3HVC510', '01/01/2026', 7800.0, 'Yokohama', '29.5-29', 'Y524', 'L-5', 'Tire SOL', 100.0, 104.0, 104.0, 15.0, 2800.0, 'Convencional', 'Nueva'),
-    ('1321', 'AE4HVC655', '01/01/2026', 7800.0, 'Yokohama', '29.5-29', 'Y524', 'L-5', 'Tire SOL', 100.0, 104.0, 104.0, 15.0, 2800.0, 'Convencional', 'Nueva'),
-    ('1359', 'AEIHVC194', '01/01/2026', 7800.0, 'Yokohama', '29.5-29', 'Y524', 'L-5', 'Tire SOL', 100.0, 104.0, 104.0, 15.0, 2800.0, 'Convencional', 'Nueva'),
-    ('1355', 'AU7MVC799', '01/01/2026', 7800.0, 'Yokohama', '29.5-29', 'Y524', 'L-5', 'Tire SOL', 100.0, 104.0, 104.0, 15.0, 2800.0, 'Convencional', 'Nueva'),
-    ('1316', 'AH6GVC949', '01/01/2026', 7800.0, 'Yokohama', '29.5-29', 'Y524', 'L-5', 'Tire SOL', 100.0, 104.0, 104.0, 15.0, 2800.0, 'Convencional', 'Nueva'),
-    ('1317', 'XH2GVC017', '01/01/2026', 7800.0, 'Yokohama', '29.5-29', 'Y524', 'L-5', 'Tire SOL', 100.0, 104.0, 104.0, 15.0, 2800.0, 'Convencional', 'Nueva'),
-    ('1370', 'XYZAVC991', '01/01/2026', 7800.0, 'Yokohama', '29.5-29', 'Y524', 'L-5', 'Tire SOL', 100.0, 104.0, 104.0, 15.0, 2800.0, 'Convencional', 'Nueva'),
-    ('1349', 'XY1AVC833', '01/01/2026', 7800.0, 'Yokohama', '29.5-29', 'Y524', 'L-5', 'Tire SOL', 100.0, 104.0, 104.0, 15.0, 2800.0, 'Convencional', 'Nueva'),
-    ('1329', 'AE1HVC196', '01/01/2026', 7800.0, 'Yokohama', '29.5-29', 'Y524', 'L-5', 'Tire SOL', 100.0, 104.0, 104.0, 15.0, 2800.0, 'Convencional', 'Nueva'),
-    ('1344', 'XY3AVC184', '01/01/2026', 7800.0, 'Yokohama', '29.5-29', 'Y524', 'L-5', 'Tire SOL', 100.0, 104.0, 104.0, 15.0, 2800.0, 'Convencional', 'Nueva'),
-    ('1353', 'XY1AVC835', '01/01/2026', 7800.0, 'Yokohama', '29.5-29', 'Y524', 'L-5', 'Tire SOL', 100.0, 104.0, 104.0, 15.0, 2800.0, 'Convencional', 'Nueva'),
-    ('1358', 'AEOHVC048', '01/01/2026', 7800.0, 'Yokohama', '29.5-29', 'Y524', 'L-5', 'Tire SOL', 100.0, 104.0, 104.0, 15.0, 2800.0, 'Convencional', 'Nueva'),
-    ('1327', 'HE9HVC270', '01/01/2026', 7800.0, 'Yokohama', '29.5-29', 'Y524', 'L-5', 'Tire SOL', 100.0, 104.0, 104.0, 15.0, 2800.0, 'Convencional', 'Nueva'),
-    ('1328', 'AE1HVC195', '01/01/2026', 7800.0, 'Yokohama', '29.5-29', 'Y524', 'L-5', 'Tire SOL', 100.0, 104.0, 104.0, 15.0, 2800.0, 'Convencional', 'Nueva'),
-    ('1371', 'AE2HVC375', '01/01/2026', 7800.0, 'Yokohama', '29.5-29', 'Y524', 'L-5', 'Tire SOL', 100.0, 104.0, 104.0, 15.0, 2800.0, 'Convencional', 'Nueva'),
-    ('1372', 'CH9MVC663', '01/01/2026', 7800.0, 'Yokohama', '29.5-29', 'Y524', 'L-5', 'Tire SOL', 100.0, 104.0, 104.0, 15.0, 2800.0, 'Convencional', 'Nueva'),
-    ('1324', 'AE2HVC373', '01/01/2026', 7800.0, 'Yokohama', '29.5-29', 'Y524', 'L-5', 'Tire SOL', 100.0, 104.0, 104.0, 15.0, 2800.0, 'Convencional', 'Nueva'),
-    ('1373', 'HC5MYC850', '01/01/2026', 7800.0, 'Yokohama', '29.5-29', 'Y524', 'L-5', 'Tire SOL', 100.0, 104.0, 104.0, 15.0, 2800.0, 'Convencional', 'Nueva'),
-]
-
-
 def main(page: ft.Page):
     init_db()
-
-    # Campos maestros necesarios para la consulta operativa y el registro maestro.
-    startup_cols = {r['name'] for r in query("PRAGMA table_info(tires)")}
-    for col_name, col_type in [
-        ('entry_date', 'TEXT'),
-        ('cost_usd', 'REAL'),
-        ('compound', 'TEXT'),
-        ('supplier', 'TEXT'),
-        ('new_tread_outer', 'REAL'),
-        ('new_tread_inner', 'REAL'),
-        ('construction_type', 'TEXT'),
-        ('tire_condition', 'TEXT'),
-        ('retirement_tread', 'REAL'),
-        ('projected_life_target', 'REAL'),
-    ]:
-        if col_name not in startup_cols:
-            execute(f'ALTER TABLE tires ADD COLUMN {col_name} {col_type}')
-
-    # Actualización única del maestro de 36 neumáticos.
-    # Se actualiza por Código: no crea duplicados y no toca estado, equipo,
-    # posición, horómetro, profundidades actuales ni historial de eventos.
-    master_migration_key = 'master_tires_20260902_v1'
-    master_done = query('SELECT value FROM app_meta WHERE key=?', (master_migration_key,))
-    if not master_done:
-        for (
-            tire_code, serial, entry_date, cost_usd, brand, size, design,
-            tra, supplier, pressure, tread_ext, tread_int, retirement_tread,
-            life_target, construction_type, tire_condition
-        ) in MASTER_TIRE_UPDATES_20260902:
-            execute(
-                '''
-                UPDATE tires
-                SET serial=?,
-                    entry_date=?,
-                    cost_usd=?,
-                    brand=?,
-                    size=?,
-                    design=?,
-                    compound=?,
-                    supplier=?,
-                    recommended_pressure=?,
-                    new_tread=?,
-                    new_tread_outer=?,
-                    new_tread_inner=?,
-                    retirement_tread=?,
-                    projected_life_target=?,
-                    projected_life=?,
-                    construction_type=?,
-                    tire_condition=?
-                WHERE code=?
-                ''',
-                (
-                    serial, entry_date, cost_usd, brand, size, design, tra,
-                    supplier, pressure, tread_ext, tread_ext, tread_int,
-                    retirement_tread, life_target, life_target,
-                    construction_type, tire_condition, tire_code
-                )
-            )
-        execute(
-            'INSERT OR REPLACE INTO app_meta(key,value) VALUES(?,?)',
-            (master_migration_key, '36 neumáticos actualizados por código - 02/09/2026')
-        )
-
     page.title = 'MegaSoftire Web 2026'
     page.padding = 0
     page.bgcolor = BG
@@ -285,95 +181,14 @@ def main(page: ft.Page):
         page.update()
 
     def equipment_view():
-        # Administración maestra de equipos. Se conservan la tabla equipment
-        # y todos sus registros existentes; solo se amplía con tipo de motor.
-        existing_cols = {r['name'] for r in query("PRAGMA table_info(equipment)")}
-        if 'motor_type' not in existing_cols:
-            execute('ALTER TABLE equipment ADD COLUMN motor_type TEXT')
-
-        # Catálogos dinámicos para evitar variantes de escritura y permitir
-        # autocompletar/autoguardar en un solo campo.
-        execute("""
-            CREATE TABLE IF NOT EXISTS equipment_catalogs(
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                category TEXT NOT NULL,
-                value TEXT COLLATE NOCASE NOT NULL,
-                UNIQUE(category, value)
-            )
-        """)
-
-        catalog_defaults = {
-            'vehicle_type': ['Scoop','Dumper','Jumbo','Scaler','Camión','Cargador','Otro'],
-            'motor_type': ['Diésel','Eléctrico','Híbrido','Otro'],
-        }
-        for category, values in catalog_defaults.items():
-            for value in values:
-                execute('INSERT OR IGNORE INTO equipment_catalogs(category,value) VALUES(?,?)',(category,value))
-
-        # Incorporar al catálogo los valores que ya existen en la flota.
-        historic_fields = {
-            'brand': 'brand',
-            'model': 'model',
-            'location': 'location',
-            'vehicle_type': 'vehicle_type',
-            'motor_type': 'motor_type',
-        }
-        for category, field_name in historic_fields.items():
-            for row in query(
-                f"SELECT DISTINCT {field_name} value FROM equipment "
-                f"WHERE {field_name} IS NOT NULL AND TRIM({field_name})<>''"
-            ):
-                execute('INSERT OR IGNORE INTO equipment_catalogs(category,value) VALUES(?,?)',
-                        (category,str(row['value']).strip()))
-
-        def catalog_options(category):
-            return [ft.dropdown.Option(str(r['value'])) for r in query(
-                'SELECT value FROM equipment_catalogs WHERE category=? ORDER BY value COLLATE NOCASE',(category,))]
-
-        def make_catalog_field(label, category, width=190):
-            return ft.Dropdown(label=label,width=width,editable=True,enable_filter=True,enable_search=True,
-                               options=catalog_options(category))
-
-        def normalize_catalog_key(value):
-            return ''.join(str(value or '').strip().lower().split())
-
-        def catalog_value(dropdown):
-            typed=(getattr(dropdown,'text',None) or '').strip()
-            selected=(dropdown.value or '').strip()
-            raw=typed if typed else selected
-            if not raw: return ''
-            key=normalize_catalog_key(raw)
-            for option in dropdown.options or []:
-                candidate=str(getattr(option,'key',None) or getattr(option,'text',None) or '').strip()
-                if candidate and normalize_catalog_key(candidate)==key:
-                    return candidate
-            return raw
-
-        def save_catalog_value(category,value):
-            clean=(value or '').strip()
-            if not clean: return clean
-            wanted=normalize_catalog_key(clean)
-            for row in query('SELECT value FROM equipment_catalogs WHERE category=?',(category,)):
-                existing=str(row['value']).strip()
-                if normalize_catalog_key(existing)==wanted:
-                    return existing
-            execute('INSERT OR IGNORE INTO equipment_catalogs(category,value) VALUES(?,?)',(category,clean))
-            return clean
-
-        code=ft.TextField(label='Código de equipo *',width=190)
-        brand=make_catalog_field('Marca','brand')
-        model=make_catalog_field('Modelo','model')
-        location=make_catalog_field('Ubicación','location')
-        kind=make_catalog_field('Tipo','vehicle_type')
-        motor=make_catalog_field('Tipo de motor','motor_type')
+        code=ft.TextField(label='Código de equipo *',width=180)
+        brand=ft.TextField(label='Marca',width=180)
+        model=ft.TextField(label='Modelo',width=180)
+        location=ft.TextField(label='Ubicación',width=200)
+        kind=ft.Dropdown(label='Tipo',width=180,options=[ft.dropdown.Option(x) for x in ['Scoop','Dumper','Jumbo','Scaler','Camión','Cargador','Otro']])
+        size=ft.TextField(label='Medida neumático',width=190)
         search=ft.TextField(label='Buscar equipo',prefix_icon=ft.Icons.SEARCH,width=280)
-        table=ft.DataTable(columns=[ft.DataColumn(ft.Text(x)) for x in ['Código','Marca / Modelo','Tipo','Ubicación','Tipo de motor']],rows=[])
-
-        catalog_fields=[(brand,'brand'),(model,'model'),(location,'location'),(kind,'vehicle_type'),(motor,'motor_type')]
-
-        def refresh_catalog_dropdowns():
-            for control,category in catalog_fields:
-                control.options=catalog_options(category)
+        table=ft.DataTable(columns=[ft.DataColumn(ft.Text(x)) for x in ['Código','Marca / Modelo','Tipo','Ubicación','Medida']],rows=[])
 
         def refresh(e=None):
             term=(search.value or '').strip()
@@ -381,26 +196,16 @@ def main(page: ft.Page):
                 rows=query("SELECT * FROM equipment WHERE code LIKE ? OR brand LIKE ? OR model LIKE ? ORDER BY code",(f'%{term}%',f'%{term}%',f'%{term}%'))
             else:
                 rows=query('SELECT * FROM equipment ORDER BY code')
-            table.rows=[ft.DataRow(cells=[ft.DataCell(ft.Text(str(v or ''))) for v in [
-                r['code'],f"{r['brand'] or ''} {r['model'] or ''}".strip(),r['vehicle_type'],r['location'],r['motor_type']
-            ]]) for r in rows]
+            table.rows=[ft.DataRow(cells=[ft.DataCell(ft.Text(str(v or ''))) for v in [r['code'],f"{r['brand'] or ''} {r['model'] or ''}".strip(),r['vehicle_type'],r['location'],r['tire_size']]]) for r in rows]
             page.update()
         search.on_change=refresh
 
-        def clear_catalog_control(control):
-            control.value=None
-            try: control.text=''
-            except Exception: pass
-
         def save(e):
-            if not (code.value or '').strip(): return snack('Ingrese el código del equipo.',True)
+            if not code.value.strip(): return snack('Ingrese el código del equipo.',True)
             try:
-                values={category:save_catalog_value(category,catalog_value(control)) for control,category in catalog_fields}
-                execute('INSERT INTO equipment(code,brand,model,location,vehicle_type,motor_type) VALUES(?,?,?,?,?,?)',(
-                    code.value.strip(),values['brand'],values['model'],values['location'],values['vehicle_type'],values['motor_type']))
-                code.value=''
-                for control,_ in catalog_fields: clear_catalog_control(control)
-                refresh_catalog_dropdowns()
+                execute('INSERT INTO equipment(code,brand,model,location,vehicle_type,tire_size) VALUES(?,?,?,?,?,?)',(code.value.strip(),brand.value,model.value,location.value,kind.value,size.value))
+                for c in [code,brand,model,location,size]: c.value=''
+                kind.value=None
                 snack('Equipo registrado correctamente.')
                 refresh()
             except Exception as ex: snack(str(ex),True)
@@ -410,7 +215,7 @@ def main(page: ft.Page):
             page_title('Administración de equipos','Registro y consulta de la flota'),
             card(ft.Column([
                 ft.Text('Nuevo equipo',size=17,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
-                ft.Row([code,brand,model,location,kind,motor],wrap=True),
+                ft.Row([code,brand,model,location,kind,size],wrap=True),
                 ft.ElevatedButton('Registrar equipo',icon=ft.Icons.SAVE,on_click=save)
             ])),
             card(ft.Column([
@@ -420,210 +225,23 @@ def main(page: ft.Page):
         ],scroll=ft.ScrollMode.AUTO,spacing=16)
         page.update()
 
-    def tires_view(status_filter=None, prefill_code=None):
-        # Registro maestro de neumáticos.
-        existing_cols = {r['name'] for r in query("PRAGMA table_info(tires)")}
-        extra_cols = [
-            ('entry_date', 'TEXT'),
-            ('cost_usd', 'REAL'),
-            ('compound', 'TEXT'),
-            ('supplier', 'TEXT'),
-            ('new_tread_outer', 'REAL'),
-            ('new_tread_inner', 'REAL'),
-            ('construction_type', 'TEXT'),
-            ('tire_condition', 'TEXT'),
-            ('retirement_tread', 'REAL'),
-            ('projected_life_target', 'REAL'),
-        ]
-        for col_name, col_type in extra_cols:
-            if col_name not in existing_cols:
-                execute(f'ALTER TABLE tires ADD COLUMN {col_name} {col_type}')
-
-        # Catálogos dinámicos del Registro Maestro.
-        # Permiten seleccionar un valor existente o DIGITAR uno nuevo.
-        execute("""
-            CREATE TABLE IF NOT EXISTS tire_catalogs(
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                category TEXT NOT NULL,
-                value TEXT COLLATE NOCASE NOT NULL,
-                UNIQUE(category, value)
-            )
-        """)
-
-        catalog_defaults = {
-            'brand': ['GoodYear','Bridgestone','Michelin','Yokohama','Techking','Maxam'],
-            'supplier': ['Soltrak','Nuema','PTS','Renova','Tire SOL','J.CH.','Pimentel'],
-        }
-        for category, values in catalog_defaults.items():
-            for value in values:
-                execute(
-                    'INSERT OR IGNORE INTO tire_catalogs(category,value) VALUES(?,?)',
-                    (category, value)
-                )
-
-        # Recuperar también valores ya existentes en los neumáticos históricos.
-        historic_catalog_fields = {
-            'brand': 'brand',
-            'size': 'size',
-            'design': 'design',
-            'compound': 'compound',
-            'supplier': 'supplier',
-        }
-        for category, field_name in historic_catalog_fields.items():
-            for row in query(
-                f"SELECT DISTINCT {field_name} value FROM tires "
-                f"WHERE {field_name} IS NOT NULL AND TRIM({field_name})<>''"
-            ):
-                execute(
-                    'INSERT OR IGNORE INTO tire_catalogs(category,value) VALUES(?,?)',
-                    (category, str(row['value']).strip())
-                )
-
-        def catalog_options(category):
-            return [
-                ft.dropdown.Option(str(r['value']))
-                for r in query(
-                    'SELECT value FROM tire_catalogs WHERE category=? ORDER BY value COLLATE NOCASE',
-                    (category,)
-                )
-            ]
-
-        def make_catalog_field(label, category, width):
-            # Un solo cuadro: permite escribir y al mismo tiempo filtra/autocompleta
-            # con los valores ya guardados en el catálogo.
-            return ft.Dropdown(
-                label=f'{label} *',
-                width=width,
-                editable=True,
-                enable_filter=True,
-                enable_search=True,
-                options=catalog_options(category)
-            )
-
-        def normalize_catalog_key(value):
-            # Para detectar equivalencias como:
-            # GoodYear / GOODYEAR / GOOD YEAR
-            return ''.join(str(value or '').strip().lower().split())
-
-        def catalog_value(dropdown):
-            typed = (getattr(dropdown, 'text', None) or '').strip()
-            selected = (dropdown.value or '').strip()
-            raw = typed if typed else selected
-            if not raw:
-                return ''
-
-            key = normalize_catalog_key(raw)
-            for option in dropdown.options or []:
-                option_key = getattr(option, 'key', None)
-                option_text = getattr(option, 'text', None)
-                candidate = str(option_key or option_text or '').strip()
-                if candidate and normalize_catalog_key(candidate) == key:
-                    return candidate
-            return raw
-
-        def save_catalog_value(category, value):
-            clean = (value or '').strip()
-            if not clean:
-                return clean
-
-            wanted_key = normalize_catalog_key(clean)
-            for row in query(
-                'SELECT value FROM tire_catalogs WHERE category=?',
-                (category,)
-            ):
-                existing_value = str(row['value']).strip()
-                if normalize_catalog_key(existing_value) == wanted_key:
-                    return existing_value
-
-            execute(
-                'INSERT OR IGNORE INTO tire_catalogs(category,value) VALUES(?,?)',
-                (category, clean)
-            )
-            return clean
-
-        FIELD_W = 220
-
-        code=ft.TextField(label='Código *',width=FIELD_W,value=(str(prefill_code) if prefill_code else ''))
-        serial=ft.TextField(label='Serie Fab. *',width=FIELD_W)
-        entry_date=ft.TextField(label='Fecha de ingreso *',value=dt.date.today().strftime('%d/%m/%Y'),width=FIELD_W)
-        cost_usd=ft.TextField(label='Costo $ *',width=FIELD_W)
-
-        brand = make_catalog_field('Marca', 'brand', FIELD_W)
-        size = make_catalog_field('Medida', 'size', FIELD_W)
-        design = make_catalog_field('Diseño', 'design', FIELD_W)
-        compound = make_catalog_field('Clasificación TRA', 'compound', FIELD_W)
-        supplier = make_catalog_field('Proveedor', 'supplier', FIELD_W)
-
-        pressure=ft.TextField(label='Presión recomendada *',width=FIELD_W)
-        tread_outer_new=ft.TextField(label='Profundidad nueva EXT *',width=FIELD_W)
-        tread_inner_new=ft.TextField(label='Profundidad nueva INT *',width=FIELD_W)
-        retirement_tread=ft.TextField(label='Profundidad de retiro (mm) *',width=FIELD_W)
-        projected_life_target=ft.TextField(label='Proyección de vida (h) *',width=FIELD_W)
-
-        construction=ft.Dropdown(
-            label='Tipo de construcción *', width=FIELD_W,
-            options=[ft.dropdown.Option('Radial'),ft.dropdown.Option('Convencional')]
-        )
-        condition=ft.Dropdown(
-            label='Condición *', width=FIELD_W,
-            options=[ft.dropdown.Option('Nueva'),ft.dropdown.Option('Reencauchada')]
-        )
-
+    def tires_view(status_filter=None):
+        code=ft.TextField(label='Código interno *',width=180)
+        serial=ft.TextField(label='Serie',width=190)
+        brand=ft.TextField(label='Marca',width=170)
+        size=ft.TextField(label='Medida',width=170)
+        design=ft.TextField(label='Diseño',width=170)
+        tread=ft.TextField(label='Prof. nueva (mm)',width=160)
+        pressure=ft.TextField(label='Presión recomendada',width=175)
+        life=ft.TextField(label='Vida proyectada (h)',width=175)
         search=ft.TextField(label='Buscar neumático',prefix_icon=ft.Icons.SEARCH,width=260)
         eq_options=[ft.dropdown.Option('', 'Todos los equipos')]
         eq_options += [ft.dropdown.Option(str(r['id']), r['code']) for r in query('SELECT id,code FROM equipment WHERE active=1 ORDER BY code')]
         eq_filter=ft.Dropdown(label='Equipo',width=180,value='',options=eq_options)
         summary=ft.Text('',size=12,color=TEXT_MUTED)
-
-        # Listado maestro: se construye con filas explícitas para que los
-        # encabezados sean visibles aun cuando no haya registros y para evitar
-        # el bloque gris que estaba mostrando DataTable en la vista web.
-        master_columns = [
-            ('Código', 90),
-            ('Serie Fab.', 125),
-            ('Fecha ingreso', 115),
-            ('Costo $', 90),
-            ('Marca', 120),
-            ('Medida', 105),
-            ('Diseño', 115),
-            ('Clasificación TRA', 135),
-            ('Proveedor', 120),
-            ('Presión rec.', 105),
-            ('Prof. nueva EXT', 120),
-            ('Prof. nueva INT', 120),
-            ('Prof. retiro', 105),
-            ('Proy. vida (h)', 115),
-            ('Tipo construcción', 140),
-            ('Condición', 120),
-        ]
-
-        def master_cell(value, width, header=False):
-            return ft.Container(
-                content=ft.Text(
-                    value,
-                    size=12,
-                    weight=ft.FontWeight.BOLD if header else ft.FontWeight.NORMAL,
-                    color=TEXT_MAIN,
-                    no_wrap=True,
-                ),
-                width=width,
-                padding=ft.Padding(left=6, top=8, right=6, bottom=8),
-            )
-
-        master_header = ft.Row(
-            [master_cell(label, width, True) for label, width in master_columns],
-            spacing=0,
-        )
-        master_rows = ft.Column(spacing=0)
-        master_table = ft.Column([
-            ft.Container(
-                content=master_header,
-                bgcolor='#EEF2F7',
-                border=ft.Border(bottom=ft.BorderSide(1, '#D5DCE5')),
-            ),
-            master_rows,
-        ], spacing=0)
-
+        table=ft.DataTable(columns=[ft.DataColumn(ft.Text(x)) for x in [
+            'Pos.','Código','Serie','Marca','Medida','Diseño','Estado','Equipo','Horómetro','Cocada I/E','Presión','Vida proy.'
+        ]],rows=[])
         history=ft.DataTable(columns=[ft.DataColumn(ft.Text(x)) for x in [
             'Fecha','Evento','Neumático','Serie','Equipo','Pos.','Lectura','Cocada I/E','Presión','Ubicación'
         ]],rows=[])
@@ -638,56 +256,22 @@ def main(page: ft.Page):
             clauses=[]; params=[]
             if status_filter:
                 clauses.append('t.status=?'); params.append(status_filter)
+            if eq_filter.value:
+                clauses.append('t.equipment_id=?'); params.append(int(eq_filter.value))
             term=(search.value or '').strip()
             if term:
                 clauses.append('(t.code LIKE ? OR t.serial LIKE ? OR t.brand LIKE ? OR e.code LIKE ?)')
                 params += [f'%{term}%',f'%{term}%',f'%{term}%',f'%{term}%']
-            if clauses:
-                sql += ' WHERE ' + ' AND '.join(clauses)
+            if clauses: sql += ' WHERE ' + ' AND '.join(clauses)
             sql += " ORDER BY CAST(COALESCE(NULLIF(t.position,''),'999') AS INTEGER),t.code"
             rows=query(sql,tuple(params))
-
-            master_rows.controls=[]
-            for idx, r in enumerate(rows):
-                values = [
-                    r['code'],
-                    r['serial'],
-                    format_date(r['entry_date']) if r['entry_date'] else None,
-                    r['cost_usd'],
-                    r['brand'],
-                    r['size'],
-                    r['design'],
-                    r['compound'],
-                    r['supplier'],
-                    r['recommended_pressure'],
-                    r['new_tread_outer'],
-                    r['new_tread_inner'],
-                    r['retirement_tread'],
-                    r['projected_life_target'],
-                    r['construction_type'],
-                    r['tire_condition'],
-                ]
-
-                display_values = [
-                    '—' if v is None or str(v).strip() == '' else fmt(v)
-                    for v in values
-                ]
-
-                master_rows.controls.append(
-                    ft.Container(
-                        content=ft.Row(
-                            [
-                                master_cell(display_values[i], master_columns[i][1])
-                                for i in range(len(master_columns))
-                            ],
-                            spacing=0,
-                        ),
-                        bgcolor='#FFFFFF' if idx % 2 == 0 else '#F8FAFC',
-                        border=ft.Border(bottom=ft.BorderSide(1, '#E5E9EF')),
-                    )
-                )
-
-            summary.value=f'{len(rows)} neumático(s) registrado(s)'
+            table.rows=[]
+            for r in rows:
+                table.rows.append(ft.DataRow(cells=[ft.DataCell(ft.Text(fmt(v))) for v in [
+                    r['position'],r['code'],r['serial'],r['brand'],r['size'],r['design'],r['status'],r['equipment_code'],
+                    r['current_meter'],f"{fmt(r['tread_inner'])}/{fmt(r['tread_outer'])}",r['recommended_pressure'],r['projected_life']
+                ]]))
+            summary.value=f'{len(rows)} neumático(s) mostrado(s)'
 
             hist_sql=("SELECT o.event_date,o.event_code,t.code tire_code,t.serial,e.code equipment_code,"
                       "o.position,o.meter,o.tread_inner,o.tread_outer,o.pressure,o.location "
@@ -701,13 +285,11 @@ def main(page: ft.Page):
             if term:
                 hc.append('(t.code LIKE ? OR t.serial LIKE ? OR e.code LIKE ?)')
                 hp += [f'%{term}%',f'%{term}%',f'%{term}%']
-            if hc:
-                hist_sql += ' WHERE ' + ' AND '.join(hc)
+            if hc: hist_sql += ' WHERE ' + ' AND '.join(hc)
             hist_sql += ' ORDER BY o.event_date DESC,o.id DESC LIMIT 80'
             hrows=query(hist_sql,tuple(hp))
-
             history.rows=[ft.DataRow(cells=[ft.DataCell(ft.Text(fmt(v))) for v in [
-                format_date(r['event_date']),r['event_code'],r['tire_code'],r['serial'],r['equipment_code'],r['position'],r['meter'],
+                r['event_date'],r['event_code'],r['tire_code'],r['serial'],r['equipment_code'],r['position'],r['meter'],
                 f"{fmt(r['tread_inner'])}/{fmt(r['tread_outer'])}",r['pressure'],r['location']
             ]]) for r in hrows]
             page.update()
@@ -715,195 +297,36 @@ def main(page: ft.Page):
         search.on_change=refresh
         eq_filter.on_change=refresh
 
-        required_controls = [
-            ('Código', code),
-            ('Serie Fab.', serial),
-            ('Fecha de ingreso', entry_date),
-            ('Costo $', cost_usd),
-            ('Presión recomendada', pressure),
-            ('Profundidad nueva EXT', tread_outer_new),
-            ('Profundidad nueva INT', tread_inner_new),
-            ('Profundidad de retiro', retirement_tread),
-            ('Proyección de vida', projected_life_target),
-            ('Tipo de construcción', construction),
-            ('Condición', condition),
-        ]
-
-        def normalize_date(value):
-            raw=(value or '').strip()
-            for date_fmt in ('%d/%m/%Y','%d-%m-%Y','%Y-%m-%d','%Y/%m/%d'):
-                try:
-                    return dt.datetime.strptime(raw[:10],date_fmt).strftime('%Y-%m-%d')
-                except Exception:
-                    pass
-            return None
-
-        def clear_form():
-            for ctrl in [code,serial,cost_usd,pressure,
-                         tread_outer_new,tread_inner_new,retirement_tread,projected_life_target]:
-                ctrl.value=''
-            entry_date.value=dt.date.today().strftime('%d/%m/%Y')
-
-            for dropdown in [brand, size, design, compound, supplier]:
-                dropdown.value=None
-                try:
-                    dropdown.text=''
-                except Exception:
-                    pass
-
-            construction.value=None
-            condition.value=None
-
         def save(e):
-            missing=[]
-            for label,ctrl in required_controls:
-                value=ctrl.value
-                if value is None or not str(value).strip():
-                    missing.append(label)
-
-            brand_value = catalog_value(brand)
-            size_value = catalog_value(size)
-            design_value = catalog_value(design)
-            compound_value = catalog_value(compound)
-            supplier_value = catalog_value(supplier)
-
-            for label, value in [
-                ('Marca', brand_value),
-                ('Medida', size_value),
-                ('Diseño', design_value),
-                ('Clasificación TRA', compound_value),
-                ('Proveedor', supplier_value),
-            ]:
-                if not value:
-                    missing.append(label)
-
-            if missing:
-                return snack('Faltan campos obligatorios: ' + ', '.join(missing), True)
-
-            date_iso=normalize_date(entry_date.value)
-            if not date_iso:
-                return snack('Fecha de ingreso inválida. Use dd/mm/aaaa.', True)
-
-            cost=num(cost_usd.value)
-            rec_pressure=num(pressure.value)
-            new_ext=num(tread_outer_new.value)
-            new_int=num(tread_inner_new.value)
-            retirement=num(retirement_tread.value)
-            life_target=num(projected_life_target.value)
-
-            if cost is None or cost < 0:
-                return snack('Costo $ inválido.', True)
-            if rec_pressure is None or rec_pressure <= 0:
-                return snack('Presión recomendada inválida.', True)
-            if new_ext is None or new_ext <= 0:
-                return snack('Profundidad nueva EXT inválida.', True)
-            if new_int is None or new_int <= 0:
-                return snack('Profundidad nueva INT inválida.', True)
-            if retirement is None or retirement < 0:
-                return snack('Profundidad de retiro inválida.', True)
-            if retirement >= min(float(new_ext), float(new_int)):
-                return snack('La profundidad de retiro debe ser menor que la profundidad nueva.', True)
-            if life_target is None or life_target <= 0:
-                return snack('Proyección de vida inválida.', True)
-
-            new_tread_ref=max(float(new_ext), float(new_int))
-
-            # Si se digitó un valor nuevo, se incorpora al catálogo y queda
-            # disponible automáticamente para los siguientes registros.
-            brand_value = save_catalog_value('brand', brand_value)
-            size_value = save_catalog_value('size', size_value)
-            design_value = save_catalog_value('design', design_value)
-            compound_value = save_catalog_value('compound', compound_value)
-            supplier_value = save_catalog_value('supplier', supplier_value)
-
-            def refresh_catalog_dropdowns():
-                for category, dropdown in [
-                    ('brand', brand),
-                    ('size', size),
-                    ('design', design),
-                    ('compound', compound),
-                    ('supplier', supplier),
-                ]:
-                    dropdown.options = catalog_options(category)
-
+            if not code.value.strip(): return snack('Ingrese código interno.',True)
             try:
-                execute(
-                    """INSERT INTO tires(
-                           code,serial,brand,size,design,new_tread,recommended_pressure,
-                           tread_inner,tread_outer,entry_date,cost_usd,compound,supplier,
-                           new_tread_outer,new_tread_inner,construction_type,tire_condition,
-                           retirement_tread,projected_life_target,projected_life
-                       ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                    (
-                        code.value.strip(),
-                        serial.value.strip(),
-                        brand_value,
-                        size_value,
-                        design_value,
-                        new_tread_ref,
-                        rec_pressure,
-                        new_int,
-                        new_ext,
-                        date_iso,
-                        cost,
-                        compound_value,
-                        supplier_value,
-                        new_ext,
-                        new_int,
-                        construction.value,
-                        condition.value,
-                        retirement,
-                        life_target,
-                        life_target,
-                    )
-                )
-                refresh_catalog_dropdowns()
-                clear_form()
+                n=num(tread.value) or 0
+                execute('INSERT INTO tires(code,serial,brand,size,design,new_tread,recommended_pressure,projected_life,tread_inner,tread_outer) VALUES(?,?,?,?,?,?,?,?,?,?)',(code.value.strip(),serial.value,brand.value,size.value,design.value,n,num(pressure.value) or 0,num(life.value) or 0,n,n))
+                for c in [code,serial,brand,size,design,tread,pressure,life]: c.value=''
                 snack('Neumático registrado correctamente.')
                 refresh()
-            except Exception as ex:
-                snack(str(ex),True)
+            except Exception as ex: snack(str(ex),True)
 
         refresh()
         title='Registro maestro de neumáticos' if not status_filter else f'Neumáticos: {status_filter}'
         subtitle='Consulta y estado actual de cada neumático'
         blocks=[page_title(title,subtitle)]
-
         if not status_filter:
             blocks.append(card(ft.Column([
                 ft.Text('Nuevo neumático',size=17,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
-                ft.Text('Todos los campos son obligatorios.',size=11,color=TEXT_MUTED),
-
-                ft.Row([code,serial,entry_date,cost_usd],wrap=True,spacing=10,run_spacing=10),
-                ft.Row([brand,size,design,compound],wrap=True,spacing=10,run_spacing=10),
-                ft.Row([supplier,pressure,tread_outer_new,tread_inner_new],wrap=True,spacing=10,run_spacing=10),
-                ft.Row([retirement_tread,projected_life_target,construction,condition],wrap=True,spacing=10,run_spacing=10),
-
+                ft.Row([code,serial,brand,size,design,tread,pressure,life],wrap=True),
                 ft.ElevatedButton('Registrar neumático',icon=ft.Icons.SAVE,on_click=save)
             ])))
-
-        if status_filter:
-            blocks.append(card(ft.Column([
-                ft.Row([
-                    ft.Text('Listado de neumáticos registrados',size=17,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
-                    ft.Container(expand=True),search
-                ],wrap=True),
-                summary,
-                ft.Row(
-                    [ft.Container(content=master_table, width=1880)],
-                    scroll=ft.ScrollMode.ALWAYS
-                )
-            ])))
-
-        # El historial se conserva para las vistas operativas filtradas,
-        # pero no se muestra dentro del Registro maestro de neumáticos.
-        if status_filter:
-            blocks.append(card(ft.Column([
-                ft.Text('Historial operativo',size=17,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
-                ft.Text('Filtra por equipo para ver juntos todos los movimientos de sus neumáticos.',size=11,color=TEXT_MUTED),
-                ft.Row([history],scroll=ft.ScrollMode.AUTO)
-            ])))
-
+        blocks.append(card(ft.Column([
+            ft.Row([ft.Text('Listado',size=17,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),ft.Container(expand=True),eq_filter,search],wrap=True),
+            summary,
+            ft.Row([table],scroll=ft.ScrollMode.AUTO)
+        ])))
+        blocks.append(card(ft.Column([
+            ft.Text('Historial operativo',size=17,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
+            ft.Text('Filtra por equipo para ver juntos todos los movimientos de sus neumáticos.',size=11,color=TEXT_MUTED),
+            ft.Row([history],scroll=ft.ScrollMode.AUTO)
+        ])))
         content.content=ft.Column(blocks,scroll=ft.ScrollMode.AUTO,spacing=16)
         page.update()
 
@@ -1903,7 +1326,6 @@ def main(page: ft.Page):
 
             snack(f'Evento {ec} registrado correctamente.')
             refresh()
-            update_event_button_states(tid)
             save_btn.disabled = True
             page.update()
 
@@ -1919,562 +1341,24 @@ def main(page: ft.Page):
             scroll=ft.ScrollMode.ALWAYS
         )
 
-        # ------------------------------------------------------------------
-        # CABECERA OPERATIVA - lógica visual basada en MegaSoftire FoxPro.
-        # Primero se busca/selecciona el neumático; luego se muestra su ficha
-        # vertical y los eventos. El formulario de movimiento queda oculto
-        # hasta escoger un evento.
-        # ------------------------------------------------------------------
-        search_tire = ft.TextField(
-            label='Buscar código / serie',
-            prefix_icon=ft.Icons.SEARCH,
-            width=255
-        )
-        search_result = ft.Dropdown(
-            label='Neumático encontrado',
-            width=255,
-            visible=False,
-            options=[]
-        )
-
-        register_missing_btn = ft.ElevatedButton(
-            'REGISTRAR NEUMÁTICO',
-            icon=ft.Icons.ADD_CIRCLE_OUTLINE,
-            visible=False
-        )
-
-        foxpro_values = {}
-        foxpro_order = [
-            'Código',
-            'Serie',
-            'Marca',
-            'Medida',
-            'Modelo / Diseño',
-            'Clasificación TRA',
-            'Costo $',
-            'Estado',
-            'Nro. Eventos',
-            'Fecha',
-            'Equipo-Posición',
-            'Horómetro',
-            'Hrs Acumuladas',
-            'Ext/Int - Inicial',
-            'Ext/Int - Último',
-            'Psi Act(F/C)-Rec',
-            'Proyección Hrs',
-            'Horas Acumuladas',
-            'Costo x Hrs.',
-            'Tapa Válvula',
-            'Lugar de Operación',
-        ]
-        for label in foxpro_order:
-            foxpro_values[label] = ft.Text('—', size=13, color=TEXT_MAIN)
-
-        header_tire = ft.Text('Seleccione un neumático', size=18, weight=ft.FontWeight.BOLD, color=TEXT_MAIN)
-        header_detail = ft.Text('', size=12, color=TEXT_MUTED)
-
-        ficha_rows = []
-        vertical_labels = [
-            'Nro. Eventos',
-            'Fecha',
-            'Equipo-Posición',
-            'Horómetro',
-            'Hrs Acumuladas',
-            'Ext/Int - Inicial',
-            'Ext/Int - Último',
-            'Psi Act(F/C)-Rec',
-            'Proyección Hrs',
-            'Horas Acumuladas',
-            'Costo x Hrs.',
-            'Tapa Válvula',
-            'Lugar de Operación',
-        ]
-        event_values = [foxpro_values]
-        for _ in range(2):
-            event_values.append({
-                label: ft.Text('—', size=13, color=TEXT_MAIN)
-                for label in vertical_labels
-            })
-
-        event_headers = [
-            ft.Text('Último evento', size=11, weight=ft.FontWeight.BOLD, color=TEXT_MUTED),
-            ft.Text('Penúltimo evento', size=11, weight=ft.FontWeight.BOLD, color=TEXT_MUTED),
-            ft.Text('Antepenúltimo evento', size=11, weight=ft.FontWeight.BOLD, color=TEXT_MUTED),
-        ]
-        # Cabecera de las tres columnas de eventos.
-        ficha_rows.append(
-            ft.Row([
-                ft.Container(width=185),
-                *[
-                    ft.Container(content=event_headers[i], expand=True)
-                    for i in range(3)
-                ],
-            ], spacing=12)
-        )
-
-        for label in vertical_labels:
-            ficha_rows.append(
-                ft.Row([
-                    ft.Container(
-                        content=ft.Text(label, size=12, weight=ft.FontWeight.W_600, color=TEXT_MUTED),
-                        width=185
-                    ),
-                    *[
-                        ft.Container(
-                            content=event_values[i][label],
-                            expand=True
-                        )
-                        for i in range(3)
-                    ],
-                ], spacing=12)
-            )
-
-        ficha_panel = card(
-            ft.Column([
-                ft.Text('Consulta del neumático', size=17, weight=ft.FontWeight.BOLD, color=TEXT_MAIN),
-                ft.Row([
-                    ft.Container(
-                        content=ft.Column([
-                            header_tire,
-                        ], spacing=2),
-                        expand=2
-                    ),
-                    ft.Container(
-                        content=ft.Column([
-                            ft.Text('Marca:', size=11, weight=ft.FontWeight.W_600, color=TEXT_MUTED),
-                            foxpro_values['Marca'],
-                            ft.Text('Diseño:', size=11, weight=ft.FontWeight.W_600, color=TEXT_MUTED),
-                            foxpro_values['Modelo / Diseño'],
-                        ], spacing=2),
-                        expand=1
-                    ),
-                    ft.Container(
-                        content=ft.Column([
-                            ft.Text('Medida:', size=11, weight=ft.FontWeight.W_600, color=TEXT_MUTED),
-                            foxpro_values['Medida'],
-                            ft.Text('Estado:', size=11, weight=ft.FontWeight.W_600, color=TEXT_MUTED),
-                            foxpro_values['Estado'],
-                        ], spacing=2),
-                        expand=1
-                    ),
-                    ft.Container(
-                        content=ft.Column([
-                            ft.Text('Clasificación TRA:', size=11, weight=ft.FontWeight.W_600, color=TEXT_MUTED),
-                            foxpro_values['Clasificación TRA'],
-                            ft.Text('Costo $:', size=11, weight=ft.FontWeight.W_600, color=TEXT_MUTED),
-                            foxpro_values['Costo $'],
-                        ], spacing=2),
-                        expand=1
-                    ),
-                ], spacing=18, vertical_alignment=ft.CrossAxisAlignment.START),
-                ft.Divider(height=8),
-                *ficha_rows,
-            ], spacing=7),
-            width=None
-        )
-
-        movement_form = card(ft.Column([
-            ft.Text('Datos del movimiento',size=17,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
-            ft.Row([tire,event,date],wrap=True),
-            ref,
-            ft.Row([equip,pos,meter],wrap=True),
-            ft.Row([ti,to,press,cond],wrap=True),
-            ft.Row([reason,loc],wrap=True),
-            notes,
-            ft.Row([
-                save_btn,
-                ft.Text(
-                    'Guardar se habilita solo cuando fecha, horómetro y cocadas cumplen las validaciones.',
-                    size=11,color=TEXT_MUTED
-                )
-            ],wrap=True)
-        ]))
-        movement_form.visible = False
-
-        def clear_foxpro_ficha():
-            header_tire.value = 'Seleccione un neumático'
-            header_detail.value = ''
-            for label in foxpro_order:
-                foxpro_values[label].value = '—'
-            for i in range(1, 3):
-                for label in vertical_labels:
-                    event_values[i][label].value = '—'
-            event_headers[0].value = 'Último evento'
-            event_headers[1].value = 'Penúltimo evento'
-            event_headers[2].value = 'Antepenúltimo evento'
-
-        def load_foxpro_ficha(tid):
-            rows = query(
-                '''SELECT t.*,e.code equipment_code
-                   FROM tires t LEFT JOIN equipment e ON e.id=t.equipment_id
-                   WHERE t.id=?''',
-                (int(tid),)
-            )
-            if not rows:
-                clear_foxpro_ficha()
-                return
-            r = rows[0]
-            # Orden cronológico real de los eventos. No dependemos del formato
-            # textual almacenado en SQLite ni del id de inserción.
-            occ_raw = query(
-                '''SELECT * FROM occurrences
-                   WHERE tire_id=?''',
-                (int(tid),)
-            )
-
-            def occurrence_sort_key(item):
-                parsed = parse_event_date(item['event_date'])
-                # Fechas no interpretables quedan al inicio para no desplazar
-                # un evento válido reciente de la columna "Último".
-                return (parsed or dt.datetime.min, int(item['id'] or 0))
-
-            occ = sorted(occ_raw, key=occurrence_sort_key)
-            last = occ[-1] if occ else None
-            first = occ[0] if occ else None
-
-            inst = [o for o in occ if o['event_code'] == 'INST']
-            last_inst = inst[-1] if inst else None
-
-            # Para la ficha operativa usamos el horómetro del evento
-            # cronológicamente más reciente. Si no existe, conservamos el
-            # current_meter del maestro como respaldo.
-            current_meter = (
-                last['meter'] if last and last['meter'] is not None
-                else r['current_meter']
-            )
-            inst_meter = last_inst['meter'] if last_inst else None
-            hrs_acum = None
-            try:
-                if current_meter is not None and inst_meter is not None:
-                    hrs_acum = max(0, float(current_meter) - float(inst_meter))
-            except Exception:
-                hrs_acum = None
-
-            initial_i = first['tread_inner'] if first and first['tread_inner'] is not None else r['new_tread']
-            initial_e = first['tread_outer'] if first and first['tread_outer'] is not None else r['new_tread']
-            last_i = last['tread_inner'] if last and last['tread_inner'] is not None else r['tread_inner']
-            last_e = last['tread_outer'] if last and last['tread_outer'] is not None else r['tread_outer']
-
-            actual_press = last['pressure'] if last and last['pressure'] is not None else None
-            press_cond = last['pressure_condition'] if last and last['pressure_condition'] else ''
-            rec_press = r['recommended_pressure']
-
-            header_tire.value = f"{r['code']} | {r['serial'] or 's/serie'}"
-            header_detail.value = (
-                f"{r['brand'] or ''} · {r['size'] or ''} · {r['design'] or ''} · Estado: {r['status'] or '-'}"
-            )
-
-            foxpro_values['Código'].value = str(r['code'] or '—')
-            foxpro_values['Serie'].value = str(r['serial'] or 's/serie')
-            foxpro_values['Marca'].value = str(r['brand'] or '—')
-            foxpro_values['Medida'].value = str(r['size'] or '—')
-            foxpro_values['Modelo / Diseño'].value = str(r['design'] or '—')
-            foxpro_values['Clasificación TRA'].value = str(r['compound'] or '—')
-            try:
-                header_cost = float(r['cost_usd']) if r['cost_usd'] is not None else None
-            except Exception:
-                header_cost = None
-            foxpro_values['Costo $'].value = f"$ {header_cost:,.2f}" if header_cost is not None else '—'
-            foxpro_values['Estado'].value = str(r['status'] or '—')
-            foxpro_values['Nro. Eventos'].value = str(len(occ))
-            foxpro_values['Fecha'].value = format_date(last['event_date']) if last else '—'
-            foxpro_values['Equipo-Posición'].value = (
-                f"{r['equipment_code'] or '-'} - P{r['position'] or '-'}"
-            )
-            foxpro_values['Horómetro'].value = fmt(current_meter) or '—'
-            foxpro_values['Hrs Acumuladas'].value = f"{hrs_acum:.1f}" if hrs_acum is not None else '—'
-            foxpro_values['Ext/Int - Inicial'].value = f"{fmt(initial_e)}/{fmt(initial_i)}"
-            foxpro_values['Ext/Int - Último'].value = f"{fmt(last_e)}/{fmt(last_i)}"
-            foxpro_values['Psi Act(F/C)-Rec'].value = (
-                f"{fmt(actual_press) or '-'} ({press_cond or '-'}) / {fmt(rec_press) or '-'}"
-            )
-            life_value = r['projected_life_target'] if r['projected_life_target'] is not None else r['projected_life']
-            foxpro_values['Proyección Hrs'].value = fmt(life_value) or '—'
-            foxpro_values['Horas Acumuladas'].value = f"{hrs_acum:.1f}" if hrs_acum is not None else '—'
-            if header_cost is not None and hrs_acum is not None and hrs_acum > 0:
-                foxpro_values['Costo x Hrs.'].value = f"$ {header_cost / hrs_acum:.2f}/h"
-            else:
-                foxpro_values['Costo x Hrs.'].value = '—'
-            foxpro_values['Tapa Válvula'].value = 'NO'
-            foxpro_values['Lugar de Operación'].value = fmt(last['location']) if last and last['location'] else '—'
-
-
-            # --------------------------------------------------------------
-            # Visualización de los tres últimos eventos en paralelo.
-            # Mantiene el mismo orden vertical de la ficha aprobada.
-            # --------------------------------------------------------------
-            last_three = list(reversed(occ[-3:]))
-
-            def fill_event_column(col_idx, target):
-                values = event_values[col_idx]
-                if not target:
-                    for label in vertical_labels:
-                        values[label].value = '—'
-                    return
-
-                # Posición ordinal real del evento dentro del historial.
-                target_index = next(
-                    (i for i, item in enumerate(occ) if item['id'] == target['id']),
-                    None
-                )
-                event_number = (target_index + 1) if target_index is not None else '—'
-
-                # Última instalación vigente hasta ese evento.
-                base_inst = None
-                if target_index is not None:
-                    for item in reversed(occ[:target_index + 1]):
-                        if item['event_code'] == 'INST':
-                            base_inst = item
-                            break
-
-                event_hours = None
-                try:
-                    if target['meter'] is not None and base_inst and base_inst['meter'] is not None:
-                        event_hours = max(0, float(target['meter']) - float(base_inst['meter']))
-                except Exception:
-                    event_hours = None
-
-                init_i = (
-                    base_inst['tread_inner']
-                    if base_inst and base_inst['tread_inner'] is not None
-                    else r['new_tread']
-                )
-                init_e = (
-                    base_inst['tread_outer']
-                    if base_inst and base_inst['tread_outer'] is not None
-                    else r['new_tread']
-                )
-                evt_i = target['tread_inner'] if target['tread_inner'] is not None else '—'
-                evt_e = target['tread_outer'] if target['tread_outer'] is not None else '—'
-                evt_press = target['pressure'] if target['pressure'] is not None else None
-                evt_cond = target['pressure_condition'] if target['pressure_condition'] else ''
-
-                values['Nro. Eventos'].value = str(event_number)
-                values['Fecha'].value = format_date(target['event_date'])
-                values['Equipo-Posición'].value = (
-                    f"{target['equipment_id'] or '-'} - P{target['position'] or '-'}"
-                )
-
-                # Mostrar código de equipo en lugar del id cuando exista.
-                if target['equipment_id']:
-                    eq_row = query(
-                        'SELECT code FROM equipment WHERE id=?',
-                        (int(target['equipment_id']),)
-                    )
-                    if eq_row:
-                        values['Equipo-Posición'].value = (
-                            f"{eq_row[0]['code']} - P{target['position'] or '-'}"
-                        )
-
-                values['Horómetro'].value = fmt(target['meter']) or '—'
-                values['Hrs Acumuladas'].value = (
-                    f"{event_hours:.1f}" if event_hours is not None else '—'
-                )
-                values['Ext/Int - Inicial'].value = f"{fmt(init_e)}/{fmt(init_i)}"
-                values['Ext/Int - Último'].value = f"{fmt(evt_e)}/{fmt(evt_i)}"
-                values['Psi Act(F/C)-Rec'].value = (
-                    f"{fmt(evt_press) or '-'} ({evt_cond or '-'}) / {fmt(rec_press) or '-'}"
-                )
-                life_value = r['projected_life_target'] if r['projected_life_target'] is not None else r['projected_life']
-                values['Proyección Hrs'].value = fmt(life_value) or '—'
-                values['Horas Acumuladas'].value = (
-                    f"{event_hours:.1f}" if event_hours is not None else '—'
-                )
-                if header_cost is not None and event_hours is not None and event_hours > 0:
-                    values['Costo x Hrs.'].value = f"$ {header_cost / event_hours:.2f}/h"
-                else:
-                    values['Costo x Hrs.'].value = '—'
-                note_text = str(target['notes'] or '').upper() if 'notes' in target.keys() else ''
-                values['Tapa Válvula'].value = (
-                    'SI' if ('TAPA' in note_text or 'VALVULA' in note_text or 'VÁLVULA' in note_text) else 'NO'
-                )
-                values['Lugar de Operación'].value = fmt(target['location']) if target['location'] else '—'
-
-            for col_idx in range(3):
-                target = last_three[col_idx] if col_idx < len(last_three) else None
-                fill_event_column(col_idx, target)
-                if target:
-                    prefix = ['Último', 'Penúltimo', 'Antepenúltimo'][col_idx]
-                    event_headers[col_idx].value = f"{prefix}: {target['event_code']}"
-                else:
-                    event_headers[col_idx].value = ['Último evento', 'Penúltimo evento', 'Antepenúltimo evento'][col_idx]
-
-        def select_operational_tire(tid):
-            if not tid:
-                return
-            tire.value = str(tid)
-            movement_form.visible = False
-            event.value = None
-            load_foxpro_ficha(tid)
-            update_event_button_states(tid)
-            refresh()
-            movement_form.visible = False
-            page.update()
-
-        def go_register_missing(e=None):
-            pending_code = (search_tire.value or '').strip()
-            if not pending_code:
-                return
-            tires_view(prefill_code=pending_code)
-
-        register_missing_btn.on_click = go_register_missing
-
-        def do_search(e=None):
-            term = (search_tire.value or '').strip()
-            movement_form.visible = False
-            event.value = None
-            register_missing_btn.visible = False
-            if not term:
-                search_result.visible = False
-                search_result.options = []
-                search_result.value = None
-                tire.value = None
-                clear_foxpro_ficha()
-                update_event_button_states(None)
-                page.update()
-                return
-
-            rows = query(
-                '''SELECT id,code,serial FROM tires
-                   WHERE code LIKE ? OR serial LIKE ?
-                   ORDER BY code''',
-                (f'%{term}%', f'%{term}%')
-            )
-            search_result.options = [
-                ft.dropdown.Option(str(r['id']), f"{r['code']} | {r['serial'] or 's/serie'}")
-                for r in rows
-            ]
-            if len(rows) == 1:
-                search_result.visible = False
-                search_result.value = str(rows[0]['id'])
-                select_operational_tire(rows[0]['id'])
-            elif len(rows) > 1:
-                search_result.visible = True
-                search_result.value = None
-                clear_foxpro_ficha()
-                update_event_button_states(None)
-                page.update()
-            else:
-                search_result.visible = False
-                search_result.value = None
-                tire.value = None
-                clear_foxpro_ficha()
-                update_event_button_states(None)
-                register_missing_btn.visible = True
-                snack('Código no registrado. Puede registrar el neumático desde el botón habilitado.', True)
-                page.update()
-
-        def on_search_result(e):
-            selected = getattr(e, 'data', None) or search_result.value
-            if selected:
-                search_result.value = str(selected)
-                select_operational_tire(selected)
-
-        search_tire.on_submit = do_search
-        search_tire.on_change = do_search
-        search_result.on_change = on_search_result
-
-        event_icons_local = {
-            'INST': ft.Icons.ADD_CIRCLE_OUTLINE,
-            'INSP': ft.Icons.CHECK_CIRCLE_OUTLINE,
-            'INSC': ft.Icons.FACT_CHECK_OUTLINED,
-            'ROT': ft.Icons.SYNC_ALT,
-            'INVE': ft.Icons.SWAP_HORIZ,
-            'DINS': ft.Icons.REMOVE_CIRCLE_OUTLINE,
-            'REPA': ft.Icons.HANDYMAN_OUTLINED,
-            'BAJA': ft.Icons.DELETE_OUTLINE,
-        }
-        event_buttons_local = {}
-
-        def update_event_button_states(tid=None):
-            # Regla operativa:
-            # - Registrado pero sin instalar: solo INST habilitado.
-            # - Instalado en un equipo: INST bloqueado y eventos operativos habilitados.
-            # - ROT permanece bloqueado hasta definir su funcionalidad.
-            if not tid:
-                for code, btn in event_buttons_local.items():
-                    btn.disabled = True
-                return
-
-            rows = query(
-                """SELECT id,equipment_id,position,status
-                   FROM tires
-                   WHERE id=?""",
-                (int(tid),)
-            )
-            if not rows:
-                for code, btn in event_buttons_local.items():
-                    btn.disabled = True
-                return
-
-            r = rows[0]
-            installed = r['equipment_id'] is not None and str(r['position'] or '').strip() != ''
-
-            for code, btn in event_buttons_local.items():
-                if code == 'ROT':
-                    btn.disabled = True
-                elif installed:
-                    btn.disabled = (code == 'INST')
-                else:
-                    btn.disabled = (code != 'INST')
-
-        def open_event_form(ec):
-            if not tire.value:
-                return snack('Primero busque y seleccione un neumático.', True)
-            if ec == 'ROT':
-                return snack('ROT permanece bloqueado hasta definir su funcionalidad.', True)
-            event.value = ec
-            movement_form.visible = True
-            load_current_state()
-            apply_event_rules()
-            update_save_state()
-            page.update()
-
-        for ec in ['INST','INSP','INSC','ROT','INVE','DINS','REPA','BAJA']:
-            event_buttons_local[ec] = ft.OutlinedButton(
-                ec,
-                icon=event_icons_local[ec],
-                tooltip=EVENTS.get(ec, ec),
-                disabled=True,
-                on_click=lambda e, code=ec: open_event_form(code)
-            )
-
-        if pre_tire:
-            search_tire.value = str(current_tire()['code']) if current_tire() else ''
-            load_foxpro_ficha(pre_tire)
-            update_event_button_states(pre_tire)
-
-        left_panel = ft.Column([
-            card(ft.Column([
-                ft.Text('Consulta operativa', size=17, weight=ft.FontWeight.BOLD, color=TEXT_MAIN),
-                search_tire,
-                search_result,
-                register_missing_btn,
-            ], spacing=8), width=285),
-            card(
-                ft.Column([
-                    ft.Text('Registrar evento', size=12, weight=ft.FontWeight.W_600, color=TEXT_MUTED),
-                    *[
-                        ft.Container(
-                            content=event_buttons_local[c],
-                            width=140
-                        )
-                        for c in ['INST','INSP','INSC','ROT','INVE','DINS','REPA','BAJA']
-                    ],
-                ], spacing=8),
-                width=185
-            ),
-        ], spacing=12)
-
-        top_operational_area = ft.Row([
-            ft.Container(content=left_panel, width=300),
-            ft.Container(content=ficha_panel, expand=True),
-        ], spacing=12, vertical_alignment=ft.CrossAxisAlignment.START)
-
         content.content=ft.Column([
             page_title('Movimiento de neumáticos','Registro operativo del ciclo de vida'),
-            top_operational_area,
-            movement_form,
+            card(ft.Column([
+                ft.Text('Datos del movimiento',size=17,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
+                ft.Row([tire,event,date],wrap=True),
+                ref,
+                ft.Row([equip,pos,meter],wrap=True),
+                ft.Row([ti,to,press,cond],wrap=True),
+                ft.Row([reason,loc],wrap=True),
+                notes,
+                ft.Row([
+                    save_btn,
+                    ft.Text(
+                        'Guardar se habilita solo cuando fecha, horómetro y cocadas cumplen las validaciones.',
+                        size=11,color=TEXT_MUTED
+                    )
+                ],wrap=True)
+            ])),
             card(ft.Column([
                 ft.Text('Historial del neumático',size=17,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
                 ft.Text('Use la barra inferior para desplazarse horizontalmente. La columna Acción permite eliminar eventos.',size=11,color=TEXT_MUTED),
@@ -2565,7 +1449,7 @@ def main(page: ft.Page):
                 padding=16,
                 content=ft.Column([
                     ft.Row([ft.Icon(ft.Icons.TIRE_REPAIR,color=ft.Colors.WHITE,size=28),ft.Text('MegaSoftire',size=22,weight=ft.FontWeight.BOLD,color=ft.Colors.WHITE)]),
-                    ft.Text('Web 2026',size=11,color='#B9C9D9')
+                    ft.Text('PTS S.A. | Web 2026',size=11,color='#B9C9D9')
                 ],spacing=4)
             ),
             destinations=[
@@ -2604,111 +1488,58 @@ def main(page: ft.Page):
         show_login()
 
     def show_login():
-        # Portada tradicional centrada, con proporciones similares a la versión FoxPro.
-        # Acceso básico local: usuario fijo y contraseña comparada por hash.
-        classic_blue = '#0000AA'
-        classic_white = '#FFFFFF'
-        outer_bg = '#E5E7EB'
-        expected_user = 'admin'
-        expected_password_hash = '04445e6487736590d1ef50186b414e737e0164683cbbec64e00e73c000fd3bef'
+        username=ft.TextField(label='Usuario',prefix_icon=ft.Icons.PERSON_OUTLINE,width=340,autofocus=True)
+        password=ft.TextField(label='Contraseña',prefix_icon=ft.Icons.LOCK_OUTLINE,password=True,can_reveal_password=True,width=340)
+        error=ft.Text('',color=ft.Colors.RED_700,size=12)
 
-        user_field = ft.TextField(
-            label='Usuario',
-            value='',
-            width=280,
-            autofocus=True,
-            bgcolor=classic_white,
-            color='#111111',
-            border_color=classic_white,
-        )
-        password_field = ft.TextField(
-            label='Contraseña',
-            value='',
-            width=280,
-            password=True,
-            can_reveal_password=True,
-            bgcolor=classic_white,
-            color='#111111',
-            border_color=classic_white,
-        )
-        login_message = ft.Text('', size=13, color='#FFFF66', text_align=ft.TextAlign.CENTER)
-
-        def enter_system(e=None):
-            username = (user_field.value or '').strip()
-            password = password_field.value or ''
-            password_ok = hashlib.sha256(password.encode('utf-8')).hexdigest() == expected_password_hash
-            if username != expected_user or not password_ok:
-                login_message.value = 'Usuario o contraseña incorrectos'
-                password_field.value = ''
-                page.update()
-                return
-
-            users = query("SELECT * FROM users WHERE username=? LIMIT 1", (expected_user,))
-            if users:
-                session['user'] = users[0]
-            else:
-                session['user'] = {'username': 'admin', 'full_name': 'Administrador', 'role': 'ADMIN'}
+        def do_login(e):
+            user=authenticate(username.value or '',password.value or '')
+            if not user:
+                error.value='Usuario o contraseña incorrectos.'
+                page.update(); return
+            session['user']=user
             build_shell()
             page.update()
 
-        user_field.on_submit = lambda e: password_field.focus()
-        password_field.on_submit = enter_system
-
-        login_panel = ft.Container(
-            width=760,
-            height=480,
-            bgcolor=classic_blue,
-            padding=14,
-            border=ft.Border(
-                left=ft.BorderSide(2, classic_white),
-                top=ft.BorderSide(2, classic_white),
-                right=ft.BorderSide(2, classic_white),
-                bottom=ft.BorderSide(2, classic_white),
-            ),
+        password.on_submit=do_login
+        login_card=ft.Container(
+            width=430,
+            padding=34,
+            bgcolor=ft.Colors.WHITE,
+            border_radius=20,
+            shadow=ft.BoxShadow(blur_radius=24,color='#26000000',offset=ft.Offset(0,7)),
             content=ft.Column([
-                ft.Container(height=8),
-                ft.Container(
-                    width=460,
-                    height=48,
-                    alignment=ft.Alignment.CENTER,
-                    border=ft.Border(
-                        left=ft.BorderSide(2, classic_white),
-                        top=ft.BorderSide(2, classic_white),
-                        right=ft.BorderSide(2, classic_white),
-                        bottom=ft.BorderSide(2, classic_white),
-                    ),
-                    content=ft.Text(
-                        'SISTEMA DE CONTROL DE NEUMÁTICOS OTR',
-                        size=17,
-                        weight=ft.FontWeight.BOLD,
-                        color=classic_white,
-                        text_align=ft.TextAlign.CENTER,
-                        font_family='Courier New',
-                    ),
-                ),
-                ft.Container(height=18),
-                ft.Text('MegaSoftire', size=58, weight=ft.FontWeight.BOLD,
-                        color=classic_white, text_align=ft.TextAlign.CENTER,
-                        font_family='Courier New'),
-                ft.Text('VERSIÓN WEB 2026', size=17, weight=ft.FontWeight.BOLD,
-                        color=classic_white, text_align=ft.TextAlign.CENTER,
-                        font_family='Courier New'),
-                ft.Container(height=12),
-                ft.Text('ACCESO AL SISTEMA', size=15, weight=ft.FontWeight.BOLD,
-                        color=classic_white, text_align=ft.TextAlign.CENTER),
-                ft.Row([user_field], alignment=ft.MainAxisAlignment.CENTER),
-                ft.Row([password_field], alignment=ft.MainAxisAlignment.CENTER),
-                login_message,
-                ft.ElevatedButton('INGRESAR', icon=ft.Icons.LOGIN, on_click=enter_system),
-                ft.Container(height=4),
-            ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=8)
+                ft.Container(width=64,height=64,border_radius=16,bgcolor='#EAF2FF',alignment=ft.Alignment.CENTER,content=ft.Icon(ft.Icons.TIRE_REPAIR,size=34,color=NAV_ACCENT)),
+                ft.Text('MegaSoftire',size=30,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
+                ft.Text('Gestión de Neumáticos OTR · Versión Web',size=13,color=TEXT_MUTED),
+                ft.Divider(height=20,color='#E8EDF3'),
+                username,password,error,
+                ft.ElevatedButton('INGRESAR',icon=ft.Icons.LOGIN,width=340,height=46,on_click=do_login),
+                ft.Container(height=6),
+                ft.Text('Acceso inicial de demostración',size=11,color=TEXT_MUTED),
+                ft.Text('Usuario: admin   ·   Contraseña: Admin2026!',size=11,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
+            ],horizontal_alignment=ft.CrossAxisAlignment.CENTER,spacing=12)
         )
-
-        app_host.content = ft.Container(
+        app_host.content=ft.Container(
             expand=True,
-            bgcolor=outer_bg,
+            bgcolor=BG,
             alignment=ft.Alignment.CENTER,
-            content=login_panel,
+            content=ft.Row([
+                ft.Container(
+                    expand=True,
+                    padding=50,
+                    content=ft.Column([
+                        ft.Text('MEGASOFTire WEB 2026',size=38,weight=ft.FontWeight.BOLD,color=NAV_BG),
+                        ft.Text('La evolución del control de neumáticos: misma lógica operativa, interfaz moderna y acceso desde navegador.',size=17,color=TEXT_MUTED,width=620),
+                        ft.Container(height=12),
+                        ft.Row([ft.Icon(ft.Icons.COMPUTER,color=NAV_ACCENT),ft.Text('Windows / navegador',color=TEXT_MAIN)]),
+                        ft.Row([ft.Icon(ft.Icons.PHONE_ANDROID,color=NAV_ACCENT),ft.Text('Compatible con móvil',color=TEXT_MAIN)]),
+                        ft.Row([ft.Icon(ft.Icons.HISTORY,color=NAV_ACCENT),ft.Text('Historial completo por neumático',color=TEXT_MAIN)]),
+                        ft.Row([ft.Icon(ft.Icons.SECURITY,color=NAV_ACCENT),ft.Text('Acceso por usuario',color=TEXT_MAIN)]),
+                    ],alignment=ft.MainAxisAlignment.CENTER,spacing=14)
+                ),
+                ft.Container(width=500,alignment=ft.Alignment.CENTER,content=login_card)
+            ],expand=True,vertical_alignment=ft.CrossAxisAlignment.CENTER)
         )
         page.update()
 
