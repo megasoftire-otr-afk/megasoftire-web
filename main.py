@@ -1120,7 +1120,7 @@ def main(page: ft.Page):
                 '</svg>'
             )
             svg_b64 = base64.b64encode(svg.encode('utf-8')).decode('ascii')
-            chart = ft.Image(src_base64=svg_b64, width=200, height=200, fit=ft.BoxFit.CONTAIN)
+            chart = ft.Image(src="data:image/svg+xml;base64," + svg_b64, width=200, height=200, fit=ft.BoxFit.CONTAIN)
             return ft.Column([
                 chart,
                 *legend,
