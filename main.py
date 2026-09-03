@@ -1045,7 +1045,7 @@ def main(page: ft.Page):
                 ft.Row(
                     group_blocks,
                     spacing=4,
-                    alignment=ft.MainAxisAlignment.CENTER,
+                    alignment=ft.MainAxisAlignment.START,
                     vertical_alignment=ft.CrossAxisAlignment.END,
                 ),
             ], height=chart_h + 28)
@@ -1124,7 +1124,7 @@ def main(page: ft.Page):
                 ft.Row(
                     group_blocks,
                     spacing=4,
-                    alignment=ft.MainAxisAlignment.CENTER,
+                    alignment=ft.MainAxisAlignment.START,
                     vertical_alignment=ft.CrossAxisAlignment.END,
                 ),
             ], height=chart_h + 28)
