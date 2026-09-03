@@ -2900,7 +2900,7 @@ def main(page: ft.Page):
                 t.code, t.serial, t.brand, t.size, t.design,
                 t.tread_inner, t.tread_outer,
                 e.id AS equipment_id, e.code AS equipment_code,
-                e.vehicle_type, t.position
+                e.vehicle_type, e.model AS equipment_model, t.position
             FROM tires t
             LEFT JOIN equipment e ON e.id=t.equipment_id
             WHERE t.status='SERVICIO'
@@ -3009,6 +3009,47 @@ def main(page: ft.Page):
             ),
         ], spacing=0)
 
+        def rtd_donut_chart():
+            """Dona compacta con la condición RTD calculada de la última lectura disponible."""
+            import base64, math
+            items=[
+                ('Buen Estado', counts['BUEN ESTADO'], '#2E9B45'),
+                ('Próximo Cambio', counts['PRÓXIMO CAMBIO'], '#F2A900'),
+                ('Cambio Urgente', counts['CAMBIO URGENTE'], '#D92D20'),
+            ]
+            total_chart=sum(n for _,n,_ in items)
+            cx=cy=78; radius=46; stroke=22
+            circumference=2*math.pi*radius
+            offset=0.0; circles=[]; legend=[]
+            for label,n,color in items:
+                dash=circumference*(n/total_chart) if total_chart else 0
+                gap=max(0.0,circumference-dash)
+                if n>0:
+                    circles.append(
+                        f'<circle cx="{cx}" cy="{cy}" r="{radius}" fill="none" stroke="{color}" '
+                        f'stroke-width="{stroke}" stroke-dasharray="{dash:.3f} {gap:.3f}" '
+                        f'stroke-dashoffset="{-offset:.3f}" transform="rotate(-90 {cx} {cy})" />'
+                    )
+                offset += dash
+                pc=(n/total_chart*100) if total_chart else 0
+                legend.append(ft.Row([
+                    ft.Container(width=9,height=9,bgcolor=color,border_radius=2),
+                    ft.Text(f'{label}: {n} ({pc:.1f}%)',size=9.2,color=TEXT_MAIN),
+                ],spacing=5))
+            svg=(
+                '<svg xmlns="http://www.w3.org/2000/svg" width="156" height="156" viewBox="0 0 156 156">'
+                '<circle cx="78" cy="78" r="46" fill="none" stroke="#E2E8F0" stroke-width="22" />'
+                + ''.join(circles) +
+                f'<text x="78" y="76" text-anchor="middle" font-family="Arial" font-size="22" font-weight="700" fill="#172033">{total_chart}</text>'
+                '<text x="78" y="94" text-anchor="middle" font-family="Arial" font-size="9" fill="#64748B">neumáticos</text>'
+                '</svg>'
+            )
+            src='data:image/svg+xml;base64,'+base64.b64encode(svg.encode('utf-8')).decode('ascii')
+            return ft.Row([
+                ft.Image(src=src,width=150,height=150,fit=ft.BoxFit.CONTAIN),
+                ft.Column(legend,spacing=7),
+            ],spacing=8,vertical_alignment=ft.CrossAxisAlignment.CENTER)
+
         # Resumen por tipo de vehículo, basado en los neumáticos actualmente en servicio.
         vehicle_summary={}
         for r,_,_ in evaluated:
@@ -3036,6 +3077,25 @@ def main(page: ft.Page):
                 ft.DataCell(ft.Text(str(total), size=10, weight=ft.FontWeight.BOLD)),
                 ft.DataCell(ft.Text('100.0%' if total else '0.0%', size=10, weight=ft.FontWeight.BOLD)),
             ])] if total else [])
+        )
+
+        # Resumen específico de SCOOP por modelo registrado en Administración de equipos.
+        scoop_summary={}
+        for r,_,_ in evaluated:
+            vehicle=(str(r['vehicle_type']).strip().upper() if r['vehicle_type'] else '')
+            if 'SCOOP' in vehicle:
+                model=(str(r['equipment_model']).strip().upper() if r['equipment_model'] else 'SIN MODELO')
+                scoop_summary[model]=scoop_summary.get(model,0)+1
+        scoop_table=ft.DataTable(
+            heading_row_height=34, data_row_min_height=30, data_row_max_height=30, column_spacing=22,
+            columns=[
+                ft.DataColumn(ft.Text('Modelo Scoop',size=11,weight=ft.FontWeight.BOLD)),
+                ft.DataColumn(ft.Text('N° Neumáticos',size=11,weight=ft.FontWeight.BOLD),numeric=True),
+            ],
+            rows=[ft.DataRow(cells=[
+                ft.DataCell(ft.Text(model,size=10)),
+                ft.DataCell(ft.Text(str(n),size=10)),
+            ]) for model,n in sorted(scoop_summary.items())]
         )
 
         condition_rows=[]
@@ -3087,22 +3147,20 @@ def main(page: ft.Page):
             ], wrap=True, spacing=12, run_spacing=12),
             ft.Row([
                 card(ft.Column([
-                    ft.Text('CRITERIOS DE EVALUACIÓN (RTD)', size=14, weight=ft.FontWeight.BOLD, color=TEXT_MAIN),
-                    criteria_rows,
-                    ft.Text('RTD: Remanente de la Banda de Rodadura (Remaining Tread Depth), expresado en milímetros.',
-                            size=10, italic=True, color=TEXT_MUTED),
-                ], spacing=8), width=610),
-                card(ft.Column([
                     ft.Text('CONDICIÓN GENERAL DE NEUMÁTICOS (RTD)', size=14, weight=ft.FontWeight.BOLD, color=TEXT_MAIN),
-                    ft.Row([condition_table], scroll=ft.ScrollMode.AUTO),
-                    ft.Text('La clasificación usa la menor lectura RTD entre EXT e INT de cada neumático.',
-                            size=10, italic=True, color=TEXT_MUTED),
-                ], spacing=8), width=520),
+                    rtd_donut_chart(),
+                    ft.Text('Evaluación según la menor lectura RTD disponible.', size=9.5, italic=True, color=TEXT_MUTED),
+                ], spacing=8), width=390),
+                card(ft.Column([
+                    ft.Text('RESUMEN POR TIPO DE VEHÍCULO', size=14, weight=ft.FontWeight.BOLD, color=TEXT_MAIN),
+                    ft.Row([vehicle_table], scroll=ft.ScrollMode.AUTO),
+                ], spacing=8), width=430),
+                card(ft.Column([
+                    ft.Text('SCOOP POR MODELO', size=14, weight=ft.FontWeight.BOLD, color=TEXT_MAIN),
+                    ft.Row([scoop_table], scroll=ft.ScrollMode.AUTO),
+                    ft.Text('Modelos tomados del registro de equipos.', size=9.5, italic=True, color=TEXT_MUTED),
+                ], spacing=8), width=330),
             ], wrap=True, spacing=12, run_spacing=12),
-            card(ft.Column([
-                ft.Text('RESUMEN POR TIPO DE VEHÍCULO', size=14, weight=ft.FontWeight.BOLD, color=TEXT_MAIN),
-                ft.Row([vehicle_table], scroll=ft.ScrollMode.AUTO),
-            ], spacing=8)),
         ], scroll=ft.ScrollMode.AUTO, spacing=16)
         page.update()
 
