@@ -1102,7 +1102,13 @@ def main(page: ft.Page):
                 for pos in pos_order:
                     data = pos_values.get(pos)
                     if data is None:
-                        stacked_bar = ft.Container(width=bar_w, height=2, bgcolor='#CBD5E1', border_radius=2)
+                        stacked_bar = ft.Column(
+                            [ft.Container(width=bar_w, height=2, bgcolor='#CBD5E1', border_radius=2)],
+                            spacing=0,
+                            height=chart_h,
+                            alignment=ft.MainAxisAlignment.END,
+                            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                        )
                     else:
                         if isinstance(data, dict):
                             worked = max(0.0, float(data.get('worked') or 0.0))
@@ -1132,7 +1138,13 @@ def main(page: ft.Page):
                                 bgcolor='#F59E0B',
                                 border_radius=ft.BorderRadius.only(bottom_left=2, bottom_right=2),
                             ))
-                        stacked_bar = ft.Column(segments, spacing=0, horizontal_alignment=ft.CrossAxisAlignment.CENTER)
+                        stacked_bar = ft.Column(
+                            segments,
+                            spacing=0,
+                            height=chart_h,
+                            alignment=ft.MainAxisAlignment.END,
+                            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                        )
                     bars.append(ft.Column([
                         ft.Container(height=chart_h, alignment=ft.Alignment.BOTTOM_CENTER, content=stacked_bar),
                         ft.Text(pos, size=7.2, weight=ft.FontWeight.BOLD, color=TEXT_MUTED,
