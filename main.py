@@ -1119,24 +1119,25 @@ def main(page: ft.Page):
                         worked_h = chart_h * min(worked, float(y_max)) / float(y_max)
                         remaining_h = chart_h * min(remaining, max(0.0, float(y_max) - worked)) / float(y_max)
                         segments = []
-                        # Orden visual aprobado: horas restantes (naranja) en la base
-                        # y horas acumuladas (azul) encima. La altura total no cambia.
+                        # Orden visual aprobado: horas acumuladas (azul) en la base
+                        # y horas restantes proyectadas (naranja) encima.
+                        # En ft.Column con alineación END, el último segmento queda en la base.
+                        if remaining > 0:
+                            segments.append(ft.Container(
+                                width=bar_w,
+                                height=max(2, remaining_h),
+                                bgcolor='#F59E0B',
+                                border_radius=ft.BorderRadius.only(top_left=2, top_right=2),
+                            ))
                         if worked > 0:
                             segments.append(ft.Container(
                                 width=bar_w,
                                 height=max(3, worked_h),
                                 bgcolor=NAV_ACCENT,
                                 border_radius=(
-                                    ft.BorderRadius.only(top_left=2, top_right=2)
+                                    ft.BorderRadius.only(bottom_left=2, bottom_right=2)
                                     if remaining > 0 else 2
                                 ),
-                            ))
-                        if remaining > 0:
-                            segments.append(ft.Container(
-                                width=bar_w,
-                                height=max(2, remaining_h),
-                                bgcolor='#F59E0B',
-                                border_radius=ft.BorderRadius.only(bottom_left=2, bottom_right=2),
                             ))
                         stacked_bar = ft.Column(
                             segments,
