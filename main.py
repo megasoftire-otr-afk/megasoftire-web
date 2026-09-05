@@ -1078,9 +1078,9 @@ def main(page: ft.Page):
             if not all_totals:
                 return ft.Text('Sin datos suficientes para graficar.', size=11, color=TEXT_MUTED)
 
-            step = 500
+            step = 1000
             max_total = max(all_totals)
-            # Eje Y siempre en rangos exactos de 500 h y con un escalón libre
+            # Eje Y siempre en rangos exactos de 1000 h y con un escalón libre
             # por encima de la barra más alta para que la proyección no quede
             # pegada al borde superior del gráfico.
             next_tick = (int(math.floor(max_total / step)) + 1) * step
