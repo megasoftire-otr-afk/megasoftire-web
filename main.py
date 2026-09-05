@@ -1264,13 +1264,14 @@ def main(page: ft.Page):
             'COCADA\nEXT/INT',
             '%\nREMANENTE',
             'Hs/mm',
+            'PROYECCIÓN DE\nVIDA (h)',
             'PRESIÓN\nRECOMENDADA',
             'PRESIÓN\nACTUAL',
             'TAPA\nVÁLVULA',
             'FECHA ÚLTIMA\nINSPECCIÓN',
             'ÚLTIMO\nHORÓMETRO',
         ]
-        service_widths = [112,72,78,112,92,82,82,100,90,105,100,90,65,112,92,82,120,105]
+        service_widths = [112,72,78,112,92,82,82,100,90,105,100,90,65,118,112,92,82,120,105]
         service_total_width = sum(service_widths)
 
         def service_cell(value, width, header=False, bold=False):
@@ -1553,6 +1554,19 @@ def main(page: ft.Page):
                 if r['cost_usd'] is not None and od['worked'] is not None and float(od['worked']) > 0:
                     cost_hour = float(r['cost_usd']) / float(od['worked'])
 
+                # Proyección de vida total (h), usando el mismo criterio conservador
+                # del Hs/mm: la MENOR lectura entre RTD EXT e INT.
+                #
+                # Hs/mm = horas acumuladas / (cocada original - RTD mínimo actual)
+                # Horas restantes = (RTD mínimo actual - profundidad de retiro) * Hs/mm
+                # Proyección total = horas acumuladas + horas restantes
+                projected_life = None
+                retirement_tread = r['retirement_tread'] if 'retirement_tread' in r.keys() else None
+                if (hs_mm is not None and od['worked'] is not None and
+                        current_min is not None and retirement_tread is not None):
+                    remaining_mm = max(0.0, float(current_min) - float(retirement_tread))
+                    projected_life = float(od['worked']) + (remaining_mm * float(hs_mm))
+
                 condition_value = r['tire_condition'] if 'tire_condition' in r.keys() else ''
 
                 row_values = [
@@ -1569,6 +1583,7 @@ def main(page: ft.Page):
                     f"{fmt(r['tread_outer'])}/{fmt(r['tread_inner'])}" if current_vals else '—',
                     f"{rem_pct:.1f}%" if rem_pct is not None else '—',
                     f"{hs_mm:.2f}" if hs_mm is not None else '—',
+                    f"{projected_life:,.0f}" if projected_life is not None else '—',
                     fmt(r['recommended_pressure']) or '—',
                     fmt(od['last_pressure']) or '—',
                     od['valve_cap'],
