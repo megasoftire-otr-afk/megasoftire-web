@@ -1080,9 +1080,11 @@ def main(page: ft.Page):
 
             step = 500
             max_total = max(all_totals)
-            # Conserva la escala histórica de 4,000 h, ampliándola en múltiplos de 500
-            # cuando la proyección total de algún neumático la supera.
-            y_max = max(4000, int(math.ceil(max_total / step) * step))
+            # Eje Y siempre en rangos exactos de 500 h y con un escalón libre
+            # por encima de la barra más alta para que la proyección no quede
+            # pegada al borde superior del gráfico.
+            next_tick = (int(math.floor(max_total / step)) + 1) * step
+            y_max = max(4000, next_tick)
             ticks = list(range(y_max, -1, -step))
             chart_h = 150
             bar_w = 10
