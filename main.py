@@ -1060,14 +1060,29 @@ def main(page: ft.Page):
             ], spacing=8, vertical_alignment=ft.CrossAxisAlignment.START)
 
         def grouped_hours_chart(groups):
-            """Horas acumuladas: misma estética y eje Y en pasos exactos de 500 h."""
+            """Horas por posición: acumuladas (azul) + restantes proyectadas (naranja)."""
+            import math
             pos_order = ['P1', 'P2', 'P3', 'P4']
-            all_vals = [float(v) for vals in groups.values() for v in vals.values() if v is not None]
-            if not all_vals:
+            all_totals = []
+            for vals in groups.values():
+                for data in vals.values():
+                    if data is None:
+                        continue
+                    if isinstance(data, dict):
+                        worked = float(data.get('worked') or 0.0)
+                        remaining = float(data.get('remaining') or 0.0)
+                    else:
+                        worked = float(data)
+                        remaining = 0.0
+                    all_totals.append(max(0.0, worked) + max(0.0, remaining))
+            if not all_totals:
                 return ft.Text('Sin datos suficientes para graficar.', size=11, color=TEXT_MUTED)
 
             step = 500
-            y_max = 4000
+            max_total = max(all_totals)
+            # Conserva la escala histórica de 4,000 h, ampliándola en múltiplos de 500
+            # cuando la proyección total de algún neumático la supera.
+            y_max = max(4000, int(math.ceil(max_total / step) * step))
             ticks = list(range(y_max, -1, -step))
             chart_h = 150
             bar_w = 10
@@ -1083,15 +1098,39 @@ def main(page: ft.Page):
             for idx, (eq, pos_values) in enumerate(group_items):
                 bars = []
                 for pos in pos_order:
-                    val = pos_values.get(pos)
-                    if val is None:
-                        bar = ft.Container(width=bar_w, height=2, bgcolor='#CBD5E1', border_radius=2)
+                    data = pos_values.get(pos)
+                    if data is None:
+                        stacked_bar = ft.Container(width=bar_w, height=2, bgcolor='#CBD5E1', border_radius=2)
                     else:
-                        v = max(0.0, min(float(y_max), float(val)))
-                        h = max(3, chart_h * v / float(y_max))
-                        bar = ft.Container(width=bar_w, height=h, bgcolor=NAV_ACCENT, border_radius=2)
+                        if isinstance(data, dict):
+                            worked = max(0.0, float(data.get('worked') or 0.0))
+                            remaining = max(0.0, float(data.get('remaining') or 0.0))
+                        else:
+                            worked = max(0.0, float(data))
+                            remaining = 0.0
+                        worked_h = chart_h * min(worked, float(y_max)) / float(y_max)
+                        remaining_h = chart_h * min(remaining, max(0.0, float(y_max) - worked)) / float(y_max)
+                        segments = []
+                        if remaining > 0:
+                            segments.append(ft.Container(
+                                width=bar_w,
+                                height=max(2, remaining_h),
+                                bgcolor='#F59E0B',
+                                border_radius=ft.BorderRadius.only(top_left=2, top_right=2),
+                            ))
+                        if worked > 0:
+                            segments.append(ft.Container(
+                                width=bar_w,
+                                height=max(3, worked_h),
+                                bgcolor=NAV_ACCENT,
+                                border_radius=(
+                                    ft.BorderRadius.only(bottom_left=2, bottom_right=2)
+                                    if remaining > 0 else 2
+                                ),
+                            ))
+                        stacked_bar = ft.Column(segments, spacing=0, horizontal_alignment=ft.CrossAxisAlignment.CENTER)
                     bars.append(ft.Column([
-                        ft.Container(height=chart_h, alignment=ft.Alignment.BOTTOM_CENTER, content=bar),
+                        ft.Container(height=chart_h, alignment=ft.Alignment.BOTTOM_CENTER, content=stacked_bar),
                         ft.Text(pos, size=7.2, weight=ft.FontWeight.BOLD, color=TEXT_MUTED,
                                 text_align=ft.TextAlign.CENTER),
                     ], spacing=2, horizontal_alignment=ft.CrossAxisAlignment.CENTER))
@@ -1128,14 +1167,28 @@ def main(page: ft.Page):
                 ),
             ], height=chart_h + 28)
 
-            return ft.Row([
-                ft.Column([
-                    ft.Text('Horas (h)', size=8.5, color=TEXT_MUTED),
-                    y_axis,
-                    ft.Container(height=24),
-                ], spacing=1, horizontal_alignment=ft.CrossAxisAlignment.END),
-                ft.Container(expand=True, content=plot),
-            ], spacing=8, vertical_alignment=ft.CrossAxisAlignment.START)
+            legend = ft.Row([
+                ft.Row([
+                    ft.Container(width=10, height=10, bgcolor=NAV_ACCENT, border_radius=2),
+                    ft.Text('Horas acumuladas', size=9, color=TEXT_MUTED),
+                ], spacing=5),
+                ft.Row([
+                    ft.Container(width=10, height=10, bgcolor='#F59E0B', border_radius=2),
+                    ft.Text('Horas restantes proyectadas', size=9, color=TEXT_MUTED),
+                ], spacing=5),
+            ], spacing=16)
+
+            return ft.Column([
+                legend,
+                ft.Row([
+                    ft.Column([
+                        ft.Text('Horas (h)', size=8.5, color=TEXT_MUTED),
+                        y_axis,
+                        ft.Container(height=24),
+                    ], spacing=1, horizontal_alignment=ft.CrossAxisAlignment.END),
+                    ft.Container(expand=True, content=plot),
+                ], spacing=8, vertical_alignment=ft.CrossAxisAlignment.START),
+            ], spacing=4)
 
         def donut_svg_chart(items, total=None, palette=None, legend_lines=None, center_label='Total'):
             """Dona SVG compatible con Flet actual, con leyenda compacta y simétrica."""
@@ -1244,7 +1297,7 @@ def main(page: ft.Page):
                 dashboard_card('TAPA VÁLVULA', 'Estado de tapa de válvula en neumáticos en servicio', valve_pie_body, height=245),
             ], spacing=12, vertical_alignment=ft.CrossAxisAlignment.START),
             dashboard_card('REMANENTE POR POSICIÓN (%)', 'Eje X: equipos · P1, P2, P3 y P4 · Eje Y: % remanente', rem_chart_body),
-            dashboard_card('HORAS ACUMULADAS POR POSICIÓN (h)', 'Eje X: equipos · P1, P2, P3 y P4 · Eje Y: horas acumuladas', hours_chart_body),
+            dashboard_card('HORAS ACUMULADAS + HORAS RESTANTES POR POSICIÓN (h)', 'Azul: horas acumuladas · Naranja: horas restantes proyectadas · Altura total: proyección de vida', hours_chart_body),
         ], spacing=12)
 
         # Tabla técnica compacta: encabezado fijo + desplazamiento vertical interno.
@@ -1635,11 +1688,27 @@ def main(page: ft.Page):
                         worked = max(0.0, float(od['worked']))
                     except Exception:
                         worked = None
+                # Horas restantes proyectadas usando el mismo criterio aprobado:
+                # menor RTD EXT/INT y profundidad de retiro del Registro Maestro.
+                remaining_hours = None
+                if worked is not None and original_vals and current_vals:
+                    original_min_chart = min(original_vals)
+                    current_min_chart = min(current_vals)
+                    wear_mm_chart = max(0.0, float(original_min_chart) - float(current_min_chart))
+                    retirement_tread_chart = r['retirement_tread'] if 'retirement_tread' in r.keys() else None
+                    if wear_mm_chart > 0 and retirement_tread_chart is not None:
+                        hs_mm_chart = float(worked) / wear_mm_chart
+                        remaining_mm_chart = max(0.0, float(current_min_chart) - float(retirement_tread_chart))
+                        remaining_hours = remaining_mm_chart * hs_mm_chart
+
                 g = chart_groups.setdefault(eq, {'rem_by_pos': {}, 'hours_by_pos': {}})
                 if rem is not None and pos in ('P1','P2','P3','P4'):
                     g['rem_by_pos'][pos] = rem
                 if worked is not None and pos in ('P1','P2','P3','P4'):
-                    g['hours_by_pos'][pos] = worked
+                    g['hours_by_pos'][pos] = {
+                        'worked': worked,
+                        'remaining': remaining_hours if remaining_hours is not None else 0.0,
+                    }
 
             rem_groups = {k: v['rem_by_pos'] for k, v in chart_groups.items() if v['rem_by_pos']}
             hours_groups = {k: v['hours_by_pos'] for k, v in chart_groups.items() if v['hours_by_pos']}
