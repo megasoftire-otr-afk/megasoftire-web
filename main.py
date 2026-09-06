@@ -3267,7 +3267,7 @@ def main(page: ft.Page):
                 top_metric('EQUIPOS EN SERVICIO', equipment_count, 'Equipos con neumáticos instalados'),
                 top_metric('NEUMÁTICOS EN BUEN ESTADO', f'{good_pct:.1f}%',
                            f'{counts["BUEN ESTADO"]} neumáticos', '#2E9B45'),
-                top_metric('NEUMÁTICOS QUE REQUIEREN ATENCIÓN', f'{attention_pct:.1f}%',
+                top_metric('NEUMÁTICOS QUE REQUIEREN CAMBIO', f'{attention_pct:.1f}%',
                            f'{attention} neumáticos', '#C81D2A'),
             ], wrap=True, spacing=12, run_spacing=12),
             ft.Row([
@@ -3448,6 +3448,14 @@ def main(page: ft.Page):
                                   on_click=lambda e: maintenance_view()),
                 ft.ElevatedButton('3.2 Diferencia RTD entre hombros', icon=ft.Icons.COMPARE_ARROWS, disabled=True),
             ], spacing=10),
+            ft.Row([
+                top_metric('NEUMÁTICOS EN SERVICIO', total, 'Total actualmente instalado', '#C81D2A'),
+                top_metric('EQUIPOS EN SERVICIO', len({r['equipment_id'] for r in rows if r['equipment_id'] is not None}), 'Equipos con neumáticos instalados'),
+                top_metric('NEUMÁTICOS EN BUEN ESTADO', f'{pct(counts["NORMAL"] + counts["PREVENTIVO"], evaluated_total):.1f}%',
+                           f'{counts["NORMAL"] + counts["PREVENTIVO"]} neumáticos · Normal + Preventivo', '#2E9B45'),
+                top_metric('NEUMÁTICOS QUE REQUIEREN INVERSIÓN', f'{pct(counts["EMERGENCIA"], evaluated_total):.1f}%',
+                           f'{counts["EMERGENCIA"]} neumáticos · Solo Emergencia', '#C81D2A'),
+            ], wrap=True, spacing=12, run_spacing=12),
             ft.Row([
                 ft.Container(expand=1, content=card(ft.Column([
                     ft.Text('SEMÁFORO DE CONDICIÓN', size=14, weight=ft.FontWeight.BOLD, color=TEXT_MAIN),
