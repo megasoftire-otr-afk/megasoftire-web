@@ -3353,6 +3353,25 @@ def main(page: ft.Page):
         def pct(n, base):
             return (n/base*100) if base else 0
 
+        # Tarjeta KPI local para 3.2. Se define dentro de esta vista para no
+        # depender del helper local de 3.1.
+        def top_metric(title, value, subtitle, value_color=TEXT_MAIN):
+            return ft.Container(
+                width=250,
+                height=108,
+                bgcolor=CARD_BG,
+                border=ft.Border.all(1, '#DDE5ED'),
+                border_radius=10,
+                padding=14,
+                content=ft.Column([
+                    ft.Text(title, size=12, weight=ft.FontWeight.BOLD, color=TEXT_MAIN,
+                            text_align=ft.TextAlign.CENTER),
+                    ft.Text(str(value), size=29, weight=ft.FontWeight.BOLD, color=value_color,
+                            text_align=ft.TextAlign.CENTER),
+                    ft.Text(subtitle, size=10, color=TEXT_MUTED, text_align=ft.TextAlign.CENTER),
+                ], spacing=3, horizontal_alignment=ft.CrossAxisAlignment.CENTER)
+            )
+
         # Semáforo sin encabezado independiente de "Criterio": el criterio se
         # muestra al costado del nombre de cada condición, como pidió el usuario.
         condition_rows=[]
