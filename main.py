@@ -944,32 +944,6 @@ def main(page: ft.Page):
         eq_info = ft.Text('', size=12, color=TEXT_MUTED)
         summary = ft.Text('', size=12, color=TEXT_MUTED)
 
-        # Filtro independiente para los 3 indicadores superiores.
-        # No altera las donas, gráficos ni la tabla técnica del dashboard.
-        metric_eq_filter = ft.Dropdown(
-            label='Filtrar por equipo',
-            width=205,
-            value=ALL,
-            options=[ft.dropdown.Option(key=ALL, text='Todos los equipos')] +
-                    [ft.dropdown.Option(key=str(r['id']), text=r['code']) for r in eq_rows]
-        )
-
-        def metric_filter_card():
-            return card(
-                ft.Column([
-                    ft.Row([
-                        ft.Container(
-                            width=40, height=40, border_radius=10,
-                            bgcolor='#EAF2FF', alignment=ft.Alignment.CENTER,
-                            content=ft.Icon(ft.Icons.FILTER_ALT_OUTLINED, color=NAV_ACCENT, size=21)
-                        ),
-                        ft.Container(expand=True),
-                    ]),
-                    ft.Text('Filtrar por equipo', size=13, weight=ft.FontWeight.W_600, color=TEXT_MAIN),
-                    metric_eq_filter,
-                ], spacing=7), width=235
-            )
-
         metrics = ft.Row([], wrap=True, spacing=12, run_spacing=12)
         position_grid = ft.Row([], wrap=True, spacing=12, run_spacing=12)
 
@@ -1694,31 +1668,9 @@ def main(page: ft.Page):
                     for idx, v in enumerate(row_values)
                 ], spacing=0))
 
-            # KPI superior 1: EN SERVICIO.
-            # En esta etapa solo este indicador responde al filtro independiente
-            # por equipo. Los otros KPI permanecen con sus valores generales.
-            selected_metric = str(metric_eq_filter.value or ALL).strip()
-            selected_metric_id = None
-            if selected_metric not in ('', ALL):
-                if selected_metric in equipment_ids:
-                    selected_metric_id = int(selected_metric)
-                else:
-                    selected_metric_id = int(equipment_by_code.get(selected_metric.upper())) if equipment_by_code.get(selected_metric.upper()) else None
-
-            if selected_metric_id is not None:
-                total_service = query(
-                    "SELECT COUNT(*) n FROM tires WHERE status='SERVICIO' AND equipment_id=?",
-                    (selected_metric_id,)
-                )[0]['n']
-            else:
-                total_service = query("SELECT COUNT(*) n FROM tires WHERE status='SERVICIO'")[0]['n']
-
-            # Por ahora estos dos indicadores siguen siendo generales.
-            global_metric_rows = query("SELECT * FROM tires WHERE status='SERVICIO'")
-            global_metric_ops = [(r, tire_operational_data(r)) for r in global_metric_rows]
-            global_metric_rem_values = [od['rem'] for _, od in global_metric_ops if od['rem'] is not None]
-            eq_count = len({r['equipment_id'] for r in global_metric_rows if r['equipment_id'] is not None})
-            avg_rem = sum(global_metric_rem_values) / len(global_metric_rem_values) if global_metric_rem_values else None
+            total_service = len(rows)
+            eq_count = len({r['equipment_id'] for r in rows if r['equipment_id'] is not None})
+            avg_rem = sum(rem_values) / len(rem_values) if rem_values else None
             current_meter = max([float(r['current_meter']) for r in rows if r['current_meter'] is not None], default=None)
             latest_date = ''
             if rows:
@@ -1728,10 +1680,9 @@ def main(page: ft.Page):
                 latest_date = rr[0]['d'] if rr else ''
 
             metrics.controls = [
-                metric_card('En servicio', total_service, ft.Icons.TIRE_REPAIR, 'Neumáticos del equipo seleccionado'),
-                metric_card('Equipos con neumáticos', eq_count, ft.Icons.PRECISION_MANUFACTURING_OUTLINED, 'Flota del equipo seleccionado'),
+                metric_card('En servicio', total_service, ft.Icons.TIRE_REPAIR, 'Neumáticos del filtro actual'),
+                metric_card('Equipos con neumáticos', eq_count, ft.Icons.PRECISION_MANUFACTURING_OUTLINED, 'Flota del filtro actual'),
                 metric_card('Remanente promedio', pct(avg_rem) if avg_rem is not None else '—', ft.Icons.ASSESSMENT_OUTLINED, 'Sobre profundidad nueva'),
-                metric_filter_card(),
             ]
 
             # Dashboard por equipo y posición. En Remanente, el eje X son los equipos
@@ -2009,7 +1960,6 @@ def main(page: ft.Page):
         eq_filter.on_focus = on_equipment_focus
         eq_filter.on_change = on_equipment_change_mode
         tire_filter.on_change = on_tire_change
-        metric_eq_filter.on_change = refresh
         page.on_keyboard_event = on_service_keyboard
 
         refresh()
@@ -3305,8 +3255,13 @@ def main(page: ft.Page):
         )
 
         content.content=ft.Column([
-            page_title('3. Programa de mantenimiento · 1. Evaluación de Remanente (RTD)',
+            page_title('3. Programa de mantenimiento · 3.1 Evaluación de Remanente (RTD)',
                        'Evaluación automática de neumáticos en servicio según profundidad remanente'),
+            ft.Row([
+                ft.ElevatedButton('3.1 Evaluación de remanente', icon=ft.Icons.CHECK_CIRCLE_OUTLINE, disabled=True),
+                ft.OutlinedButton('3.2 Diferencia RTD entre hombros', icon=ft.Icons.COMPARE_ARROWS,
+                                  on_click=lambda e: maintenance_shoulders_view()),
+            ], spacing=10),
             ft.Row([
                 top_metric('NEUMÁTICOS EN SERVICIO', total, 'Total actualmente instalado', '#C81D2A'),
                 top_metric('EQUIPOS EN SERVICIO', equipment_count, 'Equipos con neumáticos instalados'),
@@ -3329,6 +3284,181 @@ def main(page: ft.Page):
                     ft.Text('GRÁFICO DE CONDICIÓN RTD', size=14, weight=ft.FontWeight.BOLD, color=TEXT_MAIN),
                     rtd_donut_chart(),
                     ft.Text('Evaluación según la menor lectura RTD disponible.', size=9.5, italic=True, color=TEXT_MUTED),
+                ], spacing=8))),
+            ], spacing=12, vertical_alignment=ft.CrossAxisAlignment.START),
+        ], scroll=ft.ScrollMode.AUTO, spacing=16)
+        page.update()
+
+
+    def maintenance_shoulders_view():
+        """3.2 Diferencia de RTD entre hombros (EXT vs INT) del mismo neumático."""
+        rows = query("""
+            SELECT
+                t.id, t.code, t.serial, t.brand, t.size, t.design,
+                t.tread_inner, t.tread_outer,
+                e.id AS equipment_id, e.code AS equipment_code,
+                t.position
+            FROM tires t
+            LEFT JOIN equipment e ON e.id=t.equipment_id
+            WHERE t.status='SERVICIO'
+            ORDER BY COALESCE(e.code,''), t.position, t.code
+        """)
+
+        def latest_rtd(r):
+            # Se prioriza la última inspección por ID para evitar problemas con
+            # fechas históricas guardadas en formatos mixtos.
+            insp = query("""
+                SELECT tread_inner, tread_outer
+                FROM occurrences
+                WHERE tire_id=? AND event_code IN ('INSP','INSC')
+                ORDER BY id DESC LIMIT 1
+            """, (r['id'],))
+            inner = insp[0]['tread_inner'] if insp and insp[0]['tread_inner'] is not None else r['tread_inner']
+            outer = insp[0]['tread_outer'] if insp and insp[0]['tread_outer'] is not None else r['tread_outer']
+            try:
+                inner = float(inner) if inner is not None and str(inner).strip() != '' else None
+            except Exception:
+                inner = None
+            try:
+                outer = float(outer) if outer is not None and str(outer).strip() != '' else None
+            except Exception:
+                outer = None
+            return outer, inner
+
+        def shoulder_condition(outer, inner):
+            if outer is None or inner is None:
+                return 'SIN LECTURA', None
+            diff = inner - outer
+            # Regla aprobada 3.2:
+            # Emergencia: RTD INT - RTD EXT >= 10 mm
+            # Preventivo: 7 <= diferencia < 10 mm
+            # Normal: cualquier otra condición (incluye EXT >= INT)
+            if diff >= 10:
+                return 'EMERGENCIA', diff
+            if diff >= 7:
+                return 'PREVENTIVO', diff
+            return 'NORMAL', diff
+
+        evaluated=[]
+        counts={'NORMAL':0, 'PREVENTIVO':0, 'EMERGENCIA':0, 'SIN LECTURA':0}
+        for r in rows:
+            outer, inner = latest_rtd(r)
+            condition, diff = shoulder_condition(outer, inner)
+            counts[condition] = counts.get(condition, 0) + 1
+            evaluated.append((r, outer, inner, diff, condition))
+
+        total=len(rows)
+        evaluated_total=total-counts['SIN LECTURA']
+
+        def pct(n, base):
+            return (n/base*100) if base else 0
+
+        # Semáforo sin encabezado independiente de "Criterio": el criterio se
+        # muestra al costado del nombre de cada condición, como pidió el usuario.
+        condition_rows=[]
+        row_specs=[
+            ('NORMAL', '#176B2C', '#DDF3E3', '< 7 mm  o  EXT ≥ INT'),
+            ('PREVENTIVO', '#A66000', '#FFF0C2', '≥ 7 y < 10 mm'),
+            ('EMERGENCIA', '#A61B12', '#FAD9D6', '≥ 10 mm'),
+        ]
+        for label, text_color, row_color, criterion in row_specs:
+            n=counts[label]
+            condition_rows.append(ft.DataRow(color=row_color, cells=[
+                ft.DataCell(ft.Row([
+                    ft.Container(width=10, height=10, bgcolor={
+                        'NORMAL':'#2E9B45','PREVENTIVO':'#F2A900','EMERGENCIA':'#D92D20'
+                    }[label], border_radius=5),
+                    ft.Text(label.title(), width=100, size=10.5, weight=ft.FontWeight.BOLD, color=text_color),
+                    ft.Text(criterion, size=10, color=TEXT_MAIN),
+                ], spacing=8)),
+                ft.DataCell(ft.Text(str(n), size=11, weight=ft.FontWeight.BOLD, color=text_color)),
+                ft.DataCell(ft.Text(f'{pct(n,evaluated_total):.1f}%', size=11, weight=ft.FontWeight.BOLD, color=text_color)),
+            ]))
+        if counts['SIN LECTURA']:
+            condition_rows.append(ft.DataRow(cells=[
+                ft.DataCell(ft.Text('Sin lectura', size=10, weight=ft.FontWeight.BOLD, color=TEXT_MUTED)),
+                ft.DataCell(ft.Text(str(counts['SIN LECTURA']), size=10)),
+                ft.DataCell(ft.Text(f'{pct(counts["SIN LECTURA"],total):.1f}%', size=10)),
+            ]))
+        condition_rows.append(ft.DataRow(color='#000000', cells=[
+            ft.DataCell(ft.Text('TOTAL', size=10.5, weight=ft.FontWeight.BOLD, color='#FFFFFF')),
+            ft.DataCell(ft.Text(str(total), size=10.5, weight=ft.FontWeight.BOLD, color='#FFFFFF')),
+            ft.DataCell(ft.Text('100.0%' if total else '0.0%', size=10.5, weight=ft.FontWeight.BOLD, color='#FFFFFF')),
+        ]))
+
+        condition_table=ft.DataTable(
+            heading_row_height=34,
+            heading_row_color='#000000',
+            data_row_min_height=38,
+            data_row_max_height=38,
+            column_spacing=28,
+            columns=[
+                ft.DataColumn(ft.Text('Condición', size=11, weight=ft.FontWeight.BOLD, color='#FFFFFF')),
+                ft.DataColumn(ft.Text('Cantidad', size=11, weight=ft.FontWeight.BOLD, color='#FFFFFF'), numeric=True),
+                ft.DataColumn(ft.Text('% del Total', size=11, weight=ft.FontWeight.BOLD, color='#FFFFFF'), numeric=True),
+            ],
+            rows=condition_rows,
+        )
+
+        def shoulders_donut_chart():
+            import base64, math
+            items=[
+                ('Normal', counts['NORMAL'], '#2E9B45'),
+                ('Preventivo', counts['PREVENTIVO'], '#F2A900'),
+                ('Emergencia', counts['EMERGENCIA'], '#D92D20'),
+            ]
+            total_chart=sum(n for _,n,_ in items)
+            cx=cy=82; radius=49; stroke=24
+            circumference=2*math.pi*radius
+            offset=0.0; circles=[]; legend=[]
+            for label,n,color in items:
+                dash=circumference*(n/total_chart) if total_chart else 0
+                gap=max(0.0,circumference-dash)
+                if n>0:
+                    circles.append(
+                        f'<circle cx="{cx}" cy="{cy}" r="{radius}" fill="none" stroke="{color}" '
+                        f'stroke-width="{stroke}" stroke-dasharray="{dash:.3f} {gap:.3f}" '
+                        f'stroke-dashoffset="{-offset:.3f}" transform="rotate(-90 {cx} {cy})" />'
+                    )
+                offset += dash
+                pc=(n/total_chart*100) if total_chart else 0
+                legend.append(ft.Row([
+                    ft.Container(width=10,height=10,bgcolor=color,border_radius=5),
+                    ft.Text(f'{label}: {n} ({pc:.1f}%)',size=10,color=TEXT_MAIN),
+                ],spacing=6))
+            svg=(
+                '<svg xmlns="http://www.w3.org/2000/svg" width="164" height="164" viewBox="0 0 164 164">'
+                '<circle cx="82" cy="82" r="49" fill="none" stroke="#E2E8F0" stroke-width="24" />'
+                + ''.join(circles) +
+                f'<text x="82" y="80" text-anchor="middle" font-family="Arial" font-size="25" font-weight="700" fill="#172033">{total_chart}</text>'
+                '<text x="82" y="99" text-anchor="middle" font-family="Arial" font-size="9" fill="#64748B">neumáticos</text>'
+                '</svg>'
+            )
+            src='data:image/svg+xml;base64,'+base64.b64encode(svg.encode('utf-8')).decode('ascii')
+            return ft.Row([
+                ft.Image(src=src,width=164,height=164,fit=ft.BoxFit.CONTAIN),
+                ft.Column(legend,spacing=9),
+            ],spacing=12,vertical_alignment=ft.CrossAxisAlignment.CENTER)
+
+        content.content=ft.Column([
+            page_title('3. Programa de mantenimiento · 3.2 Diferencia de RTD entre hombros',
+                       'Evaluación del desgaste entre hombro exterior (EXT) e interior (INT) del mismo neumático'),
+            ft.Row([
+                ft.OutlinedButton('3.1 Evaluación de remanente', icon=ft.Icons.CHECK_CIRCLE_OUTLINE,
+                                  on_click=lambda e: maintenance_view()),
+                ft.ElevatedButton('3.2 Diferencia RTD entre hombros', icon=ft.Icons.COMPARE_ARROWS, disabled=True),
+            ], spacing=10),
+            ft.Row([
+                ft.Container(expand=1, content=card(ft.Column([
+                    ft.Text('SEMÁFORO DE CONDICIÓN', size=14, weight=ft.FontWeight.BOLD, color=TEXT_MAIN),
+                    ft.Row([condition_table], scroll=ft.ScrollMode.AUTO),
+                    ft.Text('Diferencia evaluada = RTD INT − RTD EXT.', size=9.5, italic=True, color=TEXT_MUTED),
+                ], spacing=8))),
+                ft.Container(expand=1, content=card(ft.Column([
+                    ft.Text('DISTRIBUCIÓN DE NEUMÁTICOS', size=14, weight=ft.FontWeight.BOLD, color=TEXT_MAIN),
+                    shoulders_donut_chart(),
+                    ft.Text('Porcentajes calculados sobre neumáticos con lecturas EXT/INT disponibles.',
+                            size=9.5, italic=True, color=TEXT_MUTED),
                 ], spacing=8))),
             ], spacing=12, vertical_alignment=ft.CrossAxisAlignment.START),
         ], scroll=ft.ScrollMode.AUTO, spacing=16)
