@@ -1430,7 +1430,7 @@ def main(page: ft.Page):
                 SELECT event_date,event_code,meter,tread_inner,tread_outer,pressure,
                        pressure_condition,location,reason,notes
                 FROM occurrences WHERE tire_id=?
-                ORDER BY event_date DESC,id DESC LIMIT 1
+                ORDER BY id DESC LIMIT 1
             """, (tid,))
             last_row = last[0] if last else None
 
@@ -1441,7 +1441,9 @@ def main(page: ft.Page):
                        pressure_condition,location,reason,notes
                 FROM occurrences
                 WHERE tire_id=? AND event_code IN ('INSP','INSC')
-                ORDER BY event_date DESC,id DESC LIMIT 1
+                -- La fecha se guarda en formatos históricos mixtos (dd/mm/aaaa e ISO),
+                -- por eso la última inspección se determina por el ID de registro.
+                ORDER BY id DESC LIMIT 1
             """, (tid,))
             inspection_row = insp[0] if insp else last_row
 
