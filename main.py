@@ -2017,7 +2017,7 @@ def main(page: ft.Page):
 
         hist=ft.DataTable(
             columns=[ft.DataColumn(ft.Text(x)) for x in [
-                'Fecha','Evento','Equipo','Pos.','Lectura','Cocada I/E','Presión','Condición','Ubicación','Acción'
+                'Fecha','Evento','Equipo','Pos.','Lectura','Cocada E/I','Presión','Condición','Ubicación','Acción'
             ]],
             rows=[]
         )
@@ -2138,7 +2138,7 @@ def main(page: ft.Page):
             ref.value=(
                 f"Estado actual: {r['status']} · Equipo: {r['equipment_code'] or '-'} · "
                 f"Pos.: {r['position'] or '-'} · Última lectura válida: {meter.value or '-'} · "
-                f"Cocada I/E válida: {ti.value or '-'}/{to.value or '-'}"
+                f"Cocada E/I válida: {to.value or '-'}/{ti.value or '-'}"
             )
 
         def apply_event_rules(e=None):
@@ -2307,7 +2307,7 @@ def main(page: ft.Page):
                             ft.DataCell(ft.Text(fmt(r['equipment_code']))),
                             ft.DataCell(ft.Text(fmt(r['position']))),
                             ft.DataCell(ft.Text(fmt(r['meter']))),
-                            ft.DataCell(ft.Text(f"{fmt(r['tread_inner'])}/{fmt(r['tread_outer'])}")),
+                            ft.DataCell(ft.Text(f"{fmt(r['tread_outer'])}/{fmt(r['tread_inner'])}")),
                             ft.DataCell(ft.Text(fmt(r['pressure']))),
                             ft.DataCell(ft.Text(fmt(r['pressure_condition']))),
                             ft.DataCell(ft.Text(fmt(r['location']))),
