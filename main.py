@@ -3734,8 +3734,8 @@ def main(page: ft.Page):
                 fill_w = max(3, (item['diff'] / max_axis) * bar_w)
                 parts += [
                     f'<text x="14" y="{y+14}" font-family="Arial" font-size="12" font-weight="700" fill="#1B263B">{item["equipment_code"]}</text>',
-                    f'<text x="92" y="{y+14}" font-family="Arial" font-size="11" fill="#334155">{item["axle"]}</text>',
-                    f'<text x="145" y="{y+14}" font-family="Arial" font-size="11" fill="#334155">{item["positions"]}</text>',
+                    f'<text x="92" y="{y+14}" font-family="Arial" font-size="10.5" fill="#334155">{item["axle"]}</text>',
+                    f'<text x="205" y="{y+14}" font-family="Arial" font-size="11" fill="#334155">{item["positions"]}</text>',
                     f'<rect x="{bar_x}" y="{y-2}" width="{bar_w}" height="24" rx="3" fill="#E8EEF5"/>',
                     f'<rect x="{bar_x}" y="{y-2}" width="{fill_w:.1f}" height="24" rx="3" fill="{color}"/>',
                     f'<text x="{min(bar_x+fill_w+8, width-38):.1f}" y="{y+15}" font-family="Arial" font-size="11" font-weight="700" fill="{color}">{item["diff"]:.1f}</text>',
