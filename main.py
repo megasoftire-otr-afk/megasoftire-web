@@ -3318,7 +3318,9 @@ def main(page: ft.Page):
                                   on_click=lambda e: maintenance_shoulders_view()),
                 ft.OutlinedButton('3.3 Diferencia RTD mismo eje', icon=ft.Icons.COMPARE_ARROWS,
                                   on_click=lambda e: maintenance_axles_view()),
-            ], spacing=10),
+                ft.OutlinedButton('3.4 Diferencia RTD P1–P4', icon=ft.Icons.COMPARE_ARROWS,
+                                  on_click=lambda e: maintenance_four_positions_view()),
+            ], spacing=10, wrap=True),
             ft.Row([
                 top_metric('NEUMÁTICOS EN SERVICIO', total, 'Total actualmente instalado', '#C81D2A'),
                 top_metric('EQUIPOS EN SERVICIO', equipment_count, 'Equipos con neumáticos instalados'),
@@ -3525,7 +3527,9 @@ def main(page: ft.Page):
                 ft.ElevatedButton('3.2 Diferencia RTD entre hombros', icon=ft.Icons.COMPARE_ARROWS, disabled=True),
                 ft.OutlinedButton('3.3 Diferencia RTD mismo eje', icon=ft.Icons.COMPARE_ARROWS,
                                   on_click=lambda e: maintenance_axles_view()),
-            ], spacing=10),
+                ft.OutlinedButton('3.4 Diferencia RTD P1–P4', icon=ft.Icons.COMPARE_ARROWS,
+                                  on_click=lambda e: maintenance_four_positions_view()),
+            ], spacing=10, wrap=True),
             ft.Row([
                 top_metric('NEUMÁTICOS EN SERVICIO', total, 'Total actualmente instalado', '#C81D2A'),
                 top_metric('EQUIPOS EN SERVICIO', len({r['equipment_id'] for r in rows if r['equipment_id'] is not None}), 'Equipos con neumáticos instalados'),
@@ -3858,7 +3862,9 @@ def main(page: ft.Page):
                 ft.OutlinedButton('3.2 Diferencia RTD entre hombros', icon=ft.Icons.COMPARE_ARROWS,
                                   on_click=lambda e: maintenance_shoulders_view()),
                 ft.ElevatedButton('3.3 Diferencia RTD mismo eje', icon=ft.Icons.COMPARE_ARROWS, disabled=True),
-            ], spacing=10),
+                ft.OutlinedButton('3.4 Diferencia RTD P1–P4', icon=ft.Icons.COMPARE_ARROWS,
+                                  on_click=lambda e: maintenance_four_positions_view()),
+            ], spacing=10, wrap=True),
             ft.Row([
                 top_metric('EQUIPOS EN SERVICIO', equipment_count, 'Equipos con posiciones P1–P4'),
                 top_metric('EJES EVALUADOS', evaluated_total, 'P1–P2 y P3–P4 con lectura'),
@@ -3897,6 +3903,134 @@ def main(page: ft.Page):
                 ], spacing=7))),
             ], spacing=12, vertical_alignment=ft.CrossAxisAlignment.START),
         ], scroll=ft.ScrollMode.AUTO, spacing=16)
+        page.update()
+
+
+    def maintenance_four_positions_view():
+        """3.4 Diferencia de RTD entre las cuatro posiciones P1-P4, sin considerar diámetro."""
+        rows = query("""
+            SELECT t.id, t.code, t.tread_inner, t.tread_outer,
+                   e.id AS equipment_id, e.code AS equipment_code, t.position
+            FROM tires t
+            LEFT JOIN equipment e ON e.id=t.equipment_id
+            WHERE t.status='SERVICIO'
+            ORDER BY COALESCE(e.code,''), t.position, t.code
+        """)
+
+        def norm_pos(v):
+            x=str(v or '').strip().upper().replace(' ','')
+            return {'1':'P1','P01':'P1','POS1':'P1','POS01':'P1',
+                    '2':'P2','P02':'P2','POS2':'P2','POS02':'P2',
+                    '3':'P3','P03':'P3','POS3':'P3','POS03':'P3',
+                    '4':'P4','P04':'P4','POS4':'P4','POS04':'P4'}.get(x,x)
+
+        def latest_avg(r):
+            z=query("""SELECT tread_inner,tread_outer FROM occurrences
+                       WHERE tire_id=? AND event_code IN ('INSP','INSC')
+                       ORDER BY id DESC LIMIT 1""",(r['id'],))
+            inn=z[0]['tread_inner'] if z and z[0]['tread_inner'] is not None else r['tread_inner']
+            out=z[0]['tread_outer'] if z and z[0]['tread_outer'] is not None else r['tread_outer']
+            try: inn=float(inn)
+            except Exception: return None
+            try: out=float(out)
+            except Exception: return None
+            return (inn+out)/2.0
+
+        def state(d):
+            if d>7.5: return 'EMERGENCIA'
+            if d>=5.0: return 'PREVENTIVO'
+            return 'NORMAL'
+
+        eqmap={}
+        for r in rows:
+            if r['equipment_id'] is None: continue
+            pos=norm_pos(r['position'])
+            if pos not in ('P1','P2','P3','P4'): continue
+            b=eqmap.setdefault(r['equipment_id'],{'code':r['equipment_code'] or f"Equipo {r['equipment_id']}",'pos':{}})
+            b['pos'][pos]=r
+
+        evaluated=[]
+        for _,eq in sorted(eqmap.items(),key=lambda kv:str(kv[1]['code'])):
+            if not all(p in eq['pos'] for p in ('P1','P2','P3','P4')): continue
+            vals={p:latest_avg(eq['pos'][p]) for p in ('P1','P2','P3','P4')}
+            if any(v is None for v in vals.values()): continue
+            diff=max(vals.values())-min(vals.values())
+            evaluated.append({'equipment_code':eq['code'],'vals':vals,'diff':diff,'condition':state(diff)})
+
+        counts={'NORMAL':0,'PREVENTIVO':0,'EMERGENCIA':0}
+        for x in evaluated: counts[x['condition']]+=1
+        total=len(evaluated)
+        worst=max(evaluated,key=lambda x:x['diff']) if evaluated else None
+
+        def metric(title,value,subtitle,color=TEXT_MAIN,tint=None):
+            return ft.Container(width=205,height=104,bgcolor=tint or CARD_BG,border=ft.Border.all(1,'#DDE5ED'),border_radius=10,padding=12,
+                content=ft.Column([ft.Text(title,size=11.2,weight=ft.FontWeight.BOLD,color=TEXT_MAIN,text_align=ft.TextAlign.CENTER),
+                    ft.Text(str(value),size=28,weight=ft.FontWeight.BOLD,color=color,text_align=ft.TextAlign.CENTER),
+                    ft.Text(subtitle,size=9.2,color=TEXT_MUTED,text_align=ft.TextAlign.CENTER)],spacing=3,horizontal_alignment=ft.CrossAxisAlignment.CENTER))
+
+        def bars():
+            import base64, math
+            if not evaluated:
+                return ft.Container(height=150,alignment=ft.Alignment.CENTER,content=ft.Text('No hay equipos con P1–P4 y lecturas completas.',color=TEXT_MUTED))
+            row_h=40; bar_x=405; bar_w=390; width=840; y0=46
+            maxd=max([15.0]+[x['diff'] for x in evaluated]); maxa=max(10.0,math.ceil(maxd/2.5)*2.5)
+            h=62+row_h*len(evaluated)+34; lx=bar_x+(7.5/maxa)*bar_w
+            a=[f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{h}" viewBox="0 0 {width} {h}">','<rect width="100%" height="100%" fill="#FFFFFF"/>',
+               '<text x="12" y="22" font-family="Arial" font-size="11" font-weight="700" fill="#1B263B">Equipo</text>',
+               '<text x="95" y="22" font-family="Arial" font-size="10" font-weight="700" fill="#1B263B">P1</text>',
+               '<text x="160" y="22" font-family="Arial" font-size="10" font-weight="700" fill="#1B263B">P2</text>',
+               '<text x="225" y="22" font-family="Arial" font-size="10" font-weight="700" fill="#1B263B">P3</text>',
+               '<text x="290" y="22" font-family="Arial" font-size="10" font-weight="700" fill="#1B263B">P4</text>',
+               '<text x="405" y="22" font-family="Arial" font-size="11" font-weight="700" fill="#1B263B">Diferencia (mm)</text>',
+               f'<line x1="{lx:.1f}" y1="32" x2="{lx:.1f}" y2="{h-30}" stroke="#D92D20" stroke-width="2" stroke-dasharray="6 5"/>',
+               f'<text x="{lx:.1f}" y="30" text-anchor="middle" font-family="Arial" font-size="9" font-weight="700" fill="#D92D20">7.5</text>']
+            colors={'NORMAL':'#2E9B45','PREVENTIVO':'#F2A900','EMERGENCIA':'#D92D20'}
+            for i,x in enumerate(evaluated):
+                y=y0+i*row_h; c=colors[x['condition']]; fw=max(3,(x['diff']/maxa)*bar_w)
+                a += [f'<text x="12" y="{y+13}" font-family="Arial" font-size="11" font-weight="700" fill="#1B263B">{x["equipment_code"]}</text>']
+                for j,p in enumerate(('P1','P2','P3','P4')):
+                    a.append(f'<text x="{95+j*65}" y="{y+13}" font-family="Arial" font-size="10" fill="#334155">{x["vals"][p]:.1f}</text>')
+                a += [f'<rect x="{bar_x}" y="{y-3}" width="{bar_w}" height="23" rx="3" fill="#E8EEF5"/>',
+                      f'<rect x="{bar_x}" y="{y-3}" width="{fw:.1f}" height="23" rx="3" fill="{c}"/>',
+                      f'<text x="{min(bar_x+fw+7,width-32):.1f}" y="{y+13}" font-family="Arial" font-size="10.5" font-weight="700" fill="{c}">{x["diff"]:.1f}</text>']
+            a.append('</svg>')
+            src='data:image/svg+xml;base64,'+base64.b64encode(''.join(a).encode()).decode()
+            return ft.Image(src=src,width=840,height=h,fit=ft.BoxFit.CONTAIN)
+
+        def donut():
+            import base64, math
+            its=[('Normal',counts['NORMAL'],'#2E9B45'),('Preventivo',counts['PREVENTIVO'],'#F2A900'),('Emergencia',counts['EMERGENCIA'],'#D92D20')]
+            circ=2*math.pi*49; off=0; cs=[]; leg=[]
+            for lab,n,c in its:
+                dash=circ*(n/total) if total else 0; gap=max(0,circ-dash)
+                if n: cs.append(f'<circle cx="82" cy="82" r="49" fill="none" stroke="{c}" stroke-width="24" stroke-dasharray="{dash:.3f} {gap:.3f}" stroke-dashoffset="{-off:.3f}" transform="rotate(-90 82 82)"/>')
+                off+=dash
+                leg.append(ft.Row([ft.Container(width=10,height=10,bgcolor=c,border_radius=5),ft.Text(f'{lab}: {n}',size=10.5,color=TEXT_MAIN)],spacing=7))
+            svg='<svg xmlns="http://www.w3.org/2000/svg" width="164" height="164"><circle cx="82" cy="82" r="49" fill="none" stroke="#E2E8F0" stroke-width="24"/>'+''.join(cs)+f'<text x="82" y="80" text-anchor="middle" font-family="Arial" font-size="25" font-weight="700" fill="#172033">{total}</text><text x="82" y="99" text-anchor="middle" font-family="Arial" font-size="9" fill="#64748B">equipos</text></svg>'
+            src='data:image/svg+xml;base64,'+base64.b64encode(svg.encode()).decode()
+            return ft.Row([ft.Image(src=src,width=164,height=164),ft.Column(leg,spacing=10)],spacing=12)
+
+        criteria=ft.DataTable(heading_row_height=34,heading_row_color='#000000',data_row_min_height=38,data_row_max_height=38,column_spacing=22,
+            columns=[ft.DataColumn(ft.Text('Estado',size=11,weight=ft.FontWeight.BOLD,color='white')),ft.DataColumn(ft.Text('Diferencia RTD',size=11,weight=ft.FontWeight.BOLD,color='white'))],
+            rows=[ft.DataRow(color='#DDF3E3',cells=[ft.DataCell(ft.Text('● Normal',color='#176B2C',weight=ft.FontWeight.BOLD)),ft.DataCell(ft.Text('< 5 mm'))]),
+                  ft.DataRow(color='#FFF0C2',cells=[ft.DataCell(ft.Text('● Preventivo',color='#A66000',weight=ft.FontWeight.BOLD)),ft.DataCell(ft.Text('5 a 7.5 mm'))]),
+                  ft.DataRow(color='#FAD9D6',cells=[ft.DataCell(ft.Text('● Emergencia',color='#A61B12',weight=ft.FontWeight.BOLD)),ft.DataCell(ft.Text('> 7.5 mm'))])])
+
+        content.content=ft.Column([
+            page_title('3. Programa de mantenimiento · 3.4 Diferencia de RTD entre las 4 posiciones (P1–P4)','Comparación del RTD promedio entre P1, P2, P3 y P4 · Sin considerar diámetro'),
+            ft.Row([ft.OutlinedButton('3.1 Evaluación de remanente',on_click=lambda e:maintenance_view()),
+                    ft.OutlinedButton('3.2 Diferencia RTD entre hombros',on_click=lambda e:maintenance_shoulders_view()),
+                    ft.OutlinedButton('3.3 Diferencia RTD mismo eje',on_click=lambda e:maintenance_axles_view()),
+                    ft.ElevatedButton('3.4 Diferencia RTD P1–P4',disabled=True)],spacing=10,wrap=True),
+            ft.Row([metric('EQUIPOS EVALUADOS',total,'Equipos con P1–P4'),metric('EN CONDICIÓN NORMAL',counts['NORMAL'],'< 5 mm','#2E9B45','#F1FAF3'),
+                    metric('EN PREVENTIVO',counts['PREVENTIVO'],'5 a 7.5 mm','#C98600','#FFF9E8'),metric('EN EMERGENCIA',counts['EMERGENCIA'],'> 7.5 mm','#C81D2A','#FFF1F0'),
+                    metric('DIFERENCIA MÁXIMA',f'{worst["diff"]:.1f} mm' if worst else '—',f'Equipo: {worst["equipment_code"]}' if worst else 'Sin datos','#C81D2A')],wrap=True,spacing=10,run_spacing=10),
+            ft.Row([ft.Container(expand=2,content=card(ft.Column([ft.Text('DIFERENCIA DE RTD ENTRE LAS 4 POSICIONES (P1–P4)',size=14,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
+                        ft.Text('Diferencia = RTD promedio mayor − RTD promedio menor. No se considera diámetro.',size=9.5,color=TEXT_MUTED),ft.Row([bars()],scroll=ft.ScrollMode.AUTO)],spacing=7))),
+                    ft.Container(expand=1,content=ft.Column([card(ft.Column([ft.Text('DISTRIBUCIÓN DE EQUIPOS POR ESTADO',size=14,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),donut()],spacing=8)),
+                        card(ft.Column([ft.Text('CRITERIOS DE EVALUACIÓN',size=14,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),ft.Row([criteria],scroll=ft.ScrollMode.AUTO)],spacing=8)),
+                        card(ft.Column([ft.Text('NOTA',size=13,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),ft.Text('Se usa la última INSP/INSC de cada neumático. RTD de cada posición = promedio EXT/INT. La diferencia corresponde al mayor menos el menor RTD de P1–P4.',size=10.2,color=TEXT_MAIN)],spacing=6))],spacing=12))],spacing=12,vertical_alignment=ft.CrossAxisAlignment.START)
+        ],scroll=ft.ScrollMode.AUTO,spacing=16)
         page.update()
 
     def reports_view():
