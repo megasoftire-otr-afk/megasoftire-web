@@ -2144,6 +2144,14 @@ def main(page: ft.Page):
         def apply_event_rules(e=None):
             ec=event.value
             r=current_tire()
+
+            # Estado editable por defecto. Cada evento aplica solo sus bloqueos propios.
+            equip.disabled=False
+            pos.disabled=False
+            meter.disabled=False
+            ti.disabled=False
+            to.disabled=False
+
             locked=ec in ('INSP','INSC')
             equip.disabled=locked
             pos.disabled=locked
@@ -2152,6 +2160,39 @@ def main(page: ft.Page):
                 pos.value=fmt(r['position'])
                 if r['status'] != 'SERVICIO':
                     ref.value=(ref.value + ' · ADVERTENCIA: el neumático no figura EN SERVICIO').strip(' ·')
+
+            # INVE - Inversión:
+            # equipo, posición y horómetro permanecen iguales y bloqueados;
+            # las cocadas EXT/INT se intercambian automáticamente y quedan bloqueadas.
+            if ec == 'INVE' and r:
+                equip.value=str(r['equipment_id']) if r['equipment_id'] is not None else None
+                pos.value=fmt(r['position'])
+                last=query(
+                    '''SELECT meter,tread_inner,tread_outer
+                       FROM occurrences
+                       WHERE tire_id=?
+                       ORDER BY id DESC LIMIT 1''',
+                    (int(r['id']),)
+                )
+                last_row=last[0] if last else None
+                if last_row:
+                    if last_row['meter'] is not None:
+                        meter.value=fmt(last_row['meter'])
+                    prev_int=last_row['tread_inner']
+                    prev_ext=last_row['tread_outer']
+                else:
+                    prev_int=r['tread_inner']
+                    prev_ext=r['tread_outer']
+                # Después de invertir físicamente el neumático:
+                # EXT nueva = INT anterior / INT nueva = EXT anterior.
+                to.value=fmt(prev_int)
+                ti.value=fmt(prev_ext)
+                equip.disabled=True
+                pos.disabled=True
+                meter.disabled=True
+                to.disabled=True
+                ti.disabled=True
+
             page.update()
 
         def ask_delete(occ_id):
@@ -2223,14 +2264,14 @@ def main(page: ft.Page):
                     return False
                 if max_new is not None and new_ti > max_new:
                     return False
-                if lim and lim['min_ti'] is not None and new_ti > float(lim['min_ti']):
+                if event.value != 'INVE' and lim and lim['min_ti'] is not None and new_ti > float(lim['min_ti']):
                     return False
             if new_to is not None:
                 if new_to < 0:
                     return False
                 if max_new is not None and new_to > max_new:
                     return False
-                if lim and lim['min_to'] is not None and new_to > float(lim['min_to']):
+                if event.value != 'INVE' and lim and lim['min_to'] is not None and new_to > float(lim['min_to']):
                     return False
 
             if event.value in ('INSP','INSC'):
@@ -2335,7 +2376,7 @@ def main(page: ft.Page):
                     return snack('La cocada interior no puede ser negativa.',True)
                 if max_new is not None and new_ti > max_new:
                     return snack(f'Cocada interior inválida: no puede superar la profundidad nueva ({fmt(max_new)} mm).',True)
-                if lim and lim['min_ti'] is not None and new_ti > float(lim['min_ti']):
+                if ec != 'INVE' and lim and lim['min_ti'] is not None and new_ti > float(lim['min_ti']):
                     return snack(
                         f'Cocada interior inválida: {fmt(new_ti)} mm es mayor que la última cocada válida {fmt(lim["min_ti"])} mm.',
                         True
@@ -2346,7 +2387,7 @@ def main(page: ft.Page):
                     return snack('La cocada exterior no puede ser negativa.',True)
                 if max_new is not None and new_to > max_new:
                     return snack(f'Cocada exterior inválida: no puede superar la profundidad nueva ({fmt(max_new)} mm).',True)
-                if lim and lim['min_to'] is not None and new_to > float(lim['min_to']):
+                if ec != 'INVE' and lim and lim['min_to'] is not None and new_to > float(lim['min_to']):
                     return snack(
                         f'Cocada exterior inválida: {fmt(new_to)} mm es mayor que la última cocada válida {fmt(lim["min_to"])} mm.',
                         True
