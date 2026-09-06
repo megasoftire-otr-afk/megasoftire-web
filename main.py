@@ -3638,7 +3638,7 @@ def main(page: ft.Page):
         evaluated = []
         missing_axes = 0
         for eq_id, eq in sorted(equipment_map.items(), key=lambda kv: str(kv[1]['code'])):
-            for axle_name, p_left, p_right in [('Eje 1','P1','P2'), ('Eje 2','P3','P4')]:
+            for axle_name, p_left, p_right in [('Eje delantero','P1','P2'), ('Eje posterior','P3','P4')]:
                 left = eq['positions'].get(p_left)
                 right = eq['positions'].get(p_right)
                 if not left or not right:
@@ -3701,7 +3701,7 @@ def main(page: ft.Page):
                     content=ft.Text('No hay ejes completos con lecturas RTD disponibles.', color=TEXT_MUTED)
                 )
 
-            row_h = 54
+            row_h = 42
             left_w = 240
             bar_x = 285
             bar_w = 470
@@ -3710,8 +3710,8 @@ def main(page: ft.Page):
             import math
             max_axis = max(10.0, math.ceil(max_diff / 2.5) * 2.5)
             width = 820
-            height = 72 + row_h * len(chart_items) + 48
-            y0 = 55
+            height = 62 + row_h * len(chart_items) + 42
+            y0 = 48
             limit_x = bar_x + (7.5 / max_axis) * bar_w
 
             parts = [
@@ -3739,7 +3739,6 @@ def main(page: ft.Page):
                     f'<rect x="{bar_x}" y="{y-2}" width="{bar_w}" height="24" rx="3" fill="#E8EEF5"/>',
                     f'<rect x="{bar_x}" y="{y-2}" width="{fill_w:.1f}" height="24" rx="3" fill="{color}"/>',
                     f'<text x="{min(bar_x+fill_w+8, width-38):.1f}" y="{y+15}" font-family="Arial" font-size="11" font-weight="700" fill="{color}">{item["diff"]:.1f}</text>',
-                    f'<text x="14" y="{y+33}" font-family="Arial" font-size="9" fill="#64748B">RTD: {item["left_rtd"]:.1f} / {item["right_rtd"]:.1f} mm</text>',
                 ]
 
             # Escala inferior.
