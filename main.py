@@ -3318,8 +3318,10 @@ def main(page: ft.Page):
                                   on_click=lambda e: maintenance_shoulders_view()),
                 ft.OutlinedButton('3.3 Diferencia RTD mismo eje', icon=ft.Icons.COMPARE_ARROWS,
                                   on_click=lambda e: maintenance_axles_view()),
-                ft.OutlinedButton('3.4 Diferencia RTD P1–P4', icon=ft.Icons.COMPARE_ARROWS,
+                ft.OutlinedButton('3.4 Diferencia entre ejes por equipo', icon=ft.Icons.COMPARE_ARROWS,
                                   on_click=lambda e: maintenance_four_positions_view()),
+                ft.OutlinedButton('Reporte final de mantenimiento', icon=ft.Icons.DESCRIPTION_OUTLINED,
+                                  on_click=lambda e: maintenance_final_report_view()),
             ], spacing=10, wrap=True),
             ft.Row([
                 top_metric('NEUMÁTICOS EN SERVICIO', total, 'Total actualmente instalado', '#C81D2A'),
@@ -3527,8 +3529,10 @@ def main(page: ft.Page):
                 ft.ElevatedButton('3.2 Diferencia RTD entre hombros', icon=ft.Icons.COMPARE_ARROWS, disabled=True),
                 ft.OutlinedButton('3.3 Diferencia RTD mismo eje', icon=ft.Icons.COMPARE_ARROWS,
                                   on_click=lambda e: maintenance_axles_view()),
-                ft.OutlinedButton('3.4 Diferencia RTD P1–P4', icon=ft.Icons.COMPARE_ARROWS,
+                ft.OutlinedButton('3.4 Diferencia entre ejes por equipo', icon=ft.Icons.COMPARE_ARROWS,
                                   on_click=lambda e: maintenance_four_positions_view()),
+                ft.OutlinedButton('Reporte final de mantenimiento', icon=ft.Icons.DESCRIPTION_OUTLINED,
+                                  on_click=lambda e: maintenance_final_report_view()),
             ], spacing=10, wrap=True),
             ft.Row([
                 top_metric('NEUMÁTICOS EN SERVICIO', total, 'Total actualmente instalado', '#C81D2A'),
@@ -3862,8 +3866,10 @@ def main(page: ft.Page):
                 ft.OutlinedButton('3.2 Diferencia RTD entre hombros', icon=ft.Icons.COMPARE_ARROWS,
                                   on_click=lambda e: maintenance_shoulders_view()),
                 ft.ElevatedButton('3.3 Diferencia RTD mismo eje', icon=ft.Icons.COMPARE_ARROWS, disabled=True),
-                ft.OutlinedButton('3.4 Diferencia RTD P1–P4', icon=ft.Icons.COMPARE_ARROWS,
+                ft.OutlinedButton('3.4 Diferencia entre ejes por equipo', icon=ft.Icons.COMPARE_ARROWS,
                                   on_click=lambda e: maintenance_four_positions_view()),
+                ft.OutlinedButton('Reporte final de mantenimiento', icon=ft.Icons.DESCRIPTION_OUTLINED,
+                                  on_click=lambda e: maintenance_final_report_view()),
             ], spacing=10, wrap=True),
             ft.Row([
                 top_metric('EQUIPOS EN SERVICIO', equipment_count, 'Equipos con posiciones P1–P4'),
@@ -4017,19 +4023,128 @@ def main(page: ft.Page):
                   ft.DataRow(color='#FAD9D6',cells=[ft.DataCell(ft.Text('● Emergencia',color='#A61B12',weight=ft.FontWeight.BOLD)),ft.DataCell(ft.Text('> 7.5 mm'))])])
 
         content.content=ft.Column([
-            page_title('3. Programa de mantenimiento · 3.4 Diferencia de RTD entre las 4 posiciones (P1–P4)','Comparación del RTD promedio entre P1, P2, P3 y P4 · Sin considerar diámetro'),
+            page_title('3. Programa de mantenimiento · 3.4 Diferencia entre ejes por equipo','Comparación del RTD promedio entre P1, P2, P3 y P4 · Sin considerar diámetro'),
             ft.Row([ft.OutlinedButton('3.1 Evaluación de remanente',on_click=lambda e:maintenance_view()),
                     ft.OutlinedButton('3.2 Diferencia RTD entre hombros',on_click=lambda e:maintenance_shoulders_view()),
                     ft.OutlinedButton('3.3 Diferencia RTD mismo eje',on_click=lambda e:maintenance_axles_view()),
-                    ft.ElevatedButton('3.4 Diferencia RTD P1–P4',disabled=True)],spacing=10,wrap=True),
+                    ft.ElevatedButton('3.4 Diferencia entre ejes por equipo',disabled=True),
+                    ft.OutlinedButton('Reporte final de mantenimiento',icon=ft.Icons.DESCRIPTION_OUTLINED,on_click=lambda e:maintenance_final_report_view())],spacing=10,wrap=True),
             ft.Row([metric('EQUIPOS EVALUADOS',total,'Equipos con P1–P4'),metric('EN CONDICIÓN NORMAL',counts['NORMAL'],'< 5 mm','#2E9B45','#F1FAF3'),
                     metric('EN PREVENTIVO',counts['PREVENTIVO'],'5 a 7.5 mm','#C98600','#FFF9E8'),metric('EN EMERGENCIA',counts['EMERGENCIA'],'> 7.5 mm','#C81D2A','#FFF1F0'),
                     metric('DIFERENCIA MÁXIMA',f'{worst["diff"]:.1f} mm' if worst else '—',f'Equipo: {worst["equipment_code"]}' if worst else 'Sin datos','#C81D2A')],wrap=True,spacing=10,run_spacing=10),
-            ft.Row([ft.Container(expand=2,content=card(ft.Column([ft.Text('DIFERENCIA DE RTD ENTRE LAS 4 POSICIONES (P1–P4)',size=14,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
+            ft.Row([ft.Container(expand=2,content=card(ft.Column([ft.Text('DIFERENCIA ENTRE EJES POR EQUIPO',size=14,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
                         ft.Text('Diferencia = RTD promedio mayor − RTD promedio menor. No se considera diámetro.',size=9.5,color=TEXT_MUTED),ft.Row([bars()],scroll=ft.ScrollMode.AUTO)],spacing=7))),
                     ft.Container(expand=1,content=ft.Column([card(ft.Column([ft.Text('DISTRIBUCIÓN DE EQUIPOS POR ESTADO',size=14,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),donut()],spacing=8)),
                         card(ft.Column([ft.Text('CRITERIOS DE EVALUACIÓN',size=14,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),ft.Row([criteria],scroll=ft.ScrollMode.AUTO)],spacing=8)),
                         card(ft.Column([ft.Text('NOTA',size=13,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),ft.Text('Se usa la última INSP/INSC de cada neumático. RTD de cada posición = promedio EXT/INT. La diferencia corresponde al mayor menos el menor RTD de P1–P4.',size=10.2,color=TEXT_MAIN)],spacing=6))],spacing=12))],spacing=12,vertical_alignment=ft.CrossAxisAlignment.START)
+        ],scroll=ft.ScrollMode.AUTO,spacing=16)
+        page.update()
+
+    def maintenance_final_report_view():
+        """Reporte final: actividades de mantenimiento generadas solo por condiciones de emergencia."""
+        rows = query("""
+            SELECT t.id, t.code, t.tread_inner, t.tread_outer,
+                   e.id AS equipment_id, e.code AS equipment_code, t.position
+            FROM tires t
+            LEFT JOIN equipment e ON e.id=t.equipment_id
+            WHERE t.status='SERVICIO'
+            ORDER BY COALESCE(e.code,''), t.position, t.code
+        """)
+
+        def norm_pos(v):
+            x=str(v or '').strip().upper().replace(' ','')
+            return {'1':'P1','P01':'P1','POS1':'P1','POS01':'P1',
+                    '2':'P2','P02':'P2','POS2':'P2','POS02':'P2',
+                    '3':'P3','P03':'P3','POS3':'P3','POS03':'P3',
+                    '4':'P4','P04':'P4','POS4':'P4','POS04':'P4'}.get(x,x)
+
+        def latest_pair(r):
+            z=query("""SELECT tread_inner,tread_outer FROM occurrences
+                       WHERE tire_id=? AND event_code IN ('INSP','INSC')
+                       ORDER BY id DESC LIMIT 1""",(r['id'],))
+            inn=z[0]['tread_inner'] if z and z[0]['tread_inner'] is not None else r['tread_inner']
+            out=z[0]['tread_outer'] if z and z[0]['tread_outer'] is not None else r['tread_outer']
+            try: inn=float(inn)
+            except Exception: inn=None
+            try: out=float(out)
+            except Exception: out=None
+            return out,inn
+
+        def latest_avg(r):
+            out,inn=latest_pair(r)
+            if out is None or inn is None: return None
+            return (out+inn)/2.0
+
+        activities_31=[]; activities_32=[]; activities_33=[]; activities_34=[]
+
+        # 3.1: cambio urgente cuando el menor RTD EXT/INT es <= 20 mm.
+        for r in rows:
+            vals=[]
+            for v in (r['tread_inner'],r['tread_outer']):
+                try:
+                    if v is not None and str(v).strip()!='': vals.append(float(v))
+                except Exception: pass
+            if vals and min(vals) <= 20:
+                eq=r['equipment_code'] or 'SIN EQUIPO'; pos=norm_pos(r['position']) or 'SIN POSICIÓN'
+                activities_31.append(f'CAMBIO DE NEUMÁTICO DE LA {pos} DEL EQUIPO {eq}.')
+
+        # 3.2: inversión cuando RTD INT - RTD EXT >= 10 mm.
+        for r in rows:
+            out,inn=latest_pair(r)
+            if out is not None and inn is not None and (inn-out) >= 10:
+                eq=r['equipment_code'] or 'SIN EQUIPO'; pos=norm_pos(r['position']) or 'SIN POSICIÓN'
+                activities_32.append(f'INVERTIR EL NEUMÁTICO {pos} DEL EQUIPO {eq}.')
+
+        # Agrupar P1-P4 por equipo para 3.3 y 3.4.
+        eqmap={}
+        for r in rows:
+            if r['equipment_id'] is None: continue
+            p=norm_pos(r['position'])
+            if p not in ('P1','P2','P3','P4'): continue
+            b=eqmap.setdefault(r['equipment_id'],{'code':r['equipment_code'] or f"Equipo {r['equipment_id']}",'pos':{}})
+            b['pos'][p]=r
+
+        for _,eq in sorted(eqmap.items(),key=lambda kv:str(kv[1]['code'])):
+            pos=eq['pos']; code=eq['code']
+            # 3.3: diferencia > 7.5 mm dentro del mismo eje.
+            for pa,pb,axle_name in (('P1','P2','DELANTERO'),('P3','P4','POSTERIOR')):
+                if pa in pos and pb in pos:
+                    a=latest_avg(pos[pa]); b=latest_avg(pos[pb])
+                    if a is not None and b is not None and abs(a-b) > 7.5:
+                        activities_33.append(f'NIVELACIÓN DEL EJE {axle_name} DEL EQUIPO {code}.')
+            # 3.4: diferencia > 7.5 mm entre mayor y menor RTD de P1-P4.
+            if all(p in pos for p in ('P1','P2','P3','P4')):
+                vals=[latest_avg(pos[p]) for p in ('P1','P2','P3','P4')]
+                if all(v is not None for v in vals) and (max(vals)-min(vals)) > 7.5:
+                    activities_34.append(f'NIVELACIÓN DE EJES DEL EQUIPO {code}.')
+
+        def section(title, items):
+            controls=[ft.Text(title,size=15,weight=ft.FontWeight.BOLD,color=TEXT_MAIN)]
+            if items:
+                controls += [ft.Text(f'- {x}',size=12,color=TEXT_MAIN) for x in items]
+            else:
+                controls.append(ft.Text('- SIN ACTIVIDADES DE MANTENIMIENTO PENDIENTES.',size=12,color=TEXT_MAIN))
+            return ft.Column(controls,spacing=7)
+
+        content.content=ft.Column([
+            page_title('3. Programa de mantenimiento · Reporte final de mantenimiento',
+                       'Actividades generadas automáticamente a partir de las condiciones de emergencia'),
+            ft.Row([
+                ft.OutlinedButton('3.1 Evaluación de remanente',on_click=lambda e:maintenance_view()),
+                ft.OutlinedButton('3.2 Diferencia RTD entre hombros',on_click=lambda e:maintenance_shoulders_view()),
+                ft.OutlinedButton('3.3 Diferencia RTD mismo eje',on_click=lambda e:maintenance_axles_view()),
+                ft.OutlinedButton('3.4 Diferencia entre ejes por equipo',on_click=lambda e:maintenance_four_positions_view()),
+                ft.ElevatedButton('Reporte final de mantenimiento',disabled=True),
+            ],spacing=10,wrap=True),
+            card(ft.Column([
+                section('3.1 EVALUACIÓN DE REMANENTE',activities_31),
+                ft.Divider(height=18,color='#DDE5ED'),
+                section('3.2 DIFERENCIA DE RTD ENTRE HOMBROS',activities_32),
+                ft.Divider(height=18,color='#DDE5ED'),
+                section('3.3 DIFERENCIA DE RTD DEL MISMO EJE',activities_33),
+                ft.Divider(height=18,color='#DDE5ED'),
+                section('3.4 DIFERENCIA ENTRE EJES POR EQUIPO',activities_34),
+            ],spacing=10),padding=20),
         ],scroll=ft.ScrollMode.AUTO,spacing=16)
         page.update()
 
