@@ -944,6 +944,32 @@ def main(page: ft.Page):
         eq_info = ft.Text('', size=12, color=TEXT_MUTED)
         summary = ft.Text('', size=12, color=TEXT_MUTED)
 
+        # Filtro independiente para los 3 indicadores superiores.
+        # No altera las donas, gráficos ni la tabla técnica del dashboard.
+        metric_eq_filter = ft.Dropdown(
+            label='Filtrar por equipo',
+            width=205,
+            value=ALL,
+            options=[ft.dropdown.Option(key=ALL, text='Todos los equipos')] +
+                    [ft.dropdown.Option(key=str(r['id']), text=r['code']) for r in eq_rows]
+        )
+
+        def metric_filter_card():
+            return card(
+                ft.Column([
+                    ft.Row([
+                        ft.Container(
+                            width=40, height=40, border_radius=10,
+                            bgcolor='#EAF2FF', alignment=ft.Alignment.CENTER,
+                            content=ft.Icon(ft.Icons.FILTER_ALT_OUTLINED, color=NAV_ACCENT, size=21)
+                        ),
+                        ft.Container(expand=True),
+                    ]),
+                    ft.Text('Filtrar por equipo', size=13, weight=ft.FontWeight.W_600, color=TEXT_MAIN),
+                    metric_eq_filter,
+                ], spacing=7), width=235
+            )
+
         metrics = ft.Row([], wrap=True, spacing=12, run_spacing=12)
         position_grid = ft.Row([], wrap=True, spacing=12, run_spacing=12)
 
@@ -1668,9 +1694,28 @@ def main(page: ft.Page):
                     for idx, v in enumerate(row_values)
                 ], spacing=0))
 
-            total_service = len(rows)
-            eq_count = len({r['equipment_id'] for r in rows if r['equipment_id'] is not None})
-            avg_rem = sum(rem_values) / len(rem_values) if rem_values else None
+            # Los 3 KPI superiores tienen su propio filtro por equipo.
+            # Se calculan sobre todos los neumáticos EN SERVICIO del equipo elegido,
+            # sin modificar el resto del dashboard.
+            metric_sql = """
+                SELECT t.*,e.code equipment_code,e.brand equipment_brand,e.model equipment_model,
+                       e.location equipment_location,e.vehicle_type,e.tire_size equipment_tire_size
+                FROM tires t
+                LEFT JOIN equipment e ON e.id=t.equipment_id
+                WHERE t.status='SERVICIO'
+            """
+            metric_params = []
+            if metric_eq_filter.value not in (None, '', ALL):
+                metric_sql += ' AND t.equipment_id=?'
+                metric_params.append(int(metric_eq_filter.value))
+            metric_sql += " ORDER BY COALESCE(e.code,''), CAST(COALESCE(NULLIF(t.position,''),'999') AS INTEGER), t.code"
+            metric_rows = query(metric_sql, tuple(metric_params))
+            metric_ops = [(r, tire_operational_data(r)) for r in metric_rows]
+            metric_rem_values = [od['rem'] for _, od in metric_ops if od['rem'] is not None]
+
+            total_service = len(metric_rows)
+            eq_count = len({r['equipment_id'] for r in metric_rows if r['equipment_id'] is not None})
+            avg_rem = sum(metric_rem_values) / len(metric_rem_values) if metric_rem_values else None
             current_meter = max([float(r['current_meter']) for r in rows if r['current_meter'] is not None], default=None)
             latest_date = ''
             if rows:
@@ -1680,9 +1725,10 @@ def main(page: ft.Page):
                 latest_date = rr[0]['d'] if rr else ''
 
             metrics.controls = [
-                metric_card('En servicio', total_service, ft.Icons.TIRE_REPAIR, 'Neumáticos del filtro actual'),
-                metric_card('Equipos con neumáticos', eq_count, ft.Icons.PRECISION_MANUFACTURING_OUTLINED, 'Flota del filtro actual'),
+                metric_card('En servicio', total_service, ft.Icons.TIRE_REPAIR, 'Neumáticos del equipo seleccionado'),
+                metric_card('Equipos con neumáticos', eq_count, ft.Icons.PRECISION_MANUFACTURING_OUTLINED, 'Flota del equipo seleccionado'),
                 metric_card('Remanente promedio', pct(avg_rem) if avg_rem is not None else '—', ft.Icons.ASSESSMENT_OUTLINED, 'Sobre profundidad nueva'),
+                metric_filter_card(),
             ]
 
             # Dashboard por equipo y posición. En Remanente, el eje X son los equipos
@@ -1960,6 +2006,7 @@ def main(page: ft.Page):
         eq_filter.on_focus = on_equipment_focus
         eq_filter.on_change = on_equipment_change_mode
         tire_filter.on_change = on_tire_change
+        metric_eq_filter.on_change = refresh
         page.on_keyboard_event = on_service_keyboard
 
         refresh()
