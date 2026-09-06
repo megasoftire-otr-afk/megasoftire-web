@@ -2052,15 +2052,29 @@ def main(page: ft.Page):
             return rows[0] if rows else None
 
         def historical_limits(tid):
-            rows=query(
-                '''SELECT
-                       MAX(meter) max_meter,
-                       MIN(CASE WHEN tread_inner IS NOT NULL AND tread_inner>0 THEN tread_inner END) min_ti,
-                       MIN(CASE WHEN tread_outer IS NOT NULL AND tread_outer>0 THEN tread_outer END) min_to
-                   FROM occurrences WHERE tire_id=?''',
+            # El horómetro conserva su validación histórica por lectura máxima.
+            # Las cocadas, en cambio, deben tomar como referencia el ÚLTIMO
+            # evento registrado. Esto es indispensable después de una INVE,
+            # porque EXT/INT cambian físicamente de lado.
+            meter_rows=query(
+                'SELECT MAX(meter) max_meter FROM occurrences WHERE tire_id=?',
                 (tid,)
             )
-            return rows[0] if rows else None
+            last_tread=query(
+                '''SELECT tread_inner,tread_outer
+                   FROM occurrences
+                   WHERE tire_id=?
+                     AND (tread_inner IS NOT NULL OR tread_outer IS NOT NULL)
+                   ORDER BY id DESC LIMIT 1''',
+                (tid,)
+            )
+            return {
+                'max_meter': meter_rows[0]['max_meter'] if meter_rows else None,
+                # Se conservan estas claves para no alterar el resto del módulo;
+                # ahora representan la última lectura válida, no mínimos históricos.
+                'min_ti': last_tread[0]['tread_inner'] if last_tread else None,
+                'min_to': last_tread[0]['tread_outer'] if last_tread else None,
+            }
 
         def parse_event_date(value):
             if value in (None, ''):
