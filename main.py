@@ -4048,7 +4048,7 @@ def main(page: ft.Page):
         page.update()
 
     def maintenance_pressure_view():
-        """3.5 Nivelación de presión con los mismos parámetros del Módulo 2."""
+        """3.5 Nivelación de presión: cuadro resumen + gráfico, con los criterios del Módulo 2."""
         rows = query("""
             SELECT t.id, t.code, t.recommended_pressure,
                    e.code AS equipment_code, t.position
@@ -4065,7 +4065,10 @@ def main(page: ft.Page):
                     '3':'P3','P03':'P3','POS3':'P3','POS03':'P3',
                     '4':'P4','P04':'P4','POS4':'P4','POS04':'P4'}.get(x,x)
 
+        counts={'green':0,'orange':0,'red':0,'purple':0}
         activities=[]
+        evaluated=0
+        detail=[]
         for r in rows:
             z=query("""SELECT pressure FROM occurrences
                        WHERE tire_id=? AND event_code IN ('INSP','INSC')
@@ -4078,19 +4081,89 @@ def main(page: ft.Page):
                     continue
             except Exception:
                 continue
+            evaluated += 1
             diff=abs(act-rec)
-            # Mismos parámetros del Módulo 2:
-            # ±5 psi OK; >5 a 10 psi preventivo; >10 psi requiere nivelación;
-            # sobrepresión >20% es condición crítica exclusiva.
-            requires_level = (act > rec * 1.20) or (diff > 10)
-            if requires_level:
-                eq=r['equipment_code'] or 'SIN EQUIPO'
-                pos=norm_pos(r['position']) or 'SIN POSICIÓN'
+            if act > rec * 1.20:
+                status='purple'; label='Sobrepresión > 20%'
+            elif diff <= 5:
+                status='green'; label='± 5 psi (OK)'
+            elif diff <= 10:
+                status='orange'; label='> 5 a 10 psi'
+            else:
+                status='red'; label='> 10 psi'
+            counts[status] += 1
+            eq=r['equipment_code'] or 'SIN EQUIPO'
+            pos=norm_pos(r['position']) or 'SIN POSICIÓN'
+            detail.append((eq,pos,r['code'],rec,act,diff,label,status))
+            if status in ('red','purple'):
                 activities.append(f'NIVELAR PRESIÓN DEL NEUMÁTICO {pos} DEL EQUIPO {eq}.')
+
+        import base64, math
+        def pressure_donut():
+            items=[
+                ('± 5 psi (OK)',counts['green'],'#16A34A'),
+                ('> 5 a 10 psi',counts['orange'],'#F59E0B'),
+                ('> 10 psi',counts['red'],'#DC2626'),
+                ('Sobrepresión > 20%',counts['purple'],'#7C3AED'),
+            ]
+            total=evaluated
+            cx=82; cy=82; radius=50; stroke=24
+            circumference=2*math.pi*radius
+            offset=0.0; circles=[]; legend=[]
+            for label,count,color in items:
+                pct=(count/total*100.0) if total else 0.0
+                dash=circumference*(count/total) if total else 0.0
+                gap=max(0.0,circumference-dash)
+                if count>0:
+                    circles.append(
+                        f'<circle cx="{cx}" cy="{cy}" r="{radius}" fill="none" stroke="{color}" '
+                        f'stroke-width="{stroke}" stroke-dasharray="{dash:.3f} {gap:.3f}" '
+                        f'stroke-dashoffset="{-offset:.3f}" transform="rotate(-90 {cx} {cy})" />'
+                    )
+                offset += dash
+                legend.append(ft.Row([
+                    ft.Container(width=9,height=9,bgcolor=color,border_radius=2),
+                    ft.Text(f'{label}: {count} ({pct:.1f}%)',size=9.5,color=TEXT_MAIN),
+                ],spacing=6))
+            svg=(
+                '<svg xmlns="http://www.w3.org/2000/svg" width="164" height="164" viewBox="0 0 164 164">'
+                '<circle cx="82" cy="82" r="50" fill="none" stroke="#E2E8F0" stroke-width="24" />'
+                + ''.join(circles) +
+                f'<text x="82" y="79" text-anchor="middle" font-family="Arial" font-size="23" font-weight="700" fill="#172033">{total}</text>'
+                '<text x="82" y="98" text-anchor="middle" font-family="Arial" font-size="10" fill="#64748B">Total</text>'
+                '</svg>'
+            )
+            src='data:image/svg+xml;base64,'+base64.b64encode(svg.encode('utf-8')).decode('ascii')
+            return ft.Row([
+                ft.Image(src=src,width=164,height=164,fit=ft.BoxFit.CONTAIN),
+                ft.Column(legend,spacing=7),
+            ],spacing=12,vertical_alignment=ft.CrossAxisAlignment.CENTER)
+
+        def pct(n):
+            return f'{(n/evaluated*100.0):.1f}%' if evaluated else '0.0%'
+
+        summary_table=ft.DataTable(
+            heading_row_height=36,
+            data_row_min_height=38,
+            data_row_max_height=38,
+            column_spacing=24,
+            columns=[
+                ft.DataColumn(ft.Text('Condición',size=10.5,weight=ft.FontWeight.BOLD)),
+                ft.DataColumn(ft.Text('Criterio',size=10.5,weight=ft.FontWeight.BOLD)),
+                ft.DataColumn(ft.Text('Cantidad',size=10.5,weight=ft.FontWeight.BOLD)),
+                ft.DataColumn(ft.Text('%',size=10.5,weight=ft.FontWeight.BOLD)),
+            ],
+            rows=[
+                ft.DataRow(cells=[ft.DataCell(ft.Text('OK',size=10.5)),ft.DataCell(ft.Text('± 5 psi',size=10.5)),ft.DataCell(ft.Text(str(counts['green']),size=10.5)),ft.DataCell(ft.Text(pct(counts['green']),size=10.5))]),
+                ft.DataRow(cells=[ft.DataCell(ft.Text('Preventivo',size=10.5)),ft.DataCell(ft.Text('> 5 a 10 psi',size=10.5)),ft.DataCell(ft.Text(str(counts['orange']),size=10.5)),ft.DataCell(ft.Text(pct(counts['orange']),size=10.5))]),
+                ft.DataRow(cells=[ft.DataCell(ft.Text('Nivelación',size=10.5)),ft.DataCell(ft.Text('> 10 psi',size=10.5)),ft.DataCell(ft.Text(str(counts['red']),size=10.5)),ft.DataCell(ft.Text(pct(counts['red']),size=10.5))]),
+                ft.DataRow(cells=[ft.DataCell(ft.Text('Crítico',size=10.5)),ft.DataCell(ft.Text('Sobrepresión > 20%',size=10.5)),ft.DataCell(ft.Text(str(counts['purple']),size=10.5)),ft.DataCell(ft.Text(pct(counts['purple']),size=10.5))]),
+            ]
+        )
 
         controls=[
             page_title('3. Programa de mantenimiento · 3.5 Nivelación de presión',
-                       'Actividades según la última inspección INSP/INSC y la presión recomendada'),
+                       'Comparación de la última presión INSP/INSC contra la presión recomendada'),
             ft.Row([
                 ft.OutlinedButton('3.1 Evaluación de remanente',on_click=lambda e:maintenance_view()),
                 ft.OutlinedButton('3.2 Diferencia RTD entre hombros',on_click=lambda e:maintenance_shoulders_view()),
@@ -4099,8 +4172,20 @@ def main(page: ft.Page):
                 ft.ElevatedButton('3.5 Nivelación de presión',disabled=True),
                 ft.OutlinedButton('Reporte final de mantenimiento',icon=ft.Icons.DESCRIPTION_OUTLINED,on_click=lambda e:maintenance_final_report_view()),
             ],spacing=10,wrap=True),
+            ft.Row([
+                ft.Container(expand=1,content=card(ft.Column([
+                    ft.Text('CUADRO DE EVALUACIÓN DE PRESIÓN',size=14,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
+                    ft.Text('Mismos parámetros establecidos en Neumáticos en servicio.',size=10,color=TEXT_MUTED),
+                    ft.Row([summary_table],scroll=ft.ScrollMode.AUTO),
+                ],spacing=8))),
+                ft.Container(expand=1,content=card(ft.Column([
+                    ft.Text('PRESIONES VS. PRESIÓN RECOMENDADA',size=14,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
+                    ft.Text('Diferencia absoluta entre presión actual y recomendada.',size=10,color=TEXT_MUTED),
+                    pressure_donut(),
+                ],spacing=8))),
+            ],spacing=12,vertical_alignment=ft.CrossAxisAlignment.START),
         ]
-        lines=[ft.Text('3.5 NIVELACIÓN DE PRESIÓN',size=15,weight=ft.FontWeight.BOLD,color=TEXT_MAIN)]
+        lines=[ft.Text('ACTIVIDADES DE NIVELACIÓN DE PRESIÓN',size=14,weight=ft.FontWeight.BOLD,color=TEXT_MAIN)]
         if activities:
             lines += [ft.Text(f'- {x}',size=12,color=TEXT_MAIN) for x in activities]
         else:
