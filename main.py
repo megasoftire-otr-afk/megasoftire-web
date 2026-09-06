@@ -1694,28 +1694,31 @@ def main(page: ft.Page):
                     for idx, v in enumerate(row_values)
                 ], spacing=0))
 
-            # Los 3 KPI superiores tienen su propio filtro por equipo.
-            # Se calculan sobre todos los neumáticos EN SERVICIO del equipo elegido,
-            # sin modificar el resto del dashboard.
-            metric_sql = """
-                SELECT t.*,e.code equipment_code,e.brand equipment_brand,e.model equipment_model,
-                       e.location equipment_location,e.vehicle_type,e.tire_size equipment_tire_size
-                FROM tires t
-                LEFT JOIN equipment e ON e.id=t.equipment_id
-                WHERE t.status='SERVICIO'
-            """
-            metric_params = []
-            if metric_eq_filter.value not in (None, '', ALL):
-                metric_sql += ' AND t.equipment_id=?'
-                metric_params.append(int(metric_eq_filter.value))
-            metric_sql += " ORDER BY COALESCE(e.code,''), CAST(COALESCE(NULLIF(t.position,''),'999') AS INTEGER), t.code"
-            metric_rows = query(metric_sql, tuple(metric_params))
-            metric_ops = [(r, tire_operational_data(r)) for r in metric_rows]
-            metric_rem_values = [od['rem'] for _, od in metric_ops if od['rem'] is not None]
+            # KPI superior 1: EN SERVICIO.
+            # En esta etapa solo este indicador responde al filtro independiente
+            # por equipo. Los otros KPI permanecen con sus valores generales.
+            selected_metric = str(metric_eq_filter.value or ALL).strip()
+            selected_metric_id = None
+            if selected_metric not in ('', ALL):
+                if selected_metric in equipment_ids:
+                    selected_metric_id = int(selected_metric)
+                else:
+                    selected_metric_id = int(equipment_by_code.get(selected_metric.upper())) if equipment_by_code.get(selected_metric.upper()) else None
 
-            total_service = len(metric_rows)
-            eq_count = len({r['equipment_id'] for r in metric_rows if r['equipment_id'] is not None})
-            avg_rem = sum(metric_rem_values) / len(metric_rem_values) if metric_rem_values else None
+            if selected_metric_id is not None:
+                total_service = query(
+                    "SELECT COUNT(*) n FROM tires WHERE status='SERVICIO' AND equipment_id=?",
+                    (selected_metric_id,)
+                )[0]['n']
+            else:
+                total_service = query("SELECT COUNT(*) n FROM tires WHERE status='SERVICIO'")[0]['n']
+
+            # Por ahora estos dos indicadores siguen siendo generales.
+            global_metric_rows = query("SELECT * FROM tires WHERE status='SERVICIO'")
+            global_metric_ops = [(r, tire_operational_data(r)) for r in global_metric_rows]
+            global_metric_rem_values = [od['rem'] for _, od in global_metric_ops if od['rem'] is not None]
+            eq_count = len({r['equipment_id'] for r in global_metric_rows if r['equipment_id'] is not None})
+            avg_rem = sum(global_metric_rem_values) / len(global_metric_rem_values) if global_metric_rem_values else None
             current_meter = max([float(r['current_meter']) for r in rows if r['current_meter'] is not None], default=None)
             latest_date = ''
             if rows:
