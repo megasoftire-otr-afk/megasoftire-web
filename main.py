@@ -2601,7 +2601,7 @@ def main(page: ft.Page):
             ft.Row([tire,event,date],wrap=True),
             ref,
             ft.Row([equip,pos,meter],wrap=True),
-            ft.Row([ti,to,press,cond],wrap=True),
+            ft.Row([to,ti,press,cond],wrap=True),
             ft.Row([reason,loc],wrap=True),
             notes,
             ft.Row([
