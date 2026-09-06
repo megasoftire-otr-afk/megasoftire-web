@@ -3320,6 +3320,8 @@ def main(page: ft.Page):
                                   on_click=lambda e: maintenance_axles_view()),
                 ft.OutlinedButton('3.4 Diferencia entre ejes por equipo', icon=ft.Icons.COMPARE_ARROWS,
                                   on_click=lambda e: maintenance_four_positions_view()),
+                ft.OutlinedButton('3.5 Nivelación de presión', icon=ft.Icons.SPEED,
+                                  on_click=lambda e: maintenance_pressure_view()),
                 ft.OutlinedButton('Reporte final de mantenimiento', icon=ft.Icons.DESCRIPTION_OUTLINED,
                                   on_click=lambda e: maintenance_final_report_view()),
             ], spacing=10, wrap=True),
@@ -3531,6 +3533,8 @@ def main(page: ft.Page):
                                   on_click=lambda e: maintenance_axles_view()),
                 ft.OutlinedButton('3.4 Diferencia entre ejes por equipo', icon=ft.Icons.COMPARE_ARROWS,
                                   on_click=lambda e: maintenance_four_positions_view()),
+                ft.OutlinedButton('3.5 Nivelación de presión', icon=ft.Icons.SPEED,
+                                  on_click=lambda e: maintenance_pressure_view()),
                 ft.OutlinedButton('Reporte final de mantenimiento', icon=ft.Icons.DESCRIPTION_OUTLINED,
                                   on_click=lambda e: maintenance_final_report_view()),
             ], spacing=10, wrap=True),
@@ -3868,6 +3872,8 @@ def main(page: ft.Page):
                 ft.ElevatedButton('3.3 Diferencia RTD mismo eje', icon=ft.Icons.COMPARE_ARROWS, disabled=True),
                 ft.OutlinedButton('3.4 Diferencia entre ejes por equipo', icon=ft.Icons.COMPARE_ARROWS,
                                   on_click=lambda e: maintenance_four_positions_view()),
+                ft.OutlinedButton('3.5 Nivelación de presión', icon=ft.Icons.SPEED,
+                                  on_click=lambda e: maintenance_pressure_view()),
                 ft.OutlinedButton('Reporte final de mantenimiento', icon=ft.Icons.DESCRIPTION_OUTLINED,
                                   on_click=lambda e: maintenance_final_report_view()),
             ], spacing=10, wrap=True),
@@ -3915,7 +3921,7 @@ def main(page: ft.Page):
     def maintenance_four_positions_view():
         """3.4 Diferencia de RTD entre las cuatro posiciones P1-P4, sin considerar diámetro."""
         rows = query("""
-            SELECT t.id, t.code, t.tread_inner, t.tread_outer,
+            SELECT t.id, t.code, t.tread_inner, t.tread_outer, t.recommended_pressure,
                    e.id AS equipment_id, e.code AS equipment_code, t.position
             FROM tires t
             LEFT JOIN equipment e ON e.id=t.equipment_id
@@ -4028,6 +4034,7 @@ def main(page: ft.Page):
                     ft.OutlinedButton('3.2 Diferencia RTD entre hombros',on_click=lambda e:maintenance_shoulders_view()),
                     ft.OutlinedButton('3.3 Diferencia RTD mismo eje',on_click=lambda e:maintenance_axles_view()),
                     ft.ElevatedButton('3.4 Diferencia entre ejes por equipo',disabled=True),
+                    ft.OutlinedButton('3.5 Nivelación de presión',icon=ft.Icons.SPEED,on_click=lambda e:maintenance_pressure_view()),
                     ft.OutlinedButton('Reporte final de mantenimiento',icon=ft.Icons.DESCRIPTION_OUTLINED,on_click=lambda e:maintenance_final_report_view())],spacing=10,wrap=True),
             ft.Row([metric('EQUIPOS EVALUADOS',total,'Equipos con P1–P4'),metric('EN CONDICIÓN NORMAL',counts['NORMAL'],'< 5 mm','#2E9B45','#F1FAF3'),
                     metric('EN PREVENTIVO',counts['PREVENTIVO'],'5 a 7.5 mm','#C98600','#FFF9E8'),metric('EN EMERGENCIA',counts['EMERGENCIA'],'> 7.5 mm','#C81D2A','#FFF1F0'),
@@ -4040,10 +4047,72 @@ def main(page: ft.Page):
         ],scroll=ft.ScrollMode.AUTO,spacing=16)
         page.update()
 
+    def maintenance_pressure_view():
+        """3.5 Nivelación de presión con los mismos parámetros del Módulo 2."""
+        rows = query("""
+            SELECT t.id, t.code, t.recommended_pressure,
+                   e.code AS equipment_code, t.position
+            FROM tires t
+            LEFT JOIN equipment e ON e.id=t.equipment_id
+            WHERE t.status='SERVICIO'
+            ORDER BY COALESCE(e.code,''), t.position, t.code
+        """)
+
+        def norm_pos(v):
+            x=str(v or '').strip().upper().replace(' ','')
+            return {'1':'P1','P01':'P1','POS1':'P1','POS01':'P1',
+                    '2':'P2','P02':'P2','POS2':'P2','POS02':'P2',
+                    '3':'P3','P03':'P3','POS3':'P3','POS03':'P3',
+                    '4':'P4','P04':'P4','POS4':'P4','POS04':'P4'}.get(x,x)
+
+        activities=[]
+        for r in rows:
+            z=query("""SELECT pressure FROM occurrences
+                       WHERE tire_id=? AND event_code IN ('INSP','INSC')
+                       ORDER BY id DESC LIMIT 1""",(r['id'],))
+            act=z[0]['pressure'] if z and z[0]['pressure'] is not None else None
+            rec=r['recommended_pressure']
+            try:
+                act=float(act); rec=float(rec)
+                if rec <= 0:
+                    continue
+            except Exception:
+                continue
+            diff=abs(act-rec)
+            # Mismos parámetros del Módulo 2:
+            # ±5 psi OK; >5 a 10 psi preventivo; >10 psi requiere nivelación;
+            # sobrepresión >20% es condición crítica exclusiva.
+            requires_level = (act > rec * 1.20) or (diff > 10)
+            if requires_level:
+                eq=r['equipment_code'] or 'SIN EQUIPO'
+                pos=norm_pos(r['position']) or 'SIN POSICIÓN'
+                activities.append(f'NIVELAR PRESIÓN DEL NEUMÁTICO {pos} DEL EQUIPO {eq}.')
+
+        controls=[
+            page_title('3. Programa de mantenimiento · 3.5 Nivelación de presión',
+                       'Actividades según la última inspección INSP/INSC y la presión recomendada'),
+            ft.Row([
+                ft.OutlinedButton('3.1 Evaluación de remanente',on_click=lambda e:maintenance_view()),
+                ft.OutlinedButton('3.2 Diferencia RTD entre hombros',on_click=lambda e:maintenance_shoulders_view()),
+                ft.OutlinedButton('3.3 Diferencia RTD mismo eje',on_click=lambda e:maintenance_axles_view()),
+                ft.OutlinedButton('3.4 Diferencia entre ejes por equipo',on_click=lambda e:maintenance_four_positions_view()),
+                ft.ElevatedButton('3.5 Nivelación de presión',disabled=True),
+                ft.OutlinedButton('Reporte final de mantenimiento',icon=ft.Icons.DESCRIPTION_OUTLINED,on_click=lambda e:maintenance_final_report_view()),
+            ],spacing=10,wrap=True),
+        ]
+        lines=[ft.Text('3.5 NIVELACIÓN DE PRESIÓN',size=15,weight=ft.FontWeight.BOLD,color=TEXT_MAIN)]
+        if activities:
+            lines += [ft.Text(f'- {x}',size=12,color=TEXT_MAIN) for x in activities]
+        else:
+            lines.append(ft.Text('- SIN ACTIVIDADES DE MANTENIMIENTO PENDIENTES.',size=12,color=TEXT_MAIN))
+        controls.append(card(ft.Column(lines,spacing=7),padding=20))
+        content.content=ft.Column(controls,scroll=ft.ScrollMode.AUTO,spacing=16)
+        page.update()
+
     def maintenance_final_report_view():
         """Reporte final: actividades de mantenimiento generadas solo por condiciones de emergencia."""
         rows = query("""
-            SELECT t.id, t.code, t.tread_inner, t.tread_outer,
+            SELECT t.id, t.code, t.tread_inner, t.tread_outer, t.recommended_pressure,
                    e.id AS equipment_id, e.code AS equipment_code, t.position
             FROM tires t
             LEFT JOIN equipment e ON e.id=t.equipment_id
@@ -4075,7 +4144,7 @@ def main(page: ft.Page):
             if out is None or inn is None: return None
             return (out+inn)/2.0
 
-        activities_31=[]; activities_32=[]; activities_33=[]; activities_34=[]
+        activities_31=[]; activities_32=[]; activities_33=[]; activities_34=[]; activities_35=[]
 
         # 3.1: cambio urgente cuando el menor RTD EXT/INT es <= 20 mm.
         for r in rows:
@@ -4118,6 +4187,25 @@ def main(page: ft.Page):
                 if all(v is not None for v in vals) and (max(vals)-min(vals)) > 7.5:
                     activities_34.append(f'NIVELACIÓN DE EJES DEL EQUIPO {code}.')
 
+        # 3.5: nivelación de presión con los mismos parámetros del Módulo 2.
+        # Solo genera actividad para >10 psi de diferencia o sobrepresión >20%.
+        for r in rows:
+            z=query("""SELECT pressure FROM occurrences
+                       WHERE tire_id=? AND event_code IN ('INSP','INSC')
+                       ORDER BY id DESC LIMIT 1""",(r['id'],))
+            act=z[0]['pressure'] if z and z[0]['pressure'] is not None else None
+            rec=r['recommended_pressure']
+            try:
+                act=float(act); rec=float(rec)
+                if rec <= 0:
+                    continue
+            except Exception:
+                continue
+            diff=abs(act-rec)
+            if (act > rec * 1.20) or (diff > 10):
+                eq=r['equipment_code'] or 'SIN EQUIPO'; pos=norm_pos(r['position']) or 'SIN POSICIÓN'
+                activities_35.append(f'NIVELAR PRESIÓN DEL NEUMÁTICO {pos} DEL EQUIPO {eq}.')
+
         def section(title, items):
             controls=[ft.Text(title,size=15,weight=ft.FontWeight.BOLD,color=TEXT_MAIN)]
             if items:
@@ -4134,6 +4222,7 @@ def main(page: ft.Page):
                 ft.OutlinedButton('3.2 Diferencia RTD entre hombros',on_click=lambda e:maintenance_shoulders_view()),
                 ft.OutlinedButton('3.3 Diferencia RTD mismo eje',on_click=lambda e:maintenance_axles_view()),
                 ft.OutlinedButton('3.4 Diferencia entre ejes por equipo',on_click=lambda e:maintenance_four_positions_view()),
+                ft.OutlinedButton('3.5 Nivelación de presión',on_click=lambda e:maintenance_pressure_view()),
                 ft.ElevatedButton('Reporte final de mantenimiento',disabled=True),
             ],spacing=10,wrap=True),
             card(ft.Column([
@@ -4144,6 +4233,8 @@ def main(page: ft.Page):
                 section('3.3 DIFERENCIA DE RTD DEL MISMO EJE',activities_33),
                 ft.Divider(height=18,color='#DDE5ED'),
                 section('3.4 DIFERENCIA ENTRE EJES POR EQUIPO',activities_34),
+                ft.Divider(height=18,color='#DDE5ED'),
+                section('3.5 NIVELACIÓN DE PRESIÓN',activities_35),
             ],spacing=10),padding=20),
         ],scroll=ft.ScrollMode.AUTO,spacing=16)
         page.update()
