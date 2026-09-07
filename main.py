@@ -4492,6 +4492,112 @@ def main(page: ft.Page):
         ],scroll=ft.ScrollMode.AUTO,spacing=16)
         page.update()
 
+    def standby_view():
+        """Módulo 4 · Retén / Stand-by: control operativo de neumáticos disponibles."""
+        search=ft.TextField(label='Buscar código / serie / marca / medida',prefix_icon=ft.Icons.SEARCH,width=330)
+        rows_box=ft.Column(spacing=0)
+        summary=ft.Text('',size=12,color=TEXT_MUTED)
+
+        columns=[
+            ('Código',85),('Serie',115),('Marca',105),('Medida',100),('Diseño',105),('TRA',90),
+            ('Condición',105),('RTD EXT',75),('RTD INT',75),('RTD mín.',75),('% rem.',75),
+            ('Horas acum.',95),('Costo/h',80),('Última fecha',100),('Último evento',90),('Ubicación',120),('Acciones',330)
+        ]
+
+        def cell(value,width,header=False):
+            return ft.Container(
+                content=ft.Text(str(value if value not in (None,'') else '—'),size=10.5,
+                                weight=ft.FontWeight.BOLD if header else ft.FontWeight.NORMAL,
+                                color=TEXT_MAIN,no_wrap=True),
+                width=width,padding=ft.Padding(left=5,top=8,right=5,bottom=8))
+
+        header=ft.Container(
+            content=ft.Row([cell(a,b,True) for a,b in columns],spacing=0),
+            bgcolor='#EEF2F7',border=ft.Border(bottom=ft.BorderSide(1,'#D5DCE5')))
+
+        def fmt(v,dec=1):
+            if v is None: return '—'
+            try:
+                f=float(v)
+                return str(int(f)) if f.is_integer() else f'{f:.{dec}f}'
+            except Exception: return str(v)
+
+        def go_action(tid,event_code):
+            session['movement_tire_id']=str(tid)
+            session['movement_event']=event_code
+            movement_view()
+
+        def refresh(e=None):
+            term=(search.value or '').strip()
+            sql="""SELECT t.* FROM tires t WHERE t.status='STAND-BY'"""
+            params=[]
+            if term:
+                sql += " AND (t.code LIKE ? OR t.serial LIKE ? OR t.brand LIKE ? OR t.size LIKE ? OR t.design LIKE ?)"
+                q=f'%{term}%'; params=[q,q,q,q,q]
+            sql += " ORDER BY t.code"
+            tires=query(sql,tuple(params))
+            rows_box.controls=[]
+            apt=repair=low=0
+            for idx,r in enumerate(tires):
+                last=query("""SELECT event_date,event_code,meter,tread_outer,tread_inner,location
+                              FROM occurrences WHERE tire_id=? ORDER BY id DESC LIMIT 1""",(r['id'],))
+                z=last[0] if last else None
+                ext=(z['tread_outer'] if z and z['tread_outer'] is not None else r['tread_outer'])
+                inn=(z['tread_inner'] if z and z['tread_inner'] is not None else r['tread_inner'])
+                vals=[float(x) for x in (ext,inn) if x is not None]
+                rtd=min(vals) if vals else None
+                originals=[float(x) for x in (r['new_tread_outer'],r['new_tread_inner']) if x is not None]
+                orig=min(originals) if originals else None
+                rem=(rtd/orig*100.0) if rtd is not None and orig and orig>0 else None
+                hours=z['meter'] if z and z['meter'] is not None else r['current_meter']
+                try:
+                    cph=float(r['cost_usd'])/float(hours) if r['cost_usd'] is not None and hours and float(hours)>0 else None
+                except Exception: cph=None
+                retirement=r['retirement_tread']
+                try:
+                    if rtd is not None and retirement is not None and rtd <= float(retirement): low+=1
+                    else: apt+=1
+                except Exception: apt+=1
+                if z and z['event_code']=='REPA': repair+=1
+                actions=ft.Row([
+                    ft.OutlinedButton('INST',on_click=lambda e,tid=r['id']:go_action(tid,'INST')),
+                    ft.OutlinedButton('INVE',on_click=lambda e,tid=r['id']:go_action(tid,'INVE')),
+                    ft.OutlinedButton('REPA',on_click=lambda e,tid=r['id']:go_action(tid,'REPA')),
+                    ft.OutlinedButton('BAJA',on_click=lambda e,tid=r['id']:go_action(tid,'BAJA')),
+                ],spacing=4)
+                values=[r['code'],r['serial'],r['brand'],r['size'],r['design'],r['compound'],r['tire_condition'],
+                        fmt(ext),fmt(inn),fmt(rtd),('—' if rem is None else f'{rem:.1f}%'),fmt(hours,0),
+                        ('—' if cph is None else f'{cph:.2f}'),format_date(z['event_date']) if z and z['event_date'] else '—',
+                        z['event_code'] if z else '—',z['location'] if z else '—']
+                controls=[cell(values[i],columns[i][1]) for i in range(len(values))]
+                controls.append(ft.Container(content=actions,width=columns[-1][1],padding=ft.Padding(left=3,top=3,right=3,bottom=3)))
+                rows_box.controls.append(ft.Container(content=ft.Row(controls,spacing=0),
+                    bgcolor='#FFFFFF' if idx%2==0 else '#F8FAFC',border=ft.Border(bottom=ft.BorderSide(1,'#E5E9EF'))))
+            total=len(tires)
+            summary.value=f'{total} neumático(s) en Retén / Stand-by'
+            kpis.controls=[
+                top_metric('EN STAND-BY',total,'Neumáticos disponibles / retén'),
+                top_metric('APTOS PARA INSTALAR',apt,'Con remanente sobre retiro','#2E9B45'),
+                top_metric('ÚLTIMO EVENTO REPA',repair,'Reparación como último evento','#C47A00'),
+                top_metric('EVALUAR PARA BAJA',low,'RTD en profundidad de retiro','#C81D2A'),
+            ]
+            page.update()
+
+        search.on_change=refresh
+        kpis=ft.Row([],wrap=True,spacing=12,run_spacing=12)
+        refresh()
+        content.content=ft.Column([
+            page_title('4. RETÉN / STAND-BY','Neumáticos desmontados disponibles para instalación, inversión, reparación o baja'),
+            kpis,
+            card(ft.Column([
+                ft.Row([ft.Text('NEUMÁTICOS EN RETÉN / STAND-BY',size=16,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),ft.Container(expand=True),search]),
+                summary,
+                ft.Row([ft.Column([header,rows_box],spacing=0)],scroll=ft.ScrollMode.AUTO),
+                ft.Text('Acciones habilitadas: INST · INVE · REPA · BAJA. Cada acción abre Movimiento de neumáticos con el neumático y evento seleccionados.',size=10,color=TEXT_MUTED,italic=True),
+            ],spacing=10))
+        ],scroll=ft.ScrollMode.AUTO,spacing=16)
+        page.update()
+
     def placeholder(title,desc):
         content.content=ft.Column([
             page_title(title,desc),
@@ -4511,7 +4617,7 @@ def main(page: ft.Page):
         elif idx==1: movement_view()
         elif idx==2: service_view()
         elif idx==3: maintenance_final_report_view()
-        elif idx==4: tires_view('STAND-BY')
+        elif idx==4: standby_view()
         elif idx==5: tires_view('BAJA')
         elif idx==6: placeholder('Inventarios y consumos','Existencias, costos, consumos y remanentes')
         elif idx==7: equipment_view()
