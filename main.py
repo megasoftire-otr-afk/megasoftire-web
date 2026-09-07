@@ -4689,47 +4689,32 @@ def main(page: ft.Page):
     def baja_history_view():
         """Módulo 5 · Neumáticos fuera de servicio."""
         search=ft.TextField(
-            label='Buscar código / serie / marca / medida / equipo',
+            label='Buscar código / serie / marca / medida / equipo / motivo',
             prefix_icon=ft.Icons.SEARCH,
             width=420
         )
         summary=ft.Text('',size=12,color=TEXT_MUTED)
 
-        # El listado se alimenta del maestro tires (estado BAJA) y recupera del
-        # evento BAJA únicamente la trazabilidad histórica: fecha/equipo/posición.
-        columns=[
-            ('Código',85),('Serie',125),('Marca',105),('Medida',100),('Diseño',105),
-            ('TRA',85),('Condición',100),('RTD EXT',82),('RTD INT',82),('% REM',78),
-            ('Horas recorrido',115),('Costo x hrs',100),('Hs/mm',82),('Fecha de baja',105),
-            ('Equipo',85),('Posición',75)
-        ]
-        total_width=sum(w for _,w in columns)
-
-        def cell(value,width,header=False):
-            txt='—' if value in (None,'') else str(value)
-            return ft.Container(
-                width=width,height=38 if header else 34,
-                padding=ft.Padding(left=5,top=0,right=5,bottom=0),
-                alignment=ft.Alignment.CENTER,
-                border=ft.Border(bottom=ft.BorderSide(1,'#E1E6ED')),
-                content=ft.Text(txt,size=9.2 if header else 9.6,
-                                weight=ft.FontWeight.BOLD if header else ft.FontWeight.NORMAL,
-                                color=TEXT_MAIN,text_align=ft.TextAlign.CENTER,no_wrap=True,
-                                tooltip=txt)
-            )
-
-        header=ft.Row([cell(name,w,True) for name,w in columns],spacing=0)
-        rows_box=ft.Column([],spacing=0)
-        table_view=ft.Row([
-            ft.Container(width=total_width,content=ft.Column([
-                ft.Container(content=header,bgcolor='#EEF2F7'),rows_box
-            ],spacing=0))
-        ],scroll=ft.ScrollMode.ALWAYS,spacing=0)
+        table=ft.DataTable(
+            heading_row_height=40,
+            data_row_min_height=38,
+            data_row_max_height=42,
+            column_spacing=20,
+            columns=[ft.DataColumn(ft.Text(x,size=10.5,weight=ft.FontWeight.BOLD)) for x in [
+                'Código','Serie','Marca','Medida','Diseño','TRA','Condición',
+                'RTD EXT','RTD INT','% REM','Horas recorrido','Costo x hrs','Hs/mm',
+                'Fecha de baja','Equipo','Posición'
+            ]],
+            rows=[]
+        )
 
         def baja_metric(title,value,subtitle,value_color=TEXT_MAIN):
             return ft.Container(
-                width=225,padding=ft.Padding(left=18,top=14,right=18,bottom=14),
-                bgcolor='#FFFFFF',border=ft.Border.all(1,'#E0E6EE'),border_radius=12,
+                width=225,
+                padding=ft.Padding(left=18,top=14,right=18,bottom=14),
+                bgcolor='#FFFFFF',
+                border=ft.Border.all(1,'#E0E6EE'),
+                border_radius=12,
                 content=ft.Column([
                     ft.Text(title,size=10.5,weight=ft.FontWeight.BOLD,color=TEXT_MUTED),
                     ft.Text(str(value),size=25,weight=ft.FontWeight.BOLD,color=value_color),
@@ -4741,46 +4726,40 @@ def main(page: ft.Page):
             if v is None: return '—'
             try:
                 f=float(v)
-                if dec==0: return f'{f:,.0f}'
                 return str(int(f)) if f.is_integer() else f'{f:.{dec}f}'
             except Exception:
                 return str(v)
 
-        def accumulated_hours(tire_id):
-            """Suma horas reales trabajadas entre cada INST y su DINS/BAJA.
-            Los meter son horómetros de equipo; se suman solo las diferencias de
-            cada periodo instalado para no confundir horómetro con vida del neumático.
-            """
+        def accumulated_tire_hours(tire_id):
+            """Suma las horas efectivamente trabajadas entre INST y DINS/BAJA."""
             events=query("""
                 SELECT event_code,meter FROM occurrences
-                WHERE tire_id=? AND meter IS NOT NULL
+                WHERE tire_id=? AND event_code IN ('INST','DINS','BAJA')
                 ORDER BY id
             """,(tire_id,))
             total=0.0
             start_meter=None
-            last_meter=None
             for ev in events:
-                try: meter=float(ev['meter'])
-                except Exception: continue
-                code=str(ev['event_code'] or '').upper()
+                code=ev['event_code']
+                try:
+                    meter=float(ev['meter']) if ev['meter'] is not None else None
+                except Exception:
+                    meter=None
                 if code=='INST':
-                    # Una nueva instalación inicia un nuevo tramo operativo.
                     start_meter=meter
-                    last_meter=meter
-                elif start_meter is not None:
-                    last_meter=meter
-                    if code in ('DINS','BAJA'):
-                        total += max(0.0,meter-start_meter)
-                        start_meter=None
-                        last_meter=None
-            # Respaldo para historiales antiguos sin cierre explícito.
-            if start_meter is not None and last_meter is not None:
-                total += max(0.0,last_meter-start_meter)
-            return total
+                elif code in ('DINS','BAJA') and start_meter is not None and meter is not None:
+                    if meter>=start_meter:
+                        total += meter-start_meter
+                    start_meter=None
+            return total if total>0 else None
 
         def refresh(e=None):
             term=(search.value or '').strip()
-            sql="""SELECT t.* FROM tires t WHERE t.status='BAJA'"""
+            sql="""
+                SELECT t.*
+                FROM tires t
+                WHERE t.status='BAJA'
+            """
             params=[]
             if term:
                 q=f'%{term}%'
@@ -4788,22 +4767,24 @@ def main(page: ft.Page):
                     t.code LIKE ? OR t.serial LIKE ? OR t.brand LIKE ? OR t.size LIKE ? OR
                     t.design LIKE ? OR EXISTS(
                         SELECT 1 FROM occurrences ox LEFT JOIN equipment ex ON ex.id=ox.equipment_id
-                        WHERE ox.tire_id=t.id AND ox.event_code='BAJA' AND COALESCE(ex.code,'') LIKE ?
+                        WHERE ox.tire_id=t.id AND ox.event_code='BAJA'
+                          AND (COALESCE(ex.code,'') LIKE ? OR COALESCE(ox.reason,'') LIKE ?)
                     )
                 )"""
-                params=[q,q,q,q,q,q]
+                params=[q,q,q,q,q,q,q]
             sql += ' ORDER BY t.code'
             tires=query(sql,tuple(params))
-            rows_box.controls=[]
+            table.rows=[]
 
             year_now=(dt.datetime.utcnow()-dt.timedelta(hours=5)).year
             bajas_year=0
-            worked_values=[]
+            worked_hours=[]
+            reason_counts={}
 
-            for idx,r in enumerate(tires):
+            for r in tires:
                 baja=query("""
-                    SELECT o.event_date,o.equipment_id,o.position,o.tread_outer,o.tread_inner,
-                           e.code equipment_code
+                    SELECT o.event_date,o.equipment_id,o.position,o.meter,
+                           o.tread_outer,o.tread_inner,o.reason,o.notes,e.code equipment_code
                     FROM occurrences o
                     LEFT JOIN equipment e ON e.id=o.equipment_id
                     WHERE o.tire_id=? AND o.event_code='BAJA'
@@ -4811,73 +4792,89 @@ def main(page: ft.Page):
                 """,(r['id'],))
                 z=baja[0] if baja else None
 
-                # RTD al retiro: primero evento BAJA; si faltara, última lectura de
-                # profundidad registrada; finalmente el valor actual de tires.
-                tread=query("""
-                    SELECT tread_outer,tread_inner FROM occurrences
-                    WHERE tire_id=? AND (tread_outer IS NOT NULL OR tread_inner IS NOT NULL)
-                    ORDER BY id DESC LIMIT 1
-                """,(r['id'],))
-                last_tread=tread[0] if tread else None
-                ext=(z['tread_outer'] if z and z['tread_outer'] is not None else
-                     (last_tread['tread_outer'] if last_tread and last_tread['tread_outer'] is not None else r['tread_outer']))
-                inn=(z['tread_inner'] if z and z['tread_inner'] is not None else
-                     (last_tread['tread_inner'] if last_tread and last_tread['tread_inner'] is not None else r['tread_inner']))
-
-                def fnum(v):
-                    try: return float(v) if v is not None else None
-                    except Exception: return None
-                ext_f,inn_f=fnum(ext),fnum(inn)
-                current_vals=[v for v in (ext_f,inn_f) if v is not None]
+                ext=(z['tread_outer'] if z and z['tread_outer'] is not None else r['tread_outer'])
+                inn=(z['tread_inner'] if z and z['tread_inner'] is not None else r['tread_inner'])
+                current_vals=[]
+                for x in (ext,inn):
+                    try:
+                        if x is not None: current_vals.append(float(x))
+                    except Exception:
+                        pass
                 current_min=min(current_vals) if current_vals else None
 
-                new_ext=fnum(r['new_tread_outer']) if 'new_tread_outer' in r.keys() else None
-                new_int=fnum(r['new_tread_inner']) if 'new_tread_inner' in r.keys() else None
-                if new_ext is None: new_ext=fnum(r['new_tread'])
-                if new_int is None: new_int=fnum(r['new_tread'])
-                original_vals=[v for v in (new_ext,new_int) if v is not None]
+                original_ext=r['new_tread_outer'] if 'new_tread_outer' in r.keys() else None
+                original_int=r['new_tread_inner'] if 'new_tread_inner' in r.keys() else None
+                if original_ext is None: original_ext=r['new_tread']
+                if original_int is None: original_int=r['new_tread']
+                original_vals=[]
+                for x in (original_ext,original_int):
+                    try:
+                        if x is not None: original_vals.append(float(x))
+                    except Exception:
+                        pass
                 original_min=min(original_vals) if original_vals else None
 
-                rem_pct=(max(0.0,min(100.0,current_min/original_min*100.0))
-                         if current_min is not None and original_min not in (None,0) else None)
-                wear_mm=(max(0.0,original_min-current_min)
-                         if current_min is not None and original_min is not None else None)
+                rem_pct=None
+                wear_mm=None
+                if original_min not in (None,0) and current_min is not None:
+                    rem_pct=max(0.0,min(100.0,current_min/original_min*100.0))
+                    wear_mm=max(0.0,original_min-current_min)
 
-                worked=accumulated_hours(r['id'])
-                if worked>0: worked_values.append(worked)
-                cost=fnum(r['cost_usd'])
-                cph=(cost/worked if cost is not None and worked>0 else None)
-                hsmm=(worked/wear_mm if worked>0 and wear_mm is not None and wear_mm>0 else None)
+                hours=accumulated_tire_hours(r['id'])
+                if hours is not None:
+                    worked_hours.append(hours)
+                cph=None
+                hs_mm=None
+                try:
+                    if r['cost_usd'] is not None and hours and hours>0:
+                        cph=float(r['cost_usd'])/hours
+                    if hours and wear_mm and wear_mm>0:
+                        hs_mm=hours/wear_mm
+                except Exception:
+                    pass
 
                 date_text=format_date(z['event_date']) if z and z['event_date'] else '—'
                 if z and z['event_date']:
-                    raw=str(z['event_date']); parsed=None
-                    for f in ('%Y-%m-%d','%d/%m/%Y','%d-%m-%Y','%Y/%m/%d'):
+                    raw=str(z['event_date'])
+                    parsed=None
+                    for f in ('%Y-%m-%d','%d/%m/%Y'):
                         try:
-                            parsed=dt.datetime.strptime(raw[:10],f); break
-                        except Exception: pass
-                    if parsed and parsed.year==year_now: bajas_year+=1
+                            parsed=dt.datetime.strptime(raw[:10],f)
+                            break
+                        except Exception:
+                            pass
+                    if parsed and parsed.year==year_now:
+                        bajas_year+=1
+
+                reason=(str(z['reason']).strip().upper() if z and z['reason'] else 'SIN MOTIVO')
+                reason_counts[reason]=reason_counts.get(reason,0)+1
 
                 values=[
                     r['code'],r['serial'],r['brand'],r['size'],r['design'],r['compound'],r['tire_condition'],
-                    fmt(ext_f),fmt(inn_f),f'{rem_pct:.1f}%' if rem_pct is not None else '—',
-                    fmt(worked,0) if worked>0 else '—',f'$ {cph:.2f}/h' if cph is not None else '—',
-                    f'{hsmm:.2f}' if hsmm is not None else '—',date_text,
-                    z['equipment_code'] if z and z['equipment_code'] else '—',
-                    (f"P{z['position']}" if z and z['position'] not in (None,'') and not str(z['position']).upper().startswith('P') else (z['position'] if z else '—'))
+                    fmt(ext),fmt(inn),('—' if rem_pct is None else f'{rem_pct:.1f}%'),
+                    ('—' if hours is None else f'{hours:,.0f}'),
+                    ('—' if cph is None else f'$ {cph:.2f}/h'),
+                    ('—' if hs_mm is None else f'{hs_mm:.2f}'),
+                    date_text,z['equipment_code'] if z else '—',z['position'] if z else '—'
                 ]
-                rows_box.controls.append(ft.Container(
-                    content=ft.Row([cell(values[i],columns[i][1]) for i in range(len(columns))],spacing=0),
-                    bgcolor='#FFFFFF' if idx%2==0 else '#F8FAFC'
-                ))
+                table.rows.append(ft.DataRow(cells=[
+                    ft.DataCell(ft.Text(str(v if v not in (None,'') else '—'),size=10.2,no_wrap=True,
+                                        tooltip=str(v if v not in (None,'') else '—')))
+                    for v in values
+                ]))
 
             total=len(tires)
-            avg_hours=(sum(worked_values)/len(worked_values)) if worked_values else 0
-            summary.value=f'{total} neumático(s) fuera de servicio registrados en tires con estado BAJA'
+            avg_hours=(sum(worked_hours)/len(worked_hours)) if worked_hours else 0
+            top_reason='—'
+            if reason_counts:
+                top_reason=max(reason_counts.items(),key=lambda kv:(kv[1],kv[0]))[0]
+
+            summary.value=f'{total} neumático(s) registrados en la tabla tires con estado BAJA'
             kpis.controls=[
-                baja_metric('TOTAL FUERA DE SERVICIO',total,'Histórico registrado','#C81D2A'),
+                baja_metric('TOTAL DADOS DE BAJA',total,'Histórico registrado','#C81D2A'),
                 baja_metric('BAJAS DEL AÑO',bajas_year,f'Año {year_now}','#C81D2A'),
-                baja_metric('HORAS PROMEDIO AL RETIRO',f'{avg_hours:,.0f}' if worked_values else '—','Horas reales acumuladas del neumático'),
+                baja_metric('HORAS PROMEDIO AL RETIRO',f'{avg_hours:.0f}' if worked_hours else '—','Promedio de horas reales acumuladas'),
+                baja_metric('MOTIVO MÁS FRECUENTE',top_reason,'Según último evento BAJA','#C47A00'),
             ]
             page.update()
 
@@ -4891,8 +4888,8 @@ def main(page: ft.Page):
                 ft.Row([ft.Text('NEUMÁTICOS FUERA DE SERVICIO',size=16,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
                         ft.Container(expand=True),search],wrap=True),
                 summary,
-                table_view,
-            ],spacing=8),padding=12),
+                ft.Row([table],scroll=ft.ScrollMode.ALWAYS),
+            ],spacing=10)),
         ],scroll=ft.ScrollMode.AUTO,spacing=14)
         page.update()
 
