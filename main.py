@@ -4231,6 +4231,15 @@ def main(page: ft.Page):
 
         activities_31=[]; activities_32=[]; activities_33=[]; activities_34=[]; activities_35=[]
 
+        def fmt_tech(v):
+            try:
+                n=float(v)
+                return str(int(n)) if n.is_integer() else f'{n:.1f}'
+            except Exception:
+                return str(v or '')
+
+        # Cada actividad guarda: (texto de la acción, dato técnico a resaltar en rojo).
+
         # 3.1: cambio urgente cuando el menor RTD EXT/INT es <= 20 mm.
         for r in rows:
             vals=[]
@@ -4240,14 +4249,20 @@ def main(page: ft.Page):
                 except Exception: pass
             if vals and min(vals) <= 20:
                 eq=r['equipment_code'] or 'SIN EQUIPO'; pos=norm_pos(r['position']) or 'SIN POSICIÓN'
-                activities_31.append(f'CAMBIO DE NEUMÁTICO DE LA {pos} DEL EQUIPO {eq}.')
+                activities_31.append((
+                    f'CAMBIO DE NEUMÁTICO DE LA {pos} DEL EQUIPO {eq}.',
+                    f'{pos} RTD {fmt_tech(min(vals))} MM'
+                ))
 
         # 3.2: inversión cuando RTD INT - RTD EXT >= 10 mm.
         for r in rows:
             out,inn=latest_pair(r)
             if out is not None and inn is not None and (inn-out) >= 10:
                 eq=r['equipment_code'] or 'SIN EQUIPO'; pos=norm_pos(r['position']) or 'SIN POSICIÓN'
-                activities_32.append(f'INVERTIR EL NEUMÁTICO {pos} DEL EQUIPO {eq}.')
+                activities_32.append((
+                    f'INVERTIR EL NEUMÁTICO {pos} DEL EQUIPO {eq}.',
+                    f'EXT {fmt_tech(out)} / INT {fmt_tech(inn)} MM'
+                ))
 
         # Agrupar P1-P4 por equipo para 3.3 y 3.4.
         eqmap={}
@@ -4265,12 +4280,20 @@ def main(page: ft.Page):
                 if pa in pos and pb in pos:
                     a=latest_avg(pos[pa]); b=latest_avg(pos[pb])
                     if a is not None and b is not None and abs(a-b) > 7.5:
-                        activities_33.append(f'NIVELACIÓN DEL EJE {axle_name} DEL EQUIPO {code}.')
-            # 3.4: diferencia > 7.5 mm entre mayor y menor RTD de P1-P4.
+                        activities_33.append((
+                            f'NIVELACIÓN DEL EJE {axle_name} DEL EQUIPO {code}.',
+                            f'{pa} {fmt_tech(a)} / {pb} {fmt_tech(b)} MM'
+                        ))
+            # 3.4: conserva el criterio vigente; se añade la información técnica de ambos ejes.
             if all(p in pos for p in ('P1','P2','P3','P4')):
                 vals=[latest_avg(pos[p]) for p in ('P1','P2','P3','P4')]
                 if all(v is not None for v in vals) and (max(vals)-min(vals)) > 7.5:
-                    activities_34.append(f'NIVELACIÓN DE EJES DEL EQUIPO {code}.')
+                    eje_del=(vals[0]+vals[1])/2.0
+                    eje_post=(vals[2]+vals[3])/2.0
+                    activities_34.append((
+                        f'NIVELACIÓN DE EJES DEL EQUIPO {code}.',
+                        f'EJE DEL. {fmt_tech(eje_del)} / EJE POST. {fmt_tech(eje_post)} MM'
+                    ))
 
         # 3.5: nivelación de presión con los mismos parámetros del Módulo 2.
         # Solo genera actividad para >10 psi de diferencia o sobrepresión >20%.
@@ -4289,12 +4312,19 @@ def main(page: ft.Page):
             diff=abs(act-rec)
             if (act > rec * 1.20) or (diff > 10):
                 eq=r['equipment_code'] or 'SIN EQUIPO'; pos=norm_pos(r['position']) or 'SIN POSICIÓN'
-                activities_35.append(f'NIVELAR PRESIÓN DEL NEUMÁTICO {pos} DEL EQUIPO {eq}.')
+                activities_35.append((
+                    f'NIVELAR PRESIÓN DEL NEUMÁTICO {pos} DEL EQUIPO {eq}.',
+                    f'{pos} {fmt_tech(act)} PSI'
+                ))
 
         def section(title, items):
             controls=[ft.Text(title,size=15,weight=ft.FontWeight.BOLD,color=TEXT_MAIN)]
             if items:
-                controls += [ft.Text(f'- {x}',size=12,color=TEXT_MAIN) for x in items]
+                for action,detail in items:
+                    controls.append(ft.Row([
+                        ft.Text(f'- {action}',size=12,color=TEXT_MAIN),
+                        ft.Text(detail,size=12,color=ft.Colors.RED_700,weight=ft.FontWeight.BOLD),
+                    ],spacing=5,wrap=True))
             else:
                 controls.append(ft.Text('- SIN ACTIVIDADES DE MANTENIMIENTO PENDIENTES.',size=12,color=TEXT_MAIN))
             return ft.Column(controls,spacing=7)
