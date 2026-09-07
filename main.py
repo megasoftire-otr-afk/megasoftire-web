@@ -23,6 +23,7 @@ MODULES = [
     ('Administración de equipos', ft.Icons.ADMIN_PANEL_SETTINGS_OUTLINED),
     ('Registro maestro de neumáticos', ft.Icons.TABLE_CHART_OUTLINED),
     ('Reportes e indicadores', ft.Icons.ASSESSMENT_OUTLINED),
+    ('NFU / BAJA', ft.Icons.DELETE_FOREVER_OUTLINED),
 ]
 
 BG = '#F4F7FB'
@@ -4696,14 +4697,13 @@ def main(page: ft.Page):
         summary=ft.Text('',size=12,color=TEXT_MUTED)
 
         table=ft.DataTable(
-            heading_row_height=40,
+            heading_row_height=38,
             data_row_min_height=38,
             data_row_max_height=42,
-            column_spacing=20,
+            column_spacing=22,
             columns=[ft.DataColumn(ft.Text(x,size=10.5,weight=ft.FontWeight.BOLD)) for x in [
-                'Código','Serie','Marca','Medida','Diseño','TRA','Condición',
-                'RTD EXT','RTD INT','% REM','Horas recorrido','Costo x hrs','Hs/mm',
-                'Fecha de baja','Equipo','Posición'
+                'Código','Serie','Marca','Medida','Diseño','TRA','Condición','Equipo proc.','Pos.',
+                'Fecha baja','Motivo','RTD EXT','RTD INT','RTD mín.','Horas acum.','Costo/h','Observaciones'
             ]],
             rows=[]
         )
@@ -4730,29 +4730,6 @@ def main(page: ft.Page):
             except Exception:
                 return str(v)
 
-        def accumulated_tire_hours(tire_id):
-            """Suma las horas efectivamente trabajadas entre INST y DINS/BAJA."""
-            events=query("""
-                SELECT event_code,meter FROM occurrences
-                WHERE tire_id=? AND event_code IN ('INST','DINS','BAJA')
-                ORDER BY id
-            """,(tire_id,))
-            total=0.0
-            start_meter=None
-            for ev in events:
-                code=ev['event_code']
-                try:
-                    meter=float(ev['meter']) if ev['meter'] is not None else None
-                except Exception:
-                    meter=None
-                if code=='INST':
-                    start_meter=meter
-                elif code in ('DINS','BAJA') and start_meter is not None and meter is not None:
-                    if meter>=start_meter:
-                        total += meter-start_meter
-                    start_meter=None
-            return total if total>0 else None
-
         def refresh(e=None):
             term=(search.value or '').strip()
             sql="""
@@ -4778,7 +4755,7 @@ def main(page: ft.Page):
 
             year_now=(dt.datetime.utcnow()-dt.timedelta(hours=5)).year
             bajas_year=0
-            worked_hours=[]
+            meters=[]
             reason_counts={}
 
             for r in tires:
@@ -4794,44 +4771,24 @@ def main(page: ft.Page):
 
                 ext=(z['tread_outer'] if z and z['tread_outer'] is not None else r['tread_outer'])
                 inn=(z['tread_inner'] if z and z['tread_inner'] is not None else r['tread_inner'])
-                current_vals=[]
+                vals=[]
                 for x in (ext,inn):
                     try:
-                        if x is not None: current_vals.append(float(x))
+                        if x is not None: vals.append(float(x))
                     except Exception:
                         pass
-                current_min=min(current_vals) if current_vals else None
+                rtd=min(vals) if vals else None
 
-                original_ext=r['new_tread_outer'] if 'new_tread_outer' in r.keys() else None
-                original_int=r['new_tread_inner'] if 'new_tread_inner' in r.keys() else None
-                if original_ext is None: original_ext=r['new_tread']
-                if original_int is None: original_int=r['new_tread']
-                original_vals=[]
-                for x in (original_ext,original_int):
-                    try:
-                        if x is not None: original_vals.append(float(x))
-                    except Exception:
-                        pass
-                original_min=min(original_vals) if original_vals else None
-
-                rem_pct=None
-                wear_mm=None
-                if original_min not in (None,0) and current_min is not None:
-                    rem_pct=max(0.0,min(100.0,current_min/original_min*100.0))
-                    wear_mm=max(0.0,original_min-current_min)
-
-                hours=accumulated_tire_hours(r['id'])
-                if hours is not None:
-                    worked_hours.append(hours)
-                cph=None
-                hs_mm=None
+                meter=(z['meter'] if z and z['meter'] is not None else r['current_meter'])
                 try:
-                    if r['cost_usd'] is not None and hours and hours>0:
-                        cph=float(r['cost_usd'])/hours
-                    if hours and wear_mm and wear_mm>0:
-                        hs_mm=hours/wear_mm
+                    m=float(meter) if meter is not None else None
+                    if m is not None: meters.append(m)
                 except Exception:
-                    pass
+                    m=None
+                try:
+                    cph=float(r['cost_usd'])/m if r['cost_usd'] is not None and m and m>0 else None
+                except Exception:
+                    cph=None
 
                 date_text=format_date(z['event_date']) if z and z['event_date'] else '—'
                 if z and z['event_date']:
@@ -4851,20 +4808,17 @@ def main(page: ft.Page):
 
                 values=[
                     r['code'],r['serial'],r['brand'],r['size'],r['design'],r['compound'],r['tire_condition'],
-                    fmt(ext),fmt(inn),('—' if rem_pct is None else f'{rem_pct:.1f}%'),
-                    ('—' if hours is None else f'{hours:,.0f}'),
-                    ('—' if cph is None else f'$ {cph:.2f}/h'),
-                    ('—' if hs_mm is None else f'{hs_mm:.2f}'),
-                    date_text,z['equipment_code'] if z else '—',z['position'] if z else '—'
+                    z['equipment_code'] if z else '—',z['position'] if z else '—',date_text,reason,
+                    fmt(ext),fmt(inn),fmt(rtd),fmt(m,0),('—' if cph is None else f'{cph:.2f}'),
+                    z['notes'] if z and z['notes'] else '—'
                 ]
                 table.rows.append(ft.DataRow(cells=[
-                    ft.DataCell(ft.Text(str(v if v not in (None,'') else '—'),size=10.2,no_wrap=True,
-                                        tooltip=str(v if v not in (None,'') else '—')))
+                    ft.DataCell(ft.Text(str(v if v not in (None,'') else '—'),size=10.2,no_wrap=True,tooltip=str(v if v not in (None,'') else '—')))
                     for v in values
                 ]))
 
             total=len(tires)
-            avg_hours=(sum(worked_hours)/len(worked_hours)) if worked_hours else 0
+            avg_hours=(sum(meters)/len(meters)) if meters else 0
             top_reason='—'
             if reason_counts:
                 top_reason=max(reason_counts.items(),key=lambda kv:(kv[1],kv[0]))[0]
@@ -4873,7 +4827,7 @@ def main(page: ft.Page):
             kpis.controls=[
                 baja_metric('TOTAL DADOS DE BAJA',total,'Histórico registrado','#C81D2A'),
                 baja_metric('BAJAS DEL AÑO',bajas_year,f'Año {year_now}','#C81D2A'),
-                baja_metric('HORAS PROMEDIO AL RETIRO',f'{avg_hours:.0f}' if worked_hours else '—','Promedio de horas reales acumuladas'),
+                baja_metric('HORAS PROMEDIO AL RETIRO',f'{avg_hours:.0f}' if meters else '—','Promedio de lectura al evento BAJA'),
                 baja_metric('MOTIVO MÁS FRECUENTE',top_reason,'Según último evento BAJA','#C47A00'),
             ]
             page.update()
@@ -4884,12 +4838,207 @@ def main(page: ft.Page):
         content.content=ft.Column([
             page_title('5. NEUMÁTICOS FUERA DE SERVICIO','Neumáticos retirados definitivamente de operación'),
             kpis,
+        ],scroll=ft.ScrollMode.AUTO,spacing=14)
+        page.update()
+
+    def nfu_view():
+        """Módulo 10 · NFU / BAJA: cuadro independiente de neumáticos dados de baja."""
+        search=ft.TextField(
+            label='Buscar código / serie / marca / medida / equipo',
+            prefix_icon=ft.Icons.SEARCH,
+            width=390,
+            dense=True,
+        )
+        summary=ft.Text('',size=11,color=TEXT_MUTED)
+        rows_box=ft.Column(spacing=0)
+        kpis=ft.Row([],wrap=True,spacing=12,run_spacing=12)
+
+        columns=[
+            ('Código',78),('Serie',120),('Marca',100),('Medida',105),('Diseño',100),('TRA',80),
+            ('Condición',90),('RTD EXT',72),('RTD INT',72),('% REM',76),('Horas recorrido',105),
+            ('Costo x hrs',90),('Hs/mm',80),('Fecha de baja',105),('Equipo',82),('Posición',70)
+        ]
+
+        def cell(value,width,header=False):
+            value='—' if value in (None,'') else value
+            return ft.Container(
+                width=width,
+                padding=ft.Padding(left=5,top=8,right=5,bottom=8),
+                content=ft.Text(
+                    str(value),size=10,
+                    weight=ft.FontWeight.BOLD if header else ft.FontWeight.NORMAL,
+                    color=ft.Colors.WHITE if header else TEXT_MAIN,
+                    no_wrap=True,tooltip=str(value)
+                )
+            )
+
+        header=ft.Container(
+            bgcolor=NAV_BG,
+            border_radius=ft.BorderRadius.only(top_left=8,top_right=8),
+            content=ft.Row([cell(a,b,True) for a,b in columns],spacing=0)
+        )
+
+        def metric(title,value,subtitle='',value_color=TEXT_MAIN):
+            return ft.Container(
+                width=225,
+                padding=ft.Padding(left=18,top=14,right=18,bottom=14),
+                bgcolor='#FFFFFF',
+                border=ft.Border.all(1,'#E0E6EE'),
+                border_radius=12,
+                content=ft.Column([
+                    ft.Text(title,size=10.5,weight=ft.FontWeight.BOLD,color=TEXT_MUTED),
+                    ft.Text(str(value),size=25,weight=ft.FontWeight.BOLD,color=value_color),
+                    ft.Text(subtitle,size=9.5,color=TEXT_MUTED),
+                ],spacing=3)
+            )
+
+        def num(v):
+            try:
+                return float(v) if v is not None else None
+            except Exception:
+                return None
+
+        def fmt_mm(v):
+            v=num(v)
+            if v is None: return '—'
+            return f'{v:.0f}' if float(v).is_integer() else f'{v:.1f}'
+
+        def accumulated_tire_hours(tire_id):
+            """Suma horas reales de uso entre INST y DINS/BAJA; no usa el horómetro BAJA como vida total."""
+            events=query("""SELECT id,event_code,meter FROM occurrences
+                            WHERE tire_id=? AND event_code IN ('INST','DINS','BAJA')
+                            ORDER BY id""",(tire_id,))
+            total=0.0
+            start=None
+            for ev in events:
+                code=(ev['event_code'] or '').upper()
+                meter=num(ev['meter'])
+                if code=='INST':
+                    if meter is not None:
+                        start=meter
+                elif code in ('DINS','BAJA') and start is not None and meter is not None:
+                    diff=meter-start
+                    if diff>=0:
+                        total += diff
+                    start=None
+            return total if total>0 else None
+
+        def parse_year(raw):
+            if not raw: return None
+            s=str(raw)
+            for f in ('%Y-%m-%d','%d/%m/%Y'):
+                try:
+                    return dt.datetime.strptime(s[:10],f).year
+                except Exception:
+                    pass
+            return None
+
+        def refresh(e=None):
+            term=(search.value or '').strip()
+            sql="""SELECT t.* FROM tires t WHERE t.status='BAJA'"""
+            params=[]
+            if term:
+                q=f'%{term}%'
+                sql += """ AND (
+                    t.code LIKE ? OR t.serial LIKE ? OR t.brand LIKE ? OR t.size LIKE ? OR t.design LIKE ? OR
+                    EXISTS(SELECT 1 FROM occurrences ox LEFT JOIN equipment ex ON ex.id=ox.equipment_id
+                           WHERE ox.tire_id=t.id AND ox.event_code='BAJA' AND COALESCE(ex.code,'') LIKE ?)
+                )"""
+                params=[q,q,q,q,q,q]
+            sql += ' ORDER BY t.code'
+            tires=query(sql,tuple(params))
+
+            rows_box.controls=[]
+            year_now=(dt.datetime.utcnow()-dt.timedelta(hours=5)).year
+            bajas_year=0
+            hour_values=[]
+            reason_counts={}
+
+            for idx,r in enumerate(tires):
+                last=query("""SELECT o.event_date,o.equipment_id,o.position,o.meter,
+                                     o.tread_outer,o.tread_inner,o.reason,e.code equipment_code
+                              FROM occurrences o
+                              LEFT JOIN equipment e ON e.id=o.equipment_id
+                              WHERE o.tire_id=? AND o.event_code='BAJA'
+                              ORDER BY o.id DESC LIMIT 1""",(r['id'],))
+                z=last[0] if last else None
+
+                ext=(z['tread_outer'] if z and z['tread_outer'] is not None else r['tread_outer'])
+                inn=(z['tread_inner'] if z and z['tread_inner'] is not None else r['tread_inner'])
+                ext_n=num(ext); inn_n=num(inn)
+                current_vals=[v for v in (ext_n,inn_n) if v is not None]
+                current_min=min(current_vals) if current_vals else None
+
+                original_vals=[]
+                for key in ('new_tread_outer','new_tread_inner','new_tread'):
+                    try:
+                        v=num(r[key])
+                    except Exception:
+                        v=None
+                    if v is not None and v>0:
+                        original_vals.append(v)
+                original_min=min(original_vals) if original_vals else None
+
+                rem=(current_min/original_min*100.0) if current_min is not None and original_min else None
+                if rem is not None:
+                    rem=max(0.0,min(100.0,rem))
+
+                hours=accumulated_tire_hours(r['id'])
+                if hours is not None:
+                    hour_values.append(hours)
+                cost=num(r['cost_usd']) if 'cost_usd' in r.keys() else None
+                cph=(cost/hours) if cost is not None and hours and hours>0 else None
+                wear=(original_min-current_min) if original_min is not None and current_min is not None else None
+                hsmm=(hours/wear) if hours and wear is not None and wear>0 else None
+
+                baja_date=format_date(z['event_date']) if z and z['event_date'] else '—'
+                if z and parse_year(z['event_date'])==year_now:
+                    bajas_year+=1
+                reason=(str(z['reason']).strip().upper() if z and z['reason'] else 'SIN MOTIVO')
+                reason_counts[reason]=reason_counts.get(reason,0)+1
+
+                values=[
+                    r['code'],r['serial'],r['brand'],r['size'],r['design'],r['compound'],r['tire_condition'],
+                    fmt_mm(ext_n),fmt_mm(inn_n),('—' if rem is None else f'{rem:.1f}%'),
+                    ('—' if hours is None else f'{hours:,.0f} h'),
+                    ('—' if cph is None else f'${cph:.2f}/h'),
+                    ('—' if hsmm is None else f'{hsmm:.1f} h/mm'),
+                    baja_date,
+                    (z['equipment_code'] if z and z['equipment_code'] else '—'),
+                    (z['position'] if z and z['position'] else '—'),
+                ]
+                row_controls=[cell(values[i],columns[i][1]) for i in range(len(columns))]
+                rows_box.controls.append(ft.Container(
+                    bgcolor='#FFFFFF' if idx%2==0 else '#F8FAFC',
+                    border=ft.Border(bottom=ft.BorderSide(1,'#E5E9EF')),
+                    content=ft.Row(row_controls,spacing=0)
+                ))
+
+            total=len(tires)
+            avg=(sum(hour_values)/len(hour_values)) if hour_values else None
+            top_reason='—'
+            if reason_counts:
+                top_reason=max(reason_counts.items(),key=lambda kv:(kv[1],kv[0]))[0]
+
+            kpis.controls=[
+                metric('TOTAL DE BAJAS',total,'Neumáticos NFU registrados','#C81D2A'),
+                metric('BAJAS DEL AÑO',bajas_year,f'Año {year_now}','#C81D2A'),
+                metric('HORAS PROMEDIO AL RETIRO','—' if avg is None else f'{avg:,.0f} h','Horas reales acumuladas'),
+                metric('MOTIVO MÁS FRECUENTE',top_reason,'Según último evento BAJA','#C47A00'),
+            ]
+            summary.value=f'Total de registros: {total}'
+            page.update()
+
+        search.on_change=refresh
+        refresh()
+        content.content=ft.Column([
+            page_title('10. NFU / BAJA','Neumáticos Fuera de Uso · registro histórico de bajas'),
+            ft.Row([search,ft.Container(expand=True),summary],vertical_alignment=ft.CrossAxisAlignment.CENTER),
+            kpis,
             card(ft.Column([
-                ft.Row([ft.Text('NEUMÁTICOS FUERA DE SERVICIO',size=16,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
-                        ft.Container(expand=True),search],wrap=True),
-                summary,
-                ft.Row([table],scroll=ft.ScrollMode.ALWAYS),
-            ],spacing=10)),
+                ft.Text('LISTADO DE NEUMÁTICOS DADOS DE BAJA',size=16,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
+                ft.Row([ft.Column([header,rows_box],spacing=0)],scroll=ft.ScrollMode.ALWAYS),
+            ],spacing=10))
         ],scroll=ft.ScrollMode.AUTO,spacing=14)
         page.update()
 
@@ -4918,6 +5067,7 @@ def main(page: ft.Page):
         elif idx==7: equipment_view()
         elif idx==8: tires_view()
         elif idx==9: reports_view()
+        elif idx==10: nfu_view()
 
     def build_shell():
         nonlocal nav
