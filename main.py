@@ -4515,6 +4515,20 @@ def main(page: ft.Page):
             content=ft.Row([cell(a,b,True) for a,b in columns],spacing=0),
             bgcolor='#EEF2F7',border=ft.Border(bottom=ft.BorderSide(1,'#D5DCE5')))
 
+        def standby_metric(title, value, subtitle, value_color=TEXT_MAIN):
+            return ft.Container(
+                width=225,
+                padding=ft.Padding(left=18,top=14,right=18,bottom=14),
+                bgcolor='#FFFFFF',
+                border=ft.Border.all(1,'#E0E6EE'),
+                border_radius=12,
+                content=ft.Column([
+                    ft.Text(title,size=10.5,weight=ft.FontWeight.BOLD,color=TEXT_MUTED),
+                    ft.Text(str(value),size=25,weight=ft.FontWeight.BOLD,color=value_color),
+                    ft.Text(subtitle,size=9.5,color=TEXT_MUTED),
+                ],spacing=3)
+            )
+
         def fmt(v,dec=1):
             if v is None: return '—'
             try:
@@ -4576,10 +4590,10 @@ def main(page: ft.Page):
             total=len(tires)
             summary.value=f'{total} neumático(s) en Retén / Stand-by'
             kpis.controls=[
-                top_metric('EN STAND-BY',total,'Neumáticos disponibles / retén'),
-                top_metric('APTOS PARA INSTALAR',apt,'Con remanente sobre retiro','#2E9B45'),
-                top_metric('ÚLTIMO EVENTO REPA',repair,'Reparación como último evento','#C47A00'),
-                top_metric('EVALUAR PARA BAJA',low,'RTD en profundidad de retiro','#C81D2A'),
+                standby_metric('EN STAND-BY',total,'Neumáticos disponibles / retén'),
+                standby_metric('APTOS PARA INSTALAR',apt,'Con remanente sobre retiro','#2E9B45'),
+                standby_metric('ÚLTIMO EVENTO REPA',repair,'Reparación como último evento','#C47A00'),
+                standby_metric('EVALUAR PARA BAJA',low,'RTD en profundidad de retiro','#C81D2A'),
             ]
             page.update()
 
