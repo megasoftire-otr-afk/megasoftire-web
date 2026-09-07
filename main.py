@@ -18,7 +18,7 @@ MODULES = [
     ('Neumáticos en servicio', ft.Icons.DIRECTIONS_CAR),
     ('Programa de mantenimiento', ft.Icons.BUILD_CIRCLE_OUTLINED),
     ('Retén / Stand-by', ft.Icons.INVENTORY_2_OUTLINED),
-    ('Neumáticos fuera de servicio / Baja', ft.Icons.DELETE_OUTLINE),
+    ('Neumáticos fuera de servicio', ft.Icons.DELETE_OUTLINE),
     ('Inventarios y consumos', ft.Icons.WAREHOUSE_OUTLINED),
     ('Administración de equipos', ft.Icons.ADMIN_PANEL_SETTINGS_OUTLINED),
     ('Registro maestro de neumáticos', ft.Icons.TABLE_CHART_OUTLINED),
@@ -4687,7 +4687,7 @@ def main(page: ft.Page):
         page.update()
 
     def baja_history_view():
-        """Módulo 5 · Neumáticos fuera de servicio / Baja."""
+        """Módulo 5 · Neumáticos fuera de servicio."""
         search=ft.TextField(
             label='Buscar código / serie / marca / medida / equipo / motivo',
             prefix_icon=ft.Icons.SEARCH,
@@ -4835,12 +4835,8 @@ def main(page: ft.Page):
         kpis=ft.Row([],wrap=True,spacing=12,run_spacing=12)
         refresh()
         content.content=ft.Column([
-            page_title('5. NEUMÁTICOS FUERA DE SERVICIO / BAJA','Historial de neumáticos dados de baja'),
+            page_title('5. NEUMÁTICOS FUERA DE SERVICIO','Neumáticos retirados definitivamente de operación'),
             kpis,
-            ft.Row([ft.Text('HISTORIAL DE NEUMÁTICOS DADOS DE BAJA',size=16,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),ft.Container(expand=True),search],wrap=True),
-            summary,
-            ft.Row([table],scroll=ft.ScrollMode.AUTO),
-            ft.Text('Fuente principal: tabla tires filtrada por status = BAJA. Fecha, motivo, equipo y posición se complementan con el último evento BAJA.',size=10,color=TEXT_MUTED,italic=True),
         ],scroll=ft.ScrollMode.AUTO,spacing=14)
         page.update()
 
