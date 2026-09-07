@@ -2,6 +2,8 @@
 import datetime as dt
 import os
 import hashlib
+import base64
+import textwrap
 import flet as ft
 from database import init_db, query, execute, authenticate
 
@@ -4329,9 +4331,110 @@ def main(page: ft.Page):
                 controls.append(ft.Text('- SIN ACTIVIDADES DE MANTENIMIENTO PENDIENTES.',size=12,color=TEXT_MAIN))
             return ft.Column(controls,spacing=7)
 
+        report_date=dt.date.today().strftime('%d/%m/%Y')
+
+        def build_pdf_bytes():
+            """Genera un PDF simple multipágina sin dependencias externas."""
+            sections=[
+                ('3.1 EVALUACIÓN DE REMANENTE',activities_31),
+                ('3.2 DIFERENCIA DE RTD ENTRE HOMBROS',activities_32),
+                ('3.3 DIFERENCIA DE RTD DEL MISMO EJE',activities_33),
+                ('3.4 DIFERENCIA ENTRE EJES POR EQUIPO',activities_34),
+                ('3.5 NIVELACIÓN DE PRESIÓN',activities_35),
+            ]
+
+            def pdf_escape(txt):
+                txt=str(txt or '').replace('–','-').replace('—','-')
+                raw=txt.encode('cp1252','replace').decode('latin-1')
+                return raw.replace('\\','\\\\').replace('(','\\(').replace(')','\\)')
+
+            pages=[]; cmds=[]; y=795
+            def new_page():
+                nonlocal cmds,y
+                if cmds:
+                    pages.append('\n'.join(cmds))
+                cmds=[]; y=795
+                cmds.append('BT /F1 17 Tf 0 0 0 rg 45 795 Td ('+pdf_escape('PROGRAMA DE MANTENIMIENTO DE NEUMÁTICOS')+') Tj ET')
+                cmds.append('BT /F1 10 Tf 0 0 0 rg 45 774 Td ('+pdf_escape('Fecha de visualización: '+report_date)+') Tj ET')
+                cmds.append('0.75 w 45 762 m 550 762 l S')
+                y=742
+
+            def ensure(space=28):
+                nonlocal y
+                if y-space < 45:
+                    new_page()
+
+            def put(text,size=10,bold=False,red=False,indent=0,leading=14):
+                nonlocal y
+                ensure(leading+5)
+                font='/F2' if bold else '/F1'
+                color='0.80 0.08 0.10 rg' if red else '0 0 0 rg'
+                cmds.append(f'BT {font} {size} Tf {color} {45+indent} {y} Td ('+pdf_escape(text)+') Tj ET')
+                y-=leading
+
+            new_page()
+            for title,items in sections:
+                ensure(42)
+                put(title,11,bold=True,leading=18)
+                if not items:
+                    put('- SIN ACTIVIDADES DE MANTENIMIENTO PENDIENTES.',9,leading=16)
+                else:
+                    for action,detail in items:
+                        action_text='- '+action
+                        wrapped=textwrap.wrap(action_text,width=88,break_long_words=False,break_on_hyphens=False) or [action_text]
+                        for i,line in enumerate(wrapped):
+                            put(line,9,indent=0 if i==0 else 10,leading=13)
+                        put(detail,9,bold=True,red=True,indent=15,leading=15)
+                y-=7
+                ensure(15)
+                cmds.append(f'0.85 G 45 {y+3} m 550 {y+3} l S')
+                y-=8
+            if cmds:
+                pages.append('\n'.join(cmds))
+
+            objects=[]
+            objects.append(b'<< /Type /Catalog /Pages 2 0 R >>')
+            # Pages object is filled after page objects are known.
+            objects.append(b'')
+            objects.append(b'<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>')
+            objects.append(b'<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>')
+            page_ids=[]
+            for content_stream in pages:
+                stream=content_stream.encode('latin-1','replace')
+                content_id=len(objects)+1
+                objects.append(b'<< /Length '+str(len(stream)).encode()+b' >>\nstream\n'+stream+b'\nendstream')
+                page_id=len(objects)+1
+                page_ids.append(page_id)
+                objects.append((f'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] '
+                                f'/Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> '
+                                f'/Contents {content_id} 0 R >>').encode('ascii'))
+            kids=' '.join(f'{pid} 0 R' for pid in page_ids)
+            objects[1]=f'<< /Type /Pages /Kids [{kids}] /Count {len(page_ids)} >>'.encode('ascii')
+
+            out=bytearray(b'%PDF-1.4\n%\xe2\xe3\xcf\xd3\n')
+            offsets=[0]
+            for i,obj in enumerate(objects,1):
+                offsets.append(len(out))
+                out.extend(f'{i} 0 obj\n'.encode('ascii')); out.extend(obj); out.extend(b'\nendobj\n')
+            xref=len(out)
+            out.extend(f'xref\n0 {len(objects)+1}\n'.encode('ascii'))
+            out.extend(b'0000000000 65535 f \n')
+            for off in offsets[1:]:
+                out.extend(f'{off:010d} 00000 n \n'.encode('ascii'))
+            out.extend((f'trailer\n<< /Size {len(objects)+1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF').encode('ascii'))
+            return bytes(out)
+
+        def download_pdf(e):
+            try:
+                pdf_bytes=build_pdf_bytes()
+                uri='data:application/pdf;base64,'+base64.b64encode(pdf_bytes).decode('ascii')
+                page.launch_url(uri)
+            except Exception as ex:
+                snack(f'No se pudo generar el PDF: {ex}',True)
+
         content.content=ft.Column([
-            page_title('3. Programa de mantenimiento · Reporte final de mantenimiento',
-                       'Actividades generadas automáticamente a partir de las condiciones de emergencia'),
+            page_title('PROGRAMA DE MANTENIMIENTO DE NEUMÁTICOS',
+                       f'Fecha de visualización: {report_date} · Actividades generadas automáticamente a partir de condiciones de emergencia'),
             ft.Row([
                 ft.OutlinedButton('3.1 Evaluación de remanente',on_click=lambda e:maintenance_view()),
                 ft.OutlinedButton('3.2 Diferencia RTD entre hombros',on_click=lambda e:maintenance_shoulders_view()),
@@ -4339,6 +4442,7 @@ def main(page: ft.Page):
                 ft.OutlinedButton('3.4 Diferencia entre ejes por equipo',on_click=lambda e:maintenance_four_positions_view()),
                 ft.OutlinedButton('3.5 Nivelación de presión',on_click=lambda e:maintenance_pressure_view()),
                 ft.ElevatedButton('Reporte final de mantenimiento',disabled=True),
+                ft.OutlinedButton('DESCARGAR PDF',icon=ft.Icons.DOWNLOAD_OUTLINED,on_click=download_pdf),
             ],spacing=10,wrap=True),
             card(ft.Column([
                 section('3.1 EVALUACIÓN DE REMANENTE',activities_31),
@@ -4397,7 +4501,7 @@ def main(page: ft.Page):
         if idx==0: dashboard()
         elif idx==1: movement_view()
         elif idx==2: service_view()
-        elif idx==3: maintenance_view()
+        elif idx==3: maintenance_final_report_view()
         elif idx==4: tires_view('STAND-BY')
         elif idx==5: tires_view('BAJA')
         elif idx==6: placeholder('Inventarios y consumos','Existencias, costos, consumos y remanentes')
