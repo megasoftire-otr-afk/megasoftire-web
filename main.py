@@ -4612,6 +4612,188 @@ def main(page: ft.Page):
         ],scroll=ft.ScrollMode.AUTO,spacing=16)
         page.update()
 
+    def baja_history_view():
+        """Módulo 5 · Fuera de servicio / baja: historial de neumáticos dados de baja."""
+        search=ft.TextField(
+            label='Buscar código / serie / marca / medida / equipo / motivo',
+            prefix_icon=ft.Icons.SEARCH,
+            width=420
+        )
+        rows_box=ft.Column(spacing=0)
+        summary=ft.Text('',size=12,color=TEXT_MUTED)
+
+        columns=[
+            ('Código',80),('Serie',115),('Marca',100),('Medida',95),('Diseño',105),('TRA',85),
+            ('Condición',95),('Equipo proc.',105),('Pos.',55),('Fecha baja',95),('Motivo',85),
+            ('RTD EXT',70),('RTD INT',70),('RTD mín.',70),('Horas acum.',90),('Costo/h',75),
+            ('Observaciones',260)
+        ]
+
+        def cell(value,width,header=False):
+            return ft.Container(
+                content=ft.Text(
+                    str(value if value not in (None,'') else '—'),
+                    size=10.3,
+                    weight=ft.FontWeight.BOLD if header else ft.FontWeight.NORMAL,
+                    color=TEXT_MAIN,
+                    no_wrap=True,
+                    tooltip=str(value if value not in (None,'') else '—')
+                ),
+                width=width,
+                padding=ft.Padding(left=5,top=8,right=5,bottom=8)
+            )
+
+        header=ft.Container(
+            content=ft.Row([cell(a,b,True) for a,b in columns],spacing=0),
+            bgcolor='#EEF2F7',
+            border=ft.Border(bottom=ft.BorderSide(1,'#D5DCE5'))
+        )
+
+        def baja_metric(title,value,subtitle,value_color=TEXT_MAIN):
+            return ft.Container(
+                width=225,
+                padding=ft.Padding(left=18,top=14,right=18,bottom=14),
+                bgcolor='#FFFFFF',
+                border=ft.Border.all(1,'#E0E6EE'),
+                border_radius=12,
+                content=ft.Column([
+                    ft.Text(title,size=10.5,weight=ft.FontWeight.BOLD,color=TEXT_MUTED),
+                    ft.Text(str(value),size=25,weight=ft.FontWeight.BOLD,color=value_color),
+                    ft.Text(subtitle,size=9.5,color=TEXT_MUTED),
+                ],spacing=3)
+            )
+
+        def fmt(v,dec=1):
+            if v is None: return '—'
+            try:
+                f=float(v)
+                return str(int(f)) if f.is_integer() else f'{f:.{dec}f}'
+            except Exception:
+                return str(v)
+
+        def refresh(e=None):
+            term=(search.value or '').strip()
+            sql="""
+                SELECT t.*
+                FROM tires t
+                WHERE t.status='BAJA'
+            """
+            params=[]
+            if term:
+                q=f'%{term}%'
+                sql += """ AND (
+                    t.code LIKE ? OR t.serial LIKE ? OR t.brand LIKE ? OR t.size LIKE ? OR
+                    t.design LIKE ? OR EXISTS(
+                        SELECT 1 FROM occurrences ox LEFT JOIN equipment ex ON ex.id=ox.equipment_id
+                        WHERE ox.tire_id=t.id AND ox.event_code='BAJA'
+                          AND (COALESCE(ex.code,'') LIKE ? OR COALESCE(ox.reason,'') LIKE ?)
+                    )
+                )"""
+                params=[q,q,q,q,q,q,q]
+            sql += ' ORDER BY t.code'
+            tires=query(sql,tuple(params))
+            rows_box.controls=[]
+
+            year_now=(dt.datetime.utcnow()-dt.timedelta(hours=5)).year
+            bajas_year=0
+            meters=[]
+            reason_counts={}
+
+            for idx,r in enumerate(tires):
+                baja=query("""
+                    SELECT o.event_date,o.event_code,o.equipment_id,o.position,o.meter,
+                           o.tread_outer,o.tread_inner,o.reason,o.location,o.notes,e.code equipment_code
+                    FROM occurrences o
+                    LEFT JOIN equipment e ON e.id=o.equipment_id
+                    WHERE o.tire_id=? AND o.event_code='BAJA'
+                    ORDER BY o.id DESC LIMIT 1
+                """,(r['id'],))
+                z=baja[0] if baja else None
+
+                ext=(z['tread_outer'] if z and z['tread_outer'] is not None else r['tread_outer'])
+                inn=(z['tread_inner'] if z and z['tread_inner'] is not None else r['tread_inner'])
+                vals=[]
+                for x in (ext,inn):
+                    try:
+                        if x is not None: vals.append(float(x))
+                    except Exception: pass
+                rtd=min(vals) if vals else None
+
+                meter=(z['meter'] if z and z['meter'] is not None else r['current_meter'])
+                try:
+                    m=float(meter) if meter is not None else None
+                    if m is not None: meters.append(m)
+                except Exception:
+                    m=None
+                try:
+                    cph=float(r['cost_usd'])/m if r['cost_usd'] is not None and m and m>0 else None
+                except Exception:
+                    cph=None
+
+                date_text=format_date(z['event_date']) if z and z['event_date'] else '—'
+                if z and z['event_date']:
+                    raw=str(z['event_date'])
+                    parsed=None
+                    for f in ('%Y-%m-%d','%d/%m/%Y'):
+                        try:
+                            parsed=dt.datetime.strptime(raw[:10],f)
+                            break
+                        except Exception:
+                            pass
+                    if parsed and parsed.year==year_now:
+                        bajas_year+=1
+
+                reason=(str(z['reason']).strip().upper() if z and z['reason'] else 'SIN MOTIVO')
+                reason_counts[reason]=reason_counts.get(reason,0)+1
+
+                values=[
+                    r['code'],r['serial'],r['brand'],r['size'],r['design'],r['compound'],r['tire_condition'],
+                    z['equipment_code'] if z else '—',z['position'] if z else '—',date_text,reason,
+                    fmt(ext),fmt(inn),fmt(rtd),fmt(m,0),('—' if cph is None else f'{cph:.2f}'),
+                    z['notes'] if z and z['notes'] else '—'
+                ]
+                rows_box.controls.append(ft.Container(
+                    content=ft.Row([cell(values[i],columns[i][1]) for i in range(len(values))],spacing=0),
+                    bgcolor='#FFFFFF' if idx%2==0 else '#F8FAFC',
+                    border=ft.Border(bottom=ft.BorderSide(1,'#E5E9EF'))
+                ))
+
+            total=len(tires)
+            avg_hours=(sum(meters)/len(meters)) if meters else 0
+            top_reason='—'
+            if reason_counts:
+                top_reason=max(reason_counts.items(),key=lambda kv:(kv[1],kv[0]))[0]
+
+            summary.value=f'{total} neumático(s) registrados como Fuera de servicio / baja'
+            kpis.controls=[
+                baja_metric('TOTAL DADOS DE BAJA',total,'Histórico registrado','#C81D2A'),
+                baja_metric('BAJAS DEL AÑO',bajas_year,f'Año {year_now}','#C81D2A'),
+                baja_metric('HORAS PROMEDIO AL RETIRO',f'{avg_hours:.0f}' if meters else '—','Promedio de lectura al evento BAJA'),
+                baja_metric('MOTIVO MÁS FRECUENTE',top_reason,'Según último evento BAJA','#C47A00'),
+            ]
+            page.update()
+
+        search.on_change=refresh
+        kpis=ft.Row([],wrap=True,spacing=12,run_spacing=12)
+        refresh()
+        content.content=ft.Column([
+            page_title('5. FUERA DE SERVICIO / BAJA','Historial de neumáticos dados de baja'),
+            kpis,
+            card(ft.Column([
+                ft.Row([
+                    ft.Text('HISTORIAL DE NEUMÁTICOS DADOS DE BAJA',size=16,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
+                    ft.Container(expand=True),search
+                ],wrap=True),
+                summary,
+                ft.Row(
+                    [ft.Column([header,rows_box],spacing=0)],
+                    scroll=ft.ScrollMode.ALWAYS
+                ),
+                ft.Text('Consulta histórica. Los neumáticos en estado BAJA no pueden volver a INST, INVE, REPA ni DINS.',size=10,color=TEXT_MUTED,italic=True),
+            ],spacing=10))
+        ],scroll=ft.ScrollMode.AUTO,spacing=16)
+        page.update()
+
     def placeholder(title,desc):
         content.content=ft.Column([
             page_title(title,desc),
@@ -4632,7 +4814,7 @@ def main(page: ft.Page):
         elif idx==2: service_view()
         elif idx==3: maintenance_final_report_view()
         elif idx==4: standby_view()
-        elif idx==5: tires_view('BAJA')
+        elif idx==5: baja_history_view()
         elif idx==6: placeholder('Inventarios y consumos','Existencias, costos, consumos y remanentes')
         elif idx==7: equipment_view()
         elif idx==8: tires_view()
