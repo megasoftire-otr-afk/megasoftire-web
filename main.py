@@ -22,7 +22,7 @@ MODULES = [
     ('Inventarios y consumos', ft.Icons.WAREHOUSE_OUTLINED),
     ('Administración de equipos', ft.Icons.ADMIN_PANEL_SETTINGS_OUTLINED),
     ('Registro maestro de neumáticos', ft.Icons.TABLE_CHART_OUTLINED),
-    ('Reportes Excel', ft.Icons.ASSESSMENT_OUTLINED),
+    ('Reportes e indicadores', ft.Icons.ASSESSMENT_OUTLINED),
 ]
 
 BG = '#F4F7FB'
@@ -4468,27 +4468,101 @@ def main(page: ft.Page):
         page.update()
 
     def reports_view():
-        reports=[
-            ('Neumáticos de baja anual','Bajas por periodo y motivo'),
-            ('Remanente, rendimiento y proyección','Profundidad, horas y vida estimada'),
-            ('Nivelación de ejes','Comparación de neumáticos por posición'),
-            ('Reporte general','Estado consolidado de la flota'),
-            ('Costo acumulado','Reparaciones / reencauche / operación'),
-            ('Resumen por equipo','Situación de neumáticos por unidad'),
-            ('Costo actual operativas / repuestos','Valorización de inventario'),
-            ('Proyección de cambios','Próximos cambios estimados'),
-        ]
-        tiles=[]
-        for title,desc in reports:
-            tiles.append(card(ft.Row([
-                ft.Icon(ft.Icons.DESCRIPTION_OUTLINED,color=NAV_ACCENT),
-                ft.Column([ft.Text(title,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),ft.Text(desc,size=11,color=TEXT_MUTED)],expand=True),
-                ft.OutlinedButton('Preparar',icon=ft.Icons.DOWNLOAD_OUTLINED,disabled=True)
-            ]),width=520))
+        """Módulo 9 · Reportes e indicadores: rendimiento histórico de neumáticos dados de baja."""
+        mode=ft.Dropdown(
+            label='Analizar por', width=210, value='MARCA',
+            options=[ft.dropdown.Option('MARCA','Marca'),ft.dropdown.Option('MEDIDA','Medida'),ft.dropdown.Option('EQUIPO','Equipo')]
+        )
+        size_filter=ft.Dropdown(label='Medida',width=220,value='TODAS')
+        chart_box=ft.Column(spacing=8)
+        stats=ft.Row([],wrap=True,spacing=12,run_spacing=12)
+        detail_box=ft.Column(spacing=0)
+
+        def metric(title,value,subtitle=''):
+            return ft.Container(width=220,padding=ft.Padding(left=18,top=14,right=18,bottom=14),bgcolor='#FFFFFF',
+                border=ft.Border.all(1,'#E0E6EE'),border_radius=12,content=ft.Column([
+                    ft.Text(title,size=10.5,weight=ft.FontWeight.BOLD,color=TEXT_MUTED),
+                    ft.Text(str(value),size=24,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
+                    ft.Text(subtitle,size=9.5,color=TEXT_MUTED)],spacing=3))
+
+        def baja_rows():
+            return query("""SELECT t.id,t.code,t.serial,t.brand,t.size,t.design,
+                         o.meter AS hours,o.equipment_id,e.code AS equipment_code,o.position,o.event_date
+                         FROM tires t
+                         JOIN occurrences o ON o.id=(SELECT oo.id FROM occurrences oo
+                              WHERE oo.tire_id=t.id AND oo.event_code='BAJA' ORDER BY oo.id DESC LIMIT 1)
+                         LEFT JOIN equipment e ON e.id=o.equipment_id
+                         WHERE t.status='BAJA' ORDER BY o.id""")
+
+        def bar_chart(groups):
+            if not groups:
+                return ft.Text('Sin neumáticos dados de baja para los filtros seleccionados.',color=TEXT_MUTED)
+            max_avg=max(v['avg'] for v in groups.values()) or 1
+            controls=[]
+            for label,v in sorted(groups.items(), key=lambda kv: kv[1]['avg'], reverse=True):
+                ratio=max(0.02,min(1.0,v['avg']/max_avg))
+                controls.append(ft.Row([
+                    ft.Text(label,width=150,size=10.5,weight=ft.FontWeight.BOLD,color=TEXT_MAIN,no_wrap=True),
+                    ft.Stack([ft.Container(width=520,height=22,bgcolor='#E9EEF5',border_radius=4),
+                              ft.Container(width=max(8,520*ratio),height=22,bgcolor=NAV_ACCENT,border_radius=4)],width=520,height=22),
+                    ft.Text(f"{v['avg']:,.0f} h",width=85,size=10.5,weight=ft.FontWeight.BOLD,color=TEXT_MAIN,text_align=ft.TextAlign.RIGHT),
+                    ft.Text(f"({v['count']} neum.)",width=85,size=9.5,color=TEXT_MUTED)
+                ],spacing=8))
+            return ft.Column(controls,spacing=8)
+
+        def refresh(e=None):
+            rows=list(baja_rows())
+            measures=sorted({str(r['size']).strip() for r in rows if r['size']})
+            current=size_filter.value or 'TODAS'
+            size_filter.options=[ft.dropdown.Option('TODAS','Todas las medidas')]+[ft.dropdown.Option(x,x) for x in measures]
+            if current not in ['TODAS']+measures: current='TODAS'
+            size_filter.value=current
+            if current!='TODAS': rows=[r for r in rows if str(r['size']).strip()==current]
+            valid=[]
+            for r in rows:
+                try:
+                    h=float(r['hours'])
+                    if h>=0: valid.append((r,h))
+                except Exception: pass
+            vals=[h for _,h in valid]
+            stats.controls=[
+                metric('NEUMÁTICOS EVALUADOS',len(valid),'Solo neumáticos con evento BAJA'),
+                metric('PROMEDIO DE HORAS',f"{(sum(vals)/len(vals) if vals else 0):,.0f} h",'Vida registrada al evento BAJA'),
+                metric('MÁXIMA DURACIÓN',f"{(max(vals) if vals else 0):,.0f} h",'Mayor registro histórico'),
+                metric('MÍNIMA DURACIÓN',f"{(min(vals) if vals else 0):,.0f} h",'Menor registro histórico'),
+            ]
+            key=mode.value or 'MARCA'
+            groups={}
+            for r,h in valid:
+                if key=='MARCA': label=(r['brand'] or 'SIN MARCA').strip()
+                elif key=='MEDIDA': label=(r['size'] or 'SIN MEDIDA').strip()
+                else: label=(r['equipment_code'] or 'SIN EQUIPO').strip()
+                g=groups.setdefault(label,{'hours':[],'count':0,'avg':0})
+                g['hours'].append(h); g['count']+=1
+            for g in groups.values(): g['avg']=sum(g['hours'])/len(g['hours']) if g['hours'] else 0
+            title={'MARCA':'PROMEDIO DE HORAS POR MARCA','MEDIDA':'PROMEDIO DE HORAS POR MEDIDA','EQUIPO':'PROMEDIO DE HORAS POR EQUIPO'}[key]
+            chart_box.controls=[ft.Text(title,size=16,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
+                                ft.Text('Cada barra representa el promedio histórico de los neumáticos dados de baja.',size=10.5,color=TEXT_MUTED),
+                                bar_chart(groups)]
+            detail_box.controls=[]
+            hdr=['Código','Marca','Medida','Equipo','Posición','Horas','Fecha baja']
+            widths=[90,120,115,100,75,100,105]
+            def c(v,w,b=False): return ft.Container(width=w,padding=7,content=ft.Text(str(v or '—'),size=10,weight=ft.FontWeight.BOLD if b else ft.FontWeight.NORMAL,color=TEXT_MAIN,no_wrap=True))
+            detail_box.controls.append(ft.Container(bgcolor='#EEF2F7',content=ft.Row([c(x,w,True) for x,w in zip(hdr,widths)],spacing=0)))
+            for i,(r,h) in enumerate(valid):
+                detail_box.controls.append(ft.Container(bgcolor='#FFFFFF' if i%2==0 else '#F8FAFC',content=ft.Row([
+                    c(r['code'],90),c(r['brand'],120),c(r['size'],115),c(r['equipment_code'],100),c(r['position'],75),c(f'{h:,.0f}',100),c(format_date(r['event_date']),105)],spacing=0)))
+            page.update()
+
+        mode.on_change=refresh; size_filter.on_change=refresh
+        refresh()
         content.content=ft.Column([
-            page_title('Reportes','Catálogo de reportes del MegaSoft original'),
-            ft.Container(padding=12,bgcolor='#FFF7E6',border_radius=10,content=ft.Text('En esta v2 la estructura está preparada; la exportación Excel se implementará en la siguiente etapa.',color='#7A4F01')),
-            ft.Row(tiles,wrap=True,spacing=12,run_spacing=12)
+            page_title('9. REPORTES E INDICADORES','Análisis estadístico del rendimiento histórico de neumáticos'),
+            ft.Row([mode,size_filter],spacing=12),
+            stats,
+            card(chart_box),
+            card(ft.Column([ft.Text('DETALLE DE NEUMÁTICOS EVALUADOS',size=16,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
+                            ft.Row([detail_box],scroll=ft.ScrollMode.ALWAYS)],spacing=8))
         ],scroll=ft.ScrollMode.AUTO,spacing=16)
         page.update()
 
