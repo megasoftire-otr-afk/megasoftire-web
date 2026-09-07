@@ -18,12 +18,11 @@ MODULES = [
     ('Neumáticos en servicio', ft.Icons.DIRECTIONS_CAR),
     ('Programa de mantenimiento', ft.Icons.BUILD_CIRCLE_OUTLINED),
     ('Retén / Stand-by', ft.Icons.INVENTORY_2_OUTLINED),
-    ('Neumáticos fuera de servicio', ft.Icons.DELETE_OUTLINE),
+    ('NFU / BAJAS', ft.Icons.DELETE_FOREVER_OUTLINED),
     ('Inventarios y consumos', ft.Icons.WAREHOUSE_OUTLINED),
     ('Administración de equipos', ft.Icons.ADMIN_PANEL_SETTINGS_OUTLINED),
     ('Registro maestro de neumáticos', ft.Icons.TABLE_CHART_OUTLINED),
     ('Reportes e indicadores', ft.Icons.ASSESSMENT_OUTLINED),
-    ('NFU / BAJA', ft.Icons.DELETE_FOREVER_OUTLINED),
 ]
 
 BG = '#F4F7FB'
@@ -5062,12 +5061,11 @@ def main(page: ft.Page):
         elif idx==2: service_view()
         elif idx==3: maintenance_final_report_view()
         elif idx==4: standby_view()
-        elif idx==5: baja_history_view()
+        elif idx==5: nfu_view()
         elif idx==6: placeholder('Inventarios y consumos','Existencias, costos, consumos y remanentes')
         elif idx==7: equipment_view()
         elif idx==8: tires_view()
         elif idx==9: reports_view()
-        elif idx==10: nfu_view()
 
     def build_shell():
         nonlocal nav
