@@ -4331,7 +4331,7 @@ def main(page: ft.Page):
                 controls.append(ft.Text('- SIN ACTIVIDADES DE MANTENIMIENTO PENDIENTES.',size=12,color=TEXT_MAIN))
             return ft.Column(controls,spacing=7)
 
-        report_date=dt.date.today().strftime('%d/%m/%Y')
+        report_date=dt.datetime.now(dt.timezone(dt.timedelta(hours=-5))).strftime('%d/%m/%Y')
 
         def build_pdf_bytes():
             """Genera un PDF simple multipágina sin dependencias externas."""
@@ -4424,13 +4424,22 @@ def main(page: ft.Page):
             out.extend((f'trailer\n<< /Size {len(objects)+1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF').encode('ascii'))
             return bytes(out)
 
-        def download_pdf(e):
+        async def download_pdf(e):
             try:
                 pdf_bytes=build_pdf_bytes()
-                uri='data:application/pdf;base64,'+base64.b64encode(pdf_bytes).decode('ascii')
-                page.launch_url(uri)
+                file_name='Programa_Mantenimiento_'+report_date.replace('/','-')+'.pdf'
+                # En Flet Web, FilePicker.save_file con src_bytes entrega el archivo
+                # directamente al navegador; evita los data: URI que Chrome/Render
+                # pueden bloquear.
+                await ft.FilePicker().save_file(
+                    file_name=file_name,
+                    file_type=ft.FilePickerFileType.CUSTOM,
+                    allowed_extensions=['pdf'],
+                    src_bytes=pdf_bytes,
+                )
+                snack(f'PDF preparado: {file_name}')
             except Exception as ex:
-                snack(f'No se pudo generar el PDF: {ex}',True)
+                snack(f'No se pudo descargar el PDF: {ex}',True)
 
         content.content=ft.Column([
             page_title('PROGRAMA DE MANTENIMIENTO DE NEUMÁTICOS',
