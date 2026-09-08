@@ -5340,7 +5340,7 @@ def main(page: ft.Page):
         C_REE='#E66C37'       # Llantas reencauchadas - naranja Power BI
         C_CORTE='#D64545'     # Llantas accidentadas - rojo
         C_NOOPT='#1AAB40'     # Vida útil no optimizada - verde
-        chart_width=760
+        chart_width=500
         max_total=max([r['ll_new']+r['ll_ree']+r['cut']+r['no_opt'] for r in result] or [1.0])
         if max_total <= 0:
             max_total=1.0
@@ -5450,8 +5450,13 @@ def main(page: ft.Page):
             card(ft.Column([
                 ft.Text('6.1 UTILIZACIÓN Y PÉRDIDA POR EQUIPO',size=17,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
                 ft.Text('Resumen económico y horas rodadas por equipo',size=12,color=TEXT_MUTED),
-                ft.Row([table],scroll=ft.ScrollMode.ALWAYS),
-                chart_panel,
+                ft.Row([
+                    ft.Container(
+                        width=520,
+                        content=ft.Row([table],scroll=ft.ScrollMode.ALWAYS),
+                    ),
+                    ft.Container(expand=True,content=chart_panel),
+                ],spacing=14,vertical_alignment=ft.CrossAxisAlignment.START,scroll=ft.ScrollMode.AUTO),
                 note,
             ],spacing=12))
         ],scroll=ft.ScrollMode.AUTO,spacing=14)
