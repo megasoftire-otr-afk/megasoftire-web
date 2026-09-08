@@ -5551,8 +5551,100 @@ def main(page: ft.Page):
                 ft.Text('Comparativo por equipo con los datos actualmente obtenidos',size=12,color=TEXT_MUTED),
             ],spacing=2),
             cost_chart,
-            ft.Container(content=ft.Row([cost_table],scroll=ft.ScrollMode.AUTO)),
         ],spacing=12)
+
+        # 6.3 · Análisis estadístico/económico de neumáticos dados de BAJA (NFU).
+        # Se alimenta exclusivamente de tires.status='BAJA' y del último evento BAJA.
+        baja_tires=query("SELECT * FROM tires WHERE status='BAJA' ORDER BY code")
+        baja_groups={}
+
+        def baja_hours(tire_id):
+            evs=query("""SELECT event_code,meter FROM occurrences
+                         WHERE tire_id=? AND event_code IN ('INST','DINS','BAJA') ORDER BY id""",(tire_id,))
+            total=0.0; start=None
+            for ev in evs:
+                code=str(ev['event_code'] or '').upper(); meter=n(ev['meter'])
+                if code=='INST' and meter is not None:
+                    start=meter
+                elif code in ('DINS','BAJA') and start is not None and meter is not None:
+                    if meter>=start: total += meter-start
+                    start=None
+            return total if total>0 else None
+
+        for t in baja_tires:
+            last=query("""SELECT o.reason,o.equipment_id,e.code equipment_code,e.model equipment_model,e.vehicle_type
+                          FROM occurrences o LEFT JOIN equipment e ON e.id=o.equipment_id
+                          WHERE o.tire_id=? AND o.event_code='BAJA' ORDER BY o.id DESC LIMIT 1""",(t['id'],))
+            z=last[0] if last else None
+            eqcode=(z['equipment_code'] if z and z['equipment_code'] else 'SIN EQUIPO')
+            eqmodel=(z['equipment_model'] if z and z['equipment_model'] else '')
+            application=(str(eqcode)+((' / '+str(eqmodel)) if eqmodel else ''))
+            brand=str(t['brand'] or '—'); size=str(t['size'] or '—'); design=str(t['design'] or '—'); tra=str(t['compound'] or '—')
+            key=(application,brand,size,design,tra)
+            reason=(z['reason'] if z else '')
+            cond=t['tire_condition'] if 'tire_condition' in t.keys() else ''
+            category='Cortes' if is_cut_reason(reason) else ('Reencauche' if is_reencauchada(cond) else 'Desgaste Regular')
+            hrs=baja_hours(t['id']); cost=n(t['cost_usd']) if 'cost_usd' in t.keys() else None
+            cph=(cost/hrs) if cost is not None and hrs and hrs>0 else None
+            baja_groups.setdefault(key,[]).append({'category':category,'hours':hrs,'cph':cph})
+
+        baja_columns=[
+            ft.DataColumn(ft.Text('APLICACIÓN / EQUIPO',weight=ft.FontWeight.BOLD,color=ft.Colors.WHITE)),
+            ft.DataColumn(ft.Text('MEDIDA / DISEÑO / TRA',weight=ft.FontWeight.BOLD,color=ft.Colors.WHITE)),
+            ft.DataColumn(ft.Text('CONCEPTO DE RETIRO',weight=ft.FontWeight.BOLD,color=ft.Colors.WHITE)),
+            ft.DataColumn(ft.Text('# LLANTAS',weight=ft.FontWeight.BOLD,color=ft.Colors.WHITE),numeric=True),
+            ft.DataColumn(ft.Text('HORAS PROMEDIO',weight=ft.FontWeight.BOLD,color=ft.Colors.WHITE),numeric=True),
+            ft.DataColumn(ft.Text('COSTO / HORA PROM.',weight=ft.FontWeight.BOLD,color=ft.Colors.WHITE),numeric=True),
+            ft.DataColumn(ft.Text('VAR. VS DESG. REG.',weight=ft.FontWeight.BOLD,color=ft.Colors.WHITE),numeric=True),
+        ]
+        baja_table_rows=[]
+
+        def stat(items):
+            hv=[x['hours'] for x in items if x['hours'] is not None]
+            cv=[x['cph'] for x in items if x['cph'] is not None]
+            return len(items),(sum(hv)/len(hv) if hv else None),(sum(cv)/len(cv) if cv else None)
+
+        for key,items in sorted(baja_groups.items()):
+            application,brand,size,design,tra=key
+            regular=[x for x in items if x['category']=='Desgaste Regular']
+            reenc=[x for x in items if x['category']=='Reencauche']
+            cuts=[x for x in items if x['category']=='Cortes']
+            reg_cph=stat(regular)[2] if regular else None
+            concepts=[('Desgaste Regular',regular,'#E2F0D9'),('Reencauche',reenc,'#FFFFFF'),('Cortes',cuts,'#FFFFFF'),
+                      ('Desg. Reg. + Reenc.',regular+reenc,'#EAF3FB'),('Desg. Reg. + Reenc. + Cortes',regular+reenc+cuts,'#EAF3FB')]
+            first=True
+            for label,subset,bg in concepts:
+                if not subset: continue
+                cnt,avgh,avgc=stat(subset)
+                variation=((avgc/reg_cph)-1.0)*100.0 if avgc is not None and reg_cph not in (None,0) and label!='Desgaste Regular' else None
+                var_txt='—' if variation is None else f'{variation:+.0f}%'
+                var_color=('#D64545' if variation is not None and variation>0 else '#1AAB40' if variation is not None and variation<0 else TEXT_MAIN)
+                baja_table_rows.append(ft.DataRow(color=bg,cells=[
+                    ft.DataCell(ft.Text(application if first else '',weight=ft.FontWeight.BOLD,color=TEXT_MAIN)),
+                    ft.DataCell(ft.Text((f'{brand} | {size} | {design} | {tra}') if first else '',weight=ft.FontWeight.BOLD,color=TEXT_MAIN)),
+                    ft.DataCell(ft.Text(label,weight=ft.FontWeight.BOLD if label=='Desgaste Regular' else ft.FontWeight.NORMAL,color=TEXT_MAIN)),
+                    ft.DataCell(ft.Text(str(cnt),color=TEXT_MAIN)),
+                    ft.DataCell(ft.Text('—' if avgh is None else f'{avgh:,.0f} h',color=TEXT_MAIN)),
+                    ft.DataCell(ft.Text('—' if avgc is None else f'${avgc:.2f}/h',color=TEXT_MAIN)),
+                    ft.DataCell(ft.Text(var_txt,weight=ft.FontWeight.BOLD,color=var_color)),
+                ]))
+                first=False
+
+        if not baja_table_rows:
+            baja_table_rows=[ft.DataRow(cells=[ft.DataCell(ft.Text('Sin neumáticos dados de baja',color=TEXT_MUTED))]+[ft.DataCell(ft.Text('—')) for _ in range(6)])]
+
+        baja_table=ft.DataTable(columns=baja_columns,rows=baja_table_rows,heading_row_color=NAV_BG,heading_row_height=48,
+                                data_row_min_height=38,data_row_max_height=46,horizontal_margin=12,column_spacing=22,
+                                border=ft.Border.all(1,'#DCE4EC'),divider_thickness=1)
+        section_63=ft.Column([
+            ft.Column([
+                ft.Text('6.3 ANÁLISIS DE NEUMÁTICOS DADOS DE BAJA',size=17,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
+                ft.Text('Rendimiento y costo por concepto de retiro · fuente: NFU / BAJAS',size=12,color=TEXT_MUTED),
+            ],spacing=2),
+            ft.Container(content=ft.Row([baja_table],scroll=ft.ScrollMode.ALWAYS)),
+            ft.Container(bgcolor='#F7FAFC',border=ft.Border.all(1,'#DCE4EC'),border_radius=8,padding=10,
+                         content=ft.Text('Costo/hora del neumático = costo registrado / horas reales acumuladas. La variación se compara con Desgaste Regular dentro de la misma aplicación, medida y diseño.',size=10,color=TEXT_MUTED)),
+        ],spacing=10)
 
         note=ft.Container(
             bgcolor='#F7FAFC',
@@ -5581,6 +5673,8 @@ def main(page: ft.Page):
                 note,
                 ft.Divider(height=20,color='#DCE4EC'),
                 section_62,
+                ft.Divider(height=20,color='#DCE4EC'),
+                section_63,
             ],spacing=12))
         ],scroll=ft.ScrollMode.AUTO,spacing=14)
         page.update()
