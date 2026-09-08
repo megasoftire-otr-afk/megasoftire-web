@@ -5219,7 +5219,7 @@ def main(page: ft.Page):
 
         def is_cut_reason(value):
             txt=str(value or '').strip().upper()
-            return ('CORTE' in txt) or txt in ('CTL','CTB') or txt.startswith('CT')
+            return ('CORTE' in txt) or txt in ('CTL','CTB','CPB') or txt.startswith('CT')
 
         eq_rows=query("SELECT id,code,brand,model,vehicle_type,active FROM equipment ORDER BY code")
         result=[]
