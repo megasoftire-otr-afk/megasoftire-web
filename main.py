@@ -5336,10 +5336,10 @@ def main(page: ft.Page):
 
         # Gráfico Power BI: utilización y pérdidas monetarias por equipo.
         # Hr-Rod se presenta junto al equipo y no forma parte de la barra monetaria.
-        C_NEW='#2F9E6F'       # Llantas nuevas
-        C_REE='#6B568B'       # Llantas reencauchadas
-        C_CORTE='#E5252A'     # Llantas accidentadas
-        C_NOOPT='#8CC9DE'     # Vida útil no optimizada
+        C_NEW='#118DFF'       # Llantas nuevas - azul Power BI
+        C_REE='#E66C37'       # Llantas reencauchadas - naranja Power BI
+        C_CORTE='#D64545'     # Llantas accidentadas - rojo
+        C_NOOPT='#1AAB40'     # Vida útil no optimizada - verde
         chart_width=760
         max_total=max([r['ll_new']+r['ll_ree']+r['cut']+r['no_opt'] for r in result] or [1.0])
         if max_total <= 0:
@@ -5360,9 +5360,7 @@ def main(page: ft.Page):
         chart_rows=[]
         for r in sorted(result,key=lambda x:(x['ll_new']+x['ll_ree']+x['cut']+x['no_opt']),reverse=True):
             total=r['ll_new']+r['ll_ree']+r['cut']+r['no_opt']
-            utilization=r['ll_new']+r['ll_ree']
             losses=r['cut']+r['no_opt']
-            cost_per_hr=(utilization/r['hr_rod']) if r['hr_rod'] and r['hr_rod'] > 0 else None
             segs=[]
             for value,color in ((r['ll_new'],C_NEW),(r['ll_ree'],C_REE),(r['cut'],C_CORTE),(r['no_opt'],C_NOOPT)):
                 if value > 0:
@@ -5377,23 +5375,17 @@ def main(page: ft.Page):
             if not segs:
                 segs=[ft.Container(width=2,height=30,bgcolor='#DCE4EC')]
 
-            # Equipo con pérdidas: indicador visual rojo sin alterar el dato.
+            # Equipo y horas rodadas en una sola línea horizontal.
             team_label=ft.Row([
                 ft.Container(width=8,height=8,bgcolor=C_CORTE,border_radius=4) if losses > 0 else ft.Container(width=8,height=8),
                 ft.Text(str(r['code']),size=12,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
-            ],spacing=6,tight=True)
+                ft.Text('/',size=11,color=TEXT_MUTED),
+                ft.Text(f"{r['hr_rod']:,.0f} h",size=11,color=TEXT_MUTED),
+            ],spacing=4,tight=True)
 
             chart_rows.append(ft.Row([
-                ft.Container(width=130,content=ft.Column([
-                    team_label,
-                    ft.Text(f"{r['hr_rod']:,.0f} h",size=10,color=TEXT_MUTED),
-                ],spacing=0)),
+                ft.Container(width=130,content=team_label),
                 ft.Container(width=chart_width,content=ft.Row(segs,spacing=0)),
-                ft.Container(width=90,content=ft.Text(money(total),size=11,weight=ft.FontWeight.BOLD,color=TEXT_MAIN)),
-                ft.Container(width=84,content=ft.Column([
-                    ft.Text('$/Hr',size=9,color=TEXT_MUTED),
-                    ft.Text('—' if cost_per_hr is None else f"${cost_per_hr:,.2f}/h",size=10,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
-                ],spacing=0)),
             ],spacing=10,vertical_alignment=ft.CrossAxisAlignment.CENTER))
 
         totals={
@@ -5433,8 +5425,6 @@ def main(page: ft.Page):
                             for i in range(5)
                         ],alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
                     ],spacing=3)),
-                    ft.Container(width=90,content=ft.Text('TOTAL',size=9,color=TEXT_MUTED)),
-                    ft.Container(width=84,content=ft.Text('COSTO/H',size=9,color=TEXT_MUTED)),
                 ],spacing=10),
                 ft.Row([
                     ft.Container(width=8,height=8,bgcolor=C_CORTE,border_radius=4),
