@@ -5345,6 +5345,11 @@ def main(page: ft.Page):
         if max_total <= 0:
             max_total=1.0
 
+        # Escala monetaria tipo Power BI: redondear el máximo a un intervalo limpio.
+        import math
+        axis_step=5000.0 if max_total > 5000 else 1000.0
+        axis_max=max(axis_step,math.ceil(max_total/axis_step)*axis_step)
+
         def legend_item(color,label,total):
             return ft.Row([
                 ft.Container(width=11,height=11,bgcolor=color,border_radius=2),
@@ -5355,10 +5360,13 @@ def main(page: ft.Page):
         chart_rows=[]
         for r in sorted(result,key=lambda x:(x['ll_new']+x['ll_ree']+x['cut']+x['no_opt']),reverse=True):
             total=r['ll_new']+r['ll_ree']+r['cut']+r['no_opt']
+            utilization=r['ll_new']+r['ll_ree']
+            losses=r['cut']+r['no_opt']
+            cost_per_hr=(utilization/r['hr_rod']) if r['hr_rod'] and r['hr_rod'] > 0 else None
             segs=[]
             for value,color in ((r['ll_new'],C_NEW),(r['ll_ree'],C_REE),(r['cut'],C_CORTE),(r['no_opt'],C_NOOPT)):
                 if value > 0:
-                    w=max(3,chart_width*(value/max_total))
+                    w=max(3,chart_width*(value/axis_max))
                     segs.append(ft.Container(
                         width=w,height=30,bgcolor=color,
                         alignment=ft.Alignment.CENTER,
@@ -5368,13 +5376,24 @@ def main(page: ft.Page):
                     ))
             if not segs:
                 segs=[ft.Container(width=2,height=30,bgcolor='#DCE4EC')]
+
+            # Equipo con pérdidas: indicador visual rojo sin alterar el dato.
+            team_label=ft.Row([
+                ft.Container(width=8,height=8,bgcolor=C_CORTE,border_radius=4) if losses > 0 else ft.Container(width=8,height=8),
+                ft.Text(str(r['code']),size=12,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
+            ],spacing=6,tight=True)
+
             chart_rows.append(ft.Row([
                 ft.Container(width=130,content=ft.Column([
-                    ft.Text(str(r['code']),size=12,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
+                    team_label,
                     ft.Text(f"{r['hr_rod']:,.0f} h",size=10,color=TEXT_MUTED),
                 ],spacing=0)),
-                ft.Row(segs,spacing=0),
-                ft.Text(money(total),size=11,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
+                ft.Container(width=chart_width,content=ft.Row(segs,spacing=0)),
+                ft.Container(width=90,content=ft.Text(money(total),size=11,weight=ft.FontWeight.BOLD,color=TEXT_MAIN)),
+                ft.Container(width=84,content=ft.Column([
+                    ft.Text('$/Hr',size=9,color=TEXT_MUTED),
+                    ft.Text('—' if cost_per_hr is None else f"${cost_per_hr:,.2f}/h",size=10,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
+                ],spacing=0)),
             ],spacing=10,vertical_alignment=ft.CrossAxisAlignment.CENTER))
 
         totals={
@@ -5404,6 +5423,23 @@ def main(page: ft.Page):
                 ],vertical_alignment=ft.CrossAxisAlignment.START),
                 ft.Divider(height=12,color='#E7EDF3'),
                 ft.Column(chart_rows,spacing=8,scroll=ft.ScrollMode.AUTO),
+                # Eje monetario visible debajo de las barras.
+                ft.Row([
+                    ft.Container(width=130),
+                    ft.Container(width=chart_width,content=ft.Column([
+                        ft.Container(height=1,bgcolor='#C9D4DF'),
+                        ft.Row([
+                            ft.Text(money(axis_max*i/4),size=9,color=TEXT_MUTED)
+                            for i in range(5)
+                        ],alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+                    ],spacing=3)),
+                    ft.Container(width=90,content=ft.Text('TOTAL',size=9,color=TEXT_MUTED)),
+                    ft.Container(width=84,content=ft.Text('COSTO/H',size=9,color=TEXT_MUTED)),
+                ],spacing=10),
+                ft.Row([
+                    ft.Container(width=8,height=8,bgcolor=C_CORTE,border_radius=4),
+                    ft.Text('Equipo con pérdidas ($CORTE o $NO OPT)',size=10,color=TEXT_MUTED),
+                ],spacing=6,tight=True),
             ],spacing=10),
         )
 
