@@ -5297,21 +5297,21 @@ def main(page: ft.Page):
 
         columns=[
             ft.DataColumn(ft.Text('EQUIP',weight=ft.FontWeight.BOLD,color=ft.Colors.WHITE)),
+            ft.DataColumn(ft.Text('Hr-Rod',weight=ft.FontWeight.BOLD,color=ft.Colors.WHITE),numeric=True),
             ft.DataColumn(ft.Text('LL/NEW',weight=ft.FontWeight.BOLD,color=ft.Colors.WHITE),numeric=True),
             ft.DataColumn(ft.Text('LL/REE',weight=ft.FontWeight.BOLD,color=ft.Colors.WHITE),numeric=True),
             ft.DataColumn(ft.Text('$CORTE',weight=ft.FontWeight.BOLD,color=ft.Colors.WHITE),numeric=True),
             ft.DataColumn(ft.Text('$NO OPT',weight=ft.FontWeight.BOLD,color=ft.Colors.WHITE),numeric=True),
-            ft.DataColumn(ft.Text('Hr-Rod',weight=ft.FontWeight.BOLD,color=ft.Colors.WHITE),numeric=True),
         ]
         rows=[]
         for r in result:
             rows.append(ft.DataRow(cells=[
                 ft.DataCell(ft.Text(str(r['code']),weight=ft.FontWeight.BOLD,color=TEXT_MAIN)),
+                ft.DataCell(ft.Text(f"{r['hr_rod']:,.0f} h",color=TEXT_MAIN)),
                 ft.DataCell(ft.Text(money(r['ll_new']),color=TEXT_MAIN)),
                 ft.DataCell(ft.Text(money(r['ll_ree']),color=TEXT_MAIN)),
                 ft.DataCell(ft.Text(money(r['cut']),color=TEXT_MAIN)),
                 ft.DataCell(ft.Text(money(r['no_opt']),color=TEXT_MAIN)),
-                ft.DataCell(ft.Text(f"{r['hr_rod']:,.0f} h",color=TEXT_MAIN)),
             ]))
 
         if not rows:
@@ -5334,6 +5334,79 @@ def main(page: ft.Page):
             divider_thickness=1,
         )
 
+        # Gráfico Power BI: utilización y pérdidas monetarias por equipo.
+        # Hr-Rod se presenta junto al equipo y no forma parte de la barra monetaria.
+        C_NEW='#2F9E6F'       # Llantas nuevas
+        C_REE='#6B568B'       # Llantas reencauchadas
+        C_CORTE='#E5252A'     # Llantas accidentadas
+        C_NOOPT='#8CC9DE'     # Vida útil no optimizada
+        chart_width=760
+        max_total=max([r['ll_new']+r['ll_ree']+r['cut']+r['no_opt'] for r in result] or [1.0])
+        if max_total <= 0:
+            max_total=1.0
+
+        def legend_item(color,label,total):
+            return ft.Row([
+                ft.Container(width=11,height=11,bgcolor=color,border_radius=2),
+                ft.Text(label,size=11,color=TEXT_MAIN),
+                ft.Text(money(total),size=11,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
+            ],spacing=6,tight=True)
+
+        chart_rows=[]
+        for r in sorted(result,key=lambda x:(x['ll_new']+x['ll_ree']+x['cut']+x['no_opt']),reverse=True):
+            total=r['ll_new']+r['ll_ree']+r['cut']+r['no_opt']
+            segs=[]
+            for value,color in ((r['ll_new'],C_NEW),(r['ll_ree'],C_REE),(r['cut'],C_CORTE),(r['no_opt'],C_NOOPT)):
+                if value > 0:
+                    w=max(3,chart_width*(value/max_total))
+                    segs.append(ft.Container(
+                        width=w,height=30,bgcolor=color,
+                        alignment=ft.Alignment.CENTER,
+                        border=ft.Border.all(1,'#FFFFFF'),
+                        content=ft.Text(money(value),size=10,weight=ft.FontWeight.BOLD,color=ft.Colors.WHITE)
+                                if w >= 78 else None,
+                    ))
+            if not segs:
+                segs=[ft.Container(width=2,height=30,bgcolor='#DCE4EC')]
+            chart_rows.append(ft.Row([
+                ft.Container(width=130,content=ft.Column([
+                    ft.Text(str(r['code']),size=12,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
+                    ft.Text(f"{r['hr_rod']:,.0f} h",size=10,color=TEXT_MUTED),
+                ],spacing=0)),
+                ft.Row(segs,spacing=0),
+                ft.Text(money(total),size=11,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
+            ],spacing=10,vertical_alignment=ft.CrossAxisAlignment.CENTER))
+
+        totals={
+            'new':sum(r['ll_new'] for r in result),
+            'ree':sum(r['ll_ree'] for r in result),
+            'cut':sum(r['cut'] for r in result),
+            'noopt':sum(r['no_opt'] for r in result),
+        }
+        chart_panel=ft.Container(
+            bgcolor='#FFFFFF',
+            border=ft.Border.all(1,'#DCE4EC'),
+            border_radius=12,
+            padding=18,
+            content=ft.Column([
+                ft.Row([
+                    ft.Column([
+                        ft.Text('UTILIZACIÓN Y PÉRDIDA POR EQUIPO',size=16,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
+                        ft.Text('EQUIPO / HRS. TRABAJADAS · valores monetarios',size=11,color=TEXT_MUTED),
+                    ],spacing=2),
+                    ft.Container(expand=True),
+                    ft.Column([
+                        legend_item(C_NEW,'LLANTAS NUEVAS',totals['new']),
+                        legend_item(C_REE,'LLANTAS REENCAUCHADAS',totals['ree']),
+                        legend_item(C_CORTE,'LLANTAS ACCIDENTADAS',totals['cut']),
+                        legend_item(C_NOOPT,'VIDA ÚTIL NO OPTIMIZADA',totals['noopt']),
+                    ],spacing=4),
+                ],vertical_alignment=ft.CrossAxisAlignment.START),
+                ft.Divider(height=12,color='#E7EDF3'),
+                ft.Column(chart_rows,spacing=8,scroll=ft.ScrollMode.AUTO),
+            ],spacing=10),
+        )
+
         note=ft.Container(
             bgcolor='#F7FAFC',
             border=ft.Border.all(1,'#DCE4EC'),
@@ -5352,6 +5425,7 @@ def main(page: ft.Page):
                 ft.Text('6.1 UTILIZACIÓN Y PÉRDIDA POR EQUIPO',size=17,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
                 ft.Text('Resumen económico y horas rodadas por equipo',size=12,color=TEXT_MUTED),
                 ft.Row([table],scroll=ft.ScrollMode.ALWAYS),
+                chart_panel,
                 note,
             ],spacing=12))
         ],scroll=ft.ScrollMode.AUTO,spacing=14)
