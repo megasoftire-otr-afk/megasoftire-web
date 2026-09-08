@@ -5621,15 +5621,17 @@ def main(page: ft.Page):
             cph=(cost/hrs) if cost is not None and hrs and hrs>0 else None
             baja_groups.setdefault(key,[]).append({'category':category,'hours':hrs,'cph':cph})
 
+        # Estética tipo reporte comparativo (referencia histórica): encabezado gris,
+        # fila de Desgaste Regular resaltada en amarillo y acumulados en verde.
         baja_columns=[
-            ft.DataColumn(ft.Text('MEDIDA',weight=ft.FontWeight.BOLD,color=ft.Colors.WHITE)),
-            ft.DataColumn(ft.Text('MARCA',weight=ft.FontWeight.BOLD,color=ft.Colors.WHITE)),
-            ft.DataColumn(ft.Text('DISEÑO / TRA',weight=ft.FontWeight.BOLD,color=ft.Colors.WHITE)),
-            ft.DataColumn(ft.Text('CONCEPTO DE RETIRO',weight=ft.FontWeight.BOLD,color=ft.Colors.WHITE)),
-            ft.DataColumn(ft.Text('# LLANTAS',weight=ft.FontWeight.BOLD,color=ft.Colors.WHITE),numeric=True),
-            ft.DataColumn(ft.Text('HORAS PROMEDIO',weight=ft.FontWeight.BOLD,color=ft.Colors.WHITE),numeric=True),
-            ft.DataColumn(ft.Text('COSTO / HORA PROM.',weight=ft.FontWeight.BOLD,color=ft.Colors.WHITE),numeric=True),
-            ft.DataColumn(ft.Text('VAR. VS DESG. REG.',weight=ft.FontWeight.BOLD,color=ft.Colors.WHITE),numeric=True),
+            ft.DataColumn(ft.Text('MEDIDA',weight=ft.FontWeight.BOLD,color=ft.Colors.WHITE,size=12)),
+            ft.DataColumn(ft.Text('MARCA',weight=ft.FontWeight.BOLD,color=ft.Colors.WHITE,size=12)),
+            ft.DataColumn(ft.Text('DISEÑO / TRA',weight=ft.FontWeight.BOLD,color=ft.Colors.WHITE,size=12)),
+            ft.DataColumn(ft.Text('CONCEPTO DE RETIRO',weight=ft.FontWeight.BOLD,color=ft.Colors.WHITE,size=12)),
+            ft.DataColumn(ft.Text('# LLANTAS\nEVALUADAS',weight=ft.FontWeight.BOLD,color=ft.Colors.WHITE,size=11,text_align=ft.TextAlign.CENTER),numeric=True),
+            ft.DataColumn(ft.Text('HORAS\nPROMEDIO',weight=ft.FontWeight.BOLD,color=ft.Colors.WHITE,size=11,text_align=ft.TextAlign.CENTER),numeric=True),
+            ft.DataColumn(ft.Text('COSTO / HORA\nPROMEDIO',weight=ft.FontWeight.BOLD,color=ft.Colors.WHITE,size=11,text_align=ft.TextAlign.CENTER),numeric=True),
+            ft.DataColumn(ft.Text('VARIACIÓN RESPECTO\nAL DESG. REG.',weight=ft.FontWeight.BOLD,color=ft.Colors.WHITE,size=11,text_align=ft.TextAlign.CENTER),numeric=True),
         ]
         baja_table_rows=[]
 
@@ -5644,8 +5646,8 @@ def main(page: ft.Page):
             reenc=[x for x in items if x['category']=='Reencauche']
             cuts=[x for x in items if x['category']=='Cortes']
             reg_cph=stat(regular)[2] if regular else None
-            concepts=[('Desgaste Regular',regular,'#E2F0D9'),('Reencauche',reenc,'#FFFFFF'),('Cortes',cuts,'#FFFFFF'),
-                      ('Desg. Reg. + Reenc.',regular+reenc,'#EAF3FB'),('Desg. Reg. + Reenc. + Cortes',regular+reenc+cuts,'#EAF3FB')]
+            concepts=[('Desgaste Regular',regular,'#FFF89A'),('Reencauche',reenc,'#FFFFFF'),('Cortes',cuts,'#FFFFFF'),
+                      ('Desg. Reg. + Reenc.',regular+reenc,'#FFFFFF'),('Desg. Reg. + Reenc. + Cortes',regular+reenc+cuts,'#FFFFFF')]
             first=True
             for label,subset,bg in concepts:
                 # Mantener siempre las cinco filas del análisis. Si una categoría aún no
@@ -5655,33 +5657,40 @@ def main(page: ft.Page):
                 variation=((avgc/reg_cph)-1.0)*100.0 if subset and avgc is not None and reg_cph not in (None,0) and label!='Desgaste Regular' else None
                 var_txt='—' if variation is None else f'{variation:+.0f}%'
                 var_color=('#D64545' if variation is not None and variation>0 else '#1AAB40' if variation is not None and variation<0 else TEXT_MAIN)
+                concept_color = '#1F4E79' if label in ('Desgaste Regular','Reencauche','Cortes') else '#548235'
+                value_color = '#548235' if label in ('Desg. Reg. + Reenc.','Desg. Reg. + Reenc. + Cortes') else TEXT_MAIN
                 baja_table_rows.append(ft.DataRow(color=bg,cells=[
-                    ft.DataCell(ft.Text(size if first else '',weight=ft.FontWeight.BOLD,color=TEXT_MAIN)),
-                    ft.DataCell(ft.Text(brand if first else '',weight=ft.FontWeight.BOLD,color=TEXT_MAIN)),
-                    ft.DataCell(ft.Text((f'{design} | {tra}') if first else '',weight=ft.FontWeight.BOLD,color=TEXT_MAIN)),
-                    ft.DataCell(ft.Text(label,weight=ft.FontWeight.BOLD if label=='Desgaste Regular' else ft.FontWeight.NORMAL,color=TEXT_MAIN)),
-                    ft.DataCell(ft.Text(str(cnt),color=TEXT_MAIN)),
-                    ft.DataCell(ft.Text('0 h' if avgh is None else f'{avgh:,.0f} h',color=TEXT_MAIN)),
-                    ft.DataCell(ft.Text('$0.00/h' if avgc is None else f'${avgc:.2f}/h',color=TEXT_MAIN)),
-                    ft.DataCell(ft.Text(var_txt,weight=ft.FontWeight.BOLD,color=var_color)),
+                    ft.DataCell(ft.Text(size if first else '',weight=ft.FontWeight.BOLD,color=TEXT_MAIN,size=12)),
+                    ft.DataCell(ft.Text(brand if first else '',weight=ft.FontWeight.BOLD,color=TEXT_MAIN,size=12)),
+                    ft.DataCell(ft.Text((f'{design} | {tra}') if first else '',weight=ft.FontWeight.BOLD,color=TEXT_MAIN,size=12)),
+                    ft.DataCell(ft.Text(label,weight=ft.FontWeight.BOLD if label in ('Desgaste Regular','Desg. Reg. + Reenc.','Desg. Reg. + Reenc. + Cortes') else ft.FontWeight.NORMAL,color=concept_color,size=12)),
+                    ft.DataCell(ft.Text(str(cnt),color=value_color,weight=ft.FontWeight.BOLD if label.startswith('Desg. Reg. +') else ft.FontWeight.NORMAL,size=12)),
+                    ft.DataCell(ft.Text('0 h' if avgh is None else f'{avgh:,.0f} h',color=value_color,weight=ft.FontWeight.BOLD if label.startswith('Desg. Reg. +') else ft.FontWeight.NORMAL,size=12)),
+                    ft.DataCell(ft.Text('$0.00/h' if avgc is None else f'${avgc:.2f}/h',color=value_color,weight=ft.FontWeight.BOLD if label.startswith('Desg. Reg. +') else ft.FontWeight.NORMAL,size=12)),
+                    ft.DataCell(ft.Text(var_txt,weight=ft.FontWeight.BOLD,color=var_color,size=12)),
                 ]))
                 first=False
 
         if not baja_table_rows:
             baja_table_rows=[ft.DataRow(cells=[ft.DataCell(ft.Text('Sin neumáticos dados de baja',color=TEXT_MUTED))]+[ft.DataCell(ft.Text('—')) for _ in range(7)])]
 
-        baja_table=ft.DataTable(columns=baja_columns,rows=baja_table_rows,heading_row_color=NAV_BG,heading_row_height=48,
-                                data_row_min_height=38,data_row_max_height=46,horizontal_margin=12,column_spacing=22,
-                                border=ft.Border.all(1,'#DCE4EC'),divider_thickness=1)
+        baja_table=ft.DataTable(columns=baja_columns,rows=baja_table_rows,heading_row_color='#A6A6A6',heading_row_height=58,
+                                data_row_min_height=34,data_row_max_height=42,horizontal_margin=10,column_spacing=18,
+                                border=ft.Border.all(1,'#8A8A8A'),divider_thickness=0.8)
         section_63=ft.Column([
-            ft.Column([
-                ft.Text('6.3 ANÁLISIS DE NEUMÁTICOS DADOS DE BAJA',size=17,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
-                ft.Text('Rendimiento y costo por concepto de retiro · fuente: NFU / BAJAS',size=12,color=TEXT_MUTED),
-            ],spacing=2),
+            ft.Container(
+                bgcolor='#C00000',padding=ft.Padding.symmetric(horizontal=14,vertical=10),
+                content=ft.Row([
+                    ft.Text('6.3  COSTO POR HORA COMPARATIVO',size=17,weight=ft.FontWeight.BOLD,color=ft.Colors.WHITE),
+                    ft.Container(expand=True),
+                    ft.Text('ANÁLISIS DE NEUMÁTICOS DADOS DE BAJA',size=12,weight=ft.FontWeight.BOLD,color=ft.Colors.WHITE),
+                ],vertical_alignment=ft.CrossAxisAlignment.CENTER)
+            ),
+            ft.Text('Rendimiento y costo por concepto de retiro · fuente: NFU / BAJAS',size=11,color=TEXT_MUTED),
             ft.Container(content=ft.Row([baja_table],scroll=ft.ScrollMode.ALWAYS)),
-            ft.Container(bgcolor='#F7FAFC',border=ft.Border.all(1,'#DCE4EC'),border_radius=8,padding=10,
+            ft.Container(bgcolor='#FFFDEB',border=ft.Border.all(1,'#D9D2A8'),padding=9,
                          content=ft.Text('Costo/hora del neumático = costo registrado / horas reales acumuladas. La variación se compara con Desgaste Regular dentro de la misma medida, marca y diseño.',size=10,color=TEXT_MUTED)),
-        ],spacing=10)
+        ],spacing=8)
 
         note=ft.Container(
             bgcolor='#F7FAFC',
