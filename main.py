@@ -5240,10 +5240,40 @@ def main(page: ft.Page):
             cursor_color=classic_white, content_padding=ft.Padding(left=8, top=4, right=8, bottom=4),
         )
         password_field = ft.TextField(
-            value='', width=220, height=38, password=True, can_reveal_password=True,
+            value='', width=220, height=38, password=True, can_reveal_password=False,
             text_size=16, bgcolor=classic_blue, color=classic_white,
             border_color=classic_white, focused_border_color=classic_white,
-            cursor_color=classic_white, content_padding=ft.Padding(left=8, top=4, right=8, bottom=4),
+            cursor_color=classic_white, content_padding=ft.Padding(left=8, top=4, right=38, bottom=4),
+        )
+
+        password_eye = ft.IconButton(
+            icon=ft.Icons.VISIBILITY_OFF,
+            icon_color=classic_white,
+            icon_size=20,
+            tooltip='Mostrar / ocultar clave',
+            style=ft.ButtonStyle(padding=0),
+        )
+
+        def toggle_password_visibility(e=None):
+            password_field.password = not password_field.password
+            password_eye.icon = ft.Icons.VISIBILITY_OFF if password_field.password else ft.Icons.VISIBILITY
+            page.update()
+
+        password_eye.on_click = toggle_password_visibility
+        password_control = ft.Stack(
+            width=220,
+            height=38,
+            controls=[
+                password_field,
+                ft.Container(
+                    content=password_eye,
+                    right=2,
+                    top=-1,
+                    width=34,
+                    height=38,
+                    alignment=ft.Alignment.CENTER,
+                ),
+            ],
         )
         login_message = ft.Text('', size=12, color='#FFFF66', text_align=ft.TextAlign.CENTER,
                                 font_family='Courier New')
@@ -5311,7 +5341,7 @@ def main(page: ft.Page):
                     ], alignment=ft.MainAxisAlignment.CENTER, vertical_alignment=ft.CrossAxisAlignment.CENTER),
                     ft.Row([
                         ft.Text('CLAVE    :', width=125, size=18, weight=ft.FontWeight.BOLD,
-                                color=classic_white, font_family=dos_font), password_field,
+                                color=classic_white, font_family=dos_font), password_control,
                     ], alignment=ft.MainAxisAlignment.CENTER, vertical_alignment=ft.CrossAxisAlignment.CENTER),
                     login_message,
                     ft.Container(height=2),
