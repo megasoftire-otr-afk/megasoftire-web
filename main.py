@@ -5648,9 +5648,11 @@ def main(page: ft.Page):
                       ('Desg. Reg. + Reenc.',regular+reenc,'#EAF3FB'),('Desg. Reg. + Reenc. + Cortes',regular+reenc+cuts,'#EAF3FB')]
             first=True
             for label,subset,bg in concepts:
-                if not subset: continue
+                # Mantener siempre las cinco filas del análisis. Si una categoría aún no
+                # tiene neumáticos (por ejemplo Reencauche), sus indicadores calculados
+                # se muestran en cero y la variación queda sin aplicar.
                 cnt,avgh,avgc=stat(subset)
-                variation=((avgc/reg_cph)-1.0)*100.0 if avgc is not None and reg_cph not in (None,0) and label!='Desgaste Regular' else None
+                variation=((avgc/reg_cph)-1.0)*100.0 if subset and avgc is not None and reg_cph not in (None,0) and label!='Desgaste Regular' else None
                 var_txt='—' if variation is None else f'{variation:+.0f}%'
                 var_color=('#D64545' if variation is not None and variation>0 else '#1AAB40' if variation is not None and variation<0 else TEXT_MAIN)
                 baja_table_rows.append(ft.DataRow(color=bg,cells=[
@@ -5659,8 +5661,8 @@ def main(page: ft.Page):
                     ft.DataCell(ft.Text((f'{design} | {tra}') if first else '',weight=ft.FontWeight.BOLD,color=TEXT_MAIN)),
                     ft.DataCell(ft.Text(label,weight=ft.FontWeight.BOLD if label=='Desgaste Regular' else ft.FontWeight.NORMAL,color=TEXT_MAIN)),
                     ft.DataCell(ft.Text(str(cnt),color=TEXT_MAIN)),
-                    ft.DataCell(ft.Text('—' if avgh is None else f'{avgh:,.0f} h',color=TEXT_MAIN)),
-                    ft.DataCell(ft.Text('—' if avgc is None else f'${avgc:.2f}/h',color=TEXT_MAIN)),
+                    ft.DataCell(ft.Text('0 h' if avgh is None else f'{avgh:,.0f} h',color=TEXT_MAIN)),
+                    ft.DataCell(ft.Text('$0.00/h' if avgc is None else f'${avgc:.2f}/h',color=TEXT_MAIN)),
                     ft.DataCell(ft.Text(var_txt,weight=ft.FontWeight.BOLD,color=var_color)),
                 ]))
                 first=False
