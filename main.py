@@ -5434,299 +5434,124 @@ def main(page: ft.Page):
         )
 
         # 6.2 EQUIPOS - COSTO POR HORA
-        # Histórico mensual basado en las INSC de cierre. Cada mes disponible se
-        # identifica por las INSC registradas y se compara contra el cierre anterior.
-        month_names={1:'Enero',2:'Febrero',3:'Marzo',4:'Abril',5:'Mayo',6:'Junio',
-                     7:'Julio',8:'Agosto',9:'Septiembre',10:'Octubre',11:'Noviembre',12:'Diciembre'}
-        close_periods=[]
-        for cr in query("""
-            SELECT substr(event_date,1,7) AS ym, MAX(event_date) AS close_date
-            FROM occurrences
-            WHERE event_code='INSC' AND event_date IS NOT NULL AND length(event_date)>=7
-            GROUP BY substr(event_date,1,7)
-            ORDER BY ym
-        """):
-            ym=str(cr['ym'] or '')
-            if len(ym)==7 and ym[4]=='-':
-                close_periods.append({'ym':ym,'close_date':str(cr['close_date'])})
+        # Vista actual basada en los mismos datos consolidados de 6.1.
+        # El histórico mensual se incorporará cuando existan cierres INSC suficientes.
+        cost_rows=[]
+        for r in result:
+            tire_cost=(r['ll_new'] or 0.0)+(r['ll_ree'] or 0.0)
+            hr=r['hr_rod'] or 0.0
+            cost_hour=(tire_cost/hr) if hr>0 else 0.0
+            cost_rows.append({
+                'code':r['code'],'hr_rod':hr,'ll_new':r['ll_new'] or 0.0,
+                'll_ree':r['ll_ree'] or 0.0,'cost_total':tire_cost,'cost_hour':cost_hour
+            })
+        cost_rows=sorted(cost_rows,key=lambda x:x['cost_hour'],reverse=True)
 
-        monthly_cache={}
+        # Power BI: azul principal para la serie actual.
+        C_COST='#118DFF'
+        ymax=max([r['cost_hour'] for r in cost_rows] or [1.0])
+        if ymax<=0:
+            ymax=1.0
+        if ymax<=2:
+            step=0.25
+        elif ymax<=6:
+            step=1.0
+        else:
+            step=2.0
+        axis_max=max(step,math.ceil(ymax/step)*step)
+        chart_h=260
+        bar_w=42
 
-        def monthly_snapshot(ym):
-            if ym in monthly_cache:
-                return monthly_cache[ym]
-            period=next((x for x in close_periods if x['ym']==ym),None)
-            if not period:
-                monthly_cache[ym]=[]
-                return []
-            close_date=period['close_date']
-            pos=next((i for i,x in enumerate(close_periods) if x['ym']==ym),-1)
-            prev_close=close_periods[pos-1]['close_date'] if pos>0 else None
-            y,m=[int(x) for x in ym.split('-')]
-            month_start=f"{y:04d}-{m:02d}-01"
-            start_boundary=prev_close or month_start
+        groups=[]
+        for r in cost_rows:
+            val=r['cost_hour']
+            bh=max(2,chart_h*(val/axis_max)) if val>0 else 2
+            groups.append(ft.Column([
+                ft.Container(
+                    height=chart_h+30,
+                    alignment=ft.Alignment.BOTTOM_CENTER,
+                    content=ft.Column([
+                        ft.Text(f"${val:.2f}",size=10,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
+                        ft.Container(
+                            width=bar_w,height=bh,bgcolor=C_COST,
+                            border_radius=ft.BorderRadius.only(top_left=4,top_right=4),
+                        ),
+                    ],spacing=3,horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                      alignment=ft.MainAxisAlignment.END),
+                ),
+                ft.Container(width=70,alignment=ft.Alignment.CENTER,
+                             content=ft.Text(str(r['code']),size=11,weight=ft.FontWeight.BOLD,color=TEXT_MAIN,text_align=ft.TextAlign.CENTER)),
+            ],spacing=5,horizontal_alignment=ft.CrossAxisAlignment.CENTER))
 
-            out=[]
-            for eq in eq_rows:
-                eid=int(eq['id'])
-                # Horómetro del cierre actual: INSC más alta del equipo en el mes.
-                cur_meter_row=query("""
-                    SELECT MAX(meter) AS meter
-                    FROM occurrences
-                    WHERE equipment_id=? AND event_code='INSC' AND substr(event_date,1,7)=?
-                """,(eid,ym))
-                cur_meter=n(cur_meter_row[0]['meter']) if cur_meter_row else None
-                if cur_meter is None:
-                    continue
+        # Líneas/etiquetas del eje Y, conservando el estilo del gráfico de referencia.
+        y_labels=[]
+        ticks=5
+        for i in range(ticks,-1,-1):
+            y_labels.append(ft.Text(f"${axis_max*i/ticks:.2f}",size=9,color=TEXT_MUTED))
 
-                prev_meter=None
-                if prev_close:
-                    pm=query("""
-                        SELECT meter FROM occurrences
-                        WHERE equipment_id=? AND event_code='INSC' AND event_date<=? AND meter IS NOT NULL
-                        ORDER BY event_date DESC,id DESC LIMIT 1
-                    """,(eid,prev_close))
-                    prev_meter=n(pm[0]['meter']) if pm else None
-
-                if prev_meter is not None:
-                    hr=max(0.0,cur_meter-prev_meter)
-                else:
-                    # Primer cierre disponible: usar el rango de horómetros del mes.
-                    mr=query("""
-                        SELECT MIN(meter) AS mn,MAX(meter) AS mx FROM occurrences
-                        WHERE equipment_id=? AND event_date>=? AND event_date<=? AND meter IS NOT NULL
-                    """,(eid,month_start,close_date))
-                    mn=n(mr[0]['mn']) if mr else None
-                    mx=n(mr[0]['mx']) if mr else None
-                    hr=max(0.0,(mx-mn)) if mn is not None and mx is not None else 0.0
-
-                tire_rows=query("""
-                    SELECT DISTINCT tire_id FROM occurrences
-                    WHERE equipment_id=? AND event_date>? AND event_date<=?
-                """,(eid,start_boundary,close_date))
-                tids=[int(x['tire_id']) for x in tire_rows]
-                ll_new_m=ll_ree_m=cut_m=noopt_m=0.0
-
-                for tid in tids:
-                    tr=query("SELECT * FROM tires WHERE id=?",(tid,))
-                    if not tr:
-                        continue
-                    t=tr[0]
-                    original=tire_original_min(t)
-                    cost=n(t['cost_usd'])
-                    if not original or not cost or original<=0:
-                        continue
-                    pxmm=cost/original
-
-                    evs=query("""
-                        SELECT id,event_code,event_date,tread_outer,tread_inner,reason
-                        FROM occurrences
-                        WHERE tire_id=? AND equipment_id=? AND event_date<=?
-                        ORDER BY event_date,id
-                    """,(tid,eid,close_date))
-                    if not evs:
-                        continue
-
-                    start_t=None
-                    # Última lectura conocida hasta el cierre anterior.
-                    for ev in evs:
-                        if ev['event_date']<=start_boundary:
-                            tm=tread_min(ev)
-                            if tm is not None:
-                                start_t=tm
-                    # Si el neumático ingresó durante el período, usar su primera lectura del período.
-                    if start_t is None:
-                        for ev in evs:
-                            if ev['event_date']>start_boundary:
-                                tm=tread_min(ev)
-                                if tm is not None:
-                                    start_t=tm
-                                    break
-                    end_t=None
-                    for ev in evs:
-                        if ev['event_date']<=close_date:
-                            tm=tread_min(ev)
-                            if tm is not None:
-                                end_t=tm
-
-                    used_mm=max(0.0,(start_t-end_t)) if start_t is not None and end_t is not None else 0.0
-                    used_value=used_mm*pxmm
-                    if is_reencauchada(t['tire_condition']):
-                        ll_ree_m+=used_value
-                    else:
-                        ll_new_m+=used_value
-
-                    # Pérdidas solo si la BAJA ocurrió dentro del período evaluado.
-                    baja=None
-                    for ev in evs:
-                        if ev['event_code']=='BAJA' and ev['event_date']>start_boundary and ev['event_date']<=close_date:
-                            baja=ev
-                    if baja is not None:
-                        bt=tread_min(baja)
-                        if bt is not None:
-                            retirement=n(t['retirement_tread']) or 0.0
-                            if is_cut_reason(baja['reason']):
-                                cut_m+=max(0.0,bt)*pxmm
-                            else:
-                                noopt_m+=max(0.0,bt-retirement)*pxmm
-
-                total_tire=ll_new_m+ll_ree_m
-                cph=(total_tire/hr) if hr>0 else 0.0
-                out.append({'code':eq['code'],'hr_rod':hr,'ll_new':ll_new_m,'ll_ree':ll_ree_m,
-                            'cut':cut_m,'no_opt':noopt_m,'cost_total':total_tire,'cost_hour':cph})
-            monthly_cache[ym]=out
-            return out
-
-        cost_hour_host=ft.Container()
-        years=sorted({x['ym'][:4] for x in close_periods})
-        selected_year=years[-1] if years else str(dt.datetime.now().year)
-        year_dd=ft.Dropdown(
-            label='Año',width=130,dense=True,value=selected_year,
-            options=[ft.dropdown.Option(y,y) for y in years] if years else [ft.dropdown.Option(selected_year,selected_year)]
-        )
-        closure_dd=ft.Dropdown(label='Cierre INSC',width=220,dense=True)
-
-        def periods_for_year(year):
-            return [x for x in close_periods if x['ym'].startswith(str(year)+'-')]
-
-        def fill_closure_options(year,keep=None):
-            ps=periods_for_year(year)
-            closure_dd.options=[ft.dropdown.Option(x['ym'],f"{month_names[int(x['ym'][5:7])]} {x['ym'][:4]}") for x in ps]
-            vals=[x['ym'] for x in ps]
-            closure_dd.value=keep if keep in vals else (vals[-1] if vals else None)
-
-        fill_closure_options(selected_year)
-
-        MONTH_COLORS=['#118DFF','#E66C37','#1AAB40','#D64545','#6B69D6','#E8B03E','#5F6B6D','#A66999','#3599B8','#8AD4EB','#FE9666','#01B8AA']
-
-        def build_cost_hour_panel():
-            ym=closure_dd.value
-            if not ym:
-                cost_hour_host.content=ft.Container(
-                    padding=18,bgcolor='#FFFFFF',border=ft.Border.all(1,'#DCE4EC'),border_radius=12,
-                    content=ft.Text('Aún no existen cierres INSC para construir el histórico de costo por hora.',color=TEXT_MUTED)
-                )
-                return
-
-            current=monthly_snapshot(ym)
-            selected_month=int(ym[5:7])
-            hist_periods=[x for x in periods_for_year(ym[:4]) if x['ym']<=ym]
-            hist_periods=hist_periods[-6:]  # últimos seis cierres para conservar legibilidad
-            hist={x['ym']:{r['code']:r for r in monthly_snapshot(x['ym'])} for x in hist_periods}
-            codes=sorted({r['code'] for x in hist.values() for r in x.values()})
-            ymax=max([r['cost_hour'] for x in hist.values() for r in x.values()] or [1.0])
-            if ymax<=0:
-                ymax=1.0
-            # Escala vertical limpia en US$/h.
-            step=0.10 if ymax<=1 else (0.5 if ymax<=5 else 1.0)
-            axis_max=max(step,math.ceil(ymax/step)*step)
-            chart_h=220
-
-            legend=ft.Row([
+        cost_chart=ft.Container(
+            bgcolor='#FFFFFF',border=ft.Border.all(1,'#DCE4EC'),border_radius=12,padding=18,
+            content=ft.Column([
                 ft.Row([
-                    ft.Container(width=10,height=10,bgcolor=MONTH_COLORS[int(x['ym'][5:7])-1],border_radius=2),
-                    ft.Text(month_names[int(x['ym'][5:7])][:3],size=10,color=TEXT_MAIN)
-                ],spacing=4,tight=True) for x in hist_periods
-            ],spacing=12,wrap=True)
-
-            groups=[]
-            for code in codes:
-                bars=[]
-                for x in hist_periods:
-                    val=hist[x['ym']].get(code,{}).get('cost_hour',0.0)
-                    bh=max(2,chart_h*(val/axis_max)) if val>0 else 2
-                    is_sel=(x['ym']==ym)
-                    bars.append(ft.Column([
-                        ft.Text(f"{val:.2f}" if val>0 else '',size=9,weight=ft.FontWeight.BOLD if is_sel else ft.FontWeight.NORMAL,color=TEXT_MAIN),
-                        ft.Container(width=20,height=bh,bgcolor=MONTH_COLORS[int(x['ym'][5:7])-1],border_radius=ft.BorderRadius.only(top_left=3,top_right=3),
-                                     border=ft.Border.all(2,'#1F2937') if is_sel and val>0 else None)
-                    ],spacing=2,horizontal_alignment=ft.CrossAxisAlignment.CENTER,alignment=ft.MainAxisAlignment.END))
-                groups.append(ft.Column([
-                    ft.Container(height=chart_h+24,alignment=ft.Alignment.BOTTOM_CENTER,
-                                 content=ft.Row(bars,spacing=4,vertical_alignment=ft.CrossAxisAlignment.END)),
-                    ft.Text(str(code),size=11,weight=ft.FontWeight.BOLD,color=TEXT_MAIN)
-                ],spacing=5,horizontal_alignment=ft.CrossAxisAlignment.CENTER))
-
-            chart=ft.Container(
-                bgcolor='#FFFFFF',border=ft.Border.all(1,'#DCE4EC'),border_radius=12,padding=16,
-                content=ft.Column([
+                    ft.Column([
+                        ft.Text('COSTO US$ / HORA - EQUIPOS',size=17,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
+                        ft.Text('Costo por hora acumulado según los datos actuales de 6.1',size=11,color=TEXT_MUTED),
+                    ],spacing=2),
+                    ft.Container(expand=True),
                     ft.Row([
-                        ft.Column([
-                            ft.Text('EQUIPOS COSTO POR HORA',size=16,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
-                            ft.Text(f"Cierre: {month_names[selected_month]} {ym[:4]} · US$/hora",size=11,color=TEXT_MUTED)
-                        ],spacing=2),
-                        ft.Container(expand=True),legend
-                    ],vertical_alignment=ft.CrossAxisAlignment.START),
-                    ft.Divider(height=10,color='#E7EDF3'),
-                    ft.Row([
-                        ft.Container(width=56,height=chart_h+24,content=ft.Column([
-                            ft.Text(f"${axis_max:.2f}",size=9,color=TEXT_MUTED),
-                            ft.Container(expand=True),
-                            ft.Text(f"${axis_max/2:.2f}",size=9,color=TEXT_MUTED),
-                            ft.Container(expand=True),
-                            ft.Text('$0.00',size=9,color=TEXT_MUTED),
-                        ],alignment=ft.MainAxisAlignment.SPACE_BETWEEN)),
-                        ft.Container(expand=True,content=ft.Row(groups,spacing=18,scroll=ft.ScrollMode.AUTO,vertical_alignment=ft.CrossAxisAlignment.END))
-                    ],vertical_alignment=ft.CrossAxisAlignment.END),
-                    ft.Text('Costo US$/hora = (LL/NEW + LL/REE) / Hr-Rod del mismo período de cierre.',size=10,color=TEXT_MUTED)
-                ],spacing=8)
-            )
+                        ft.Container(width=10,height=10,bgcolor=C_COST,border_radius=2),
+                        ft.Text('Costo US$/Hr',size=10,color=TEXT_MAIN),
+                    ],spacing=5,tight=True),
+                ],vertical_alignment=ft.CrossAxisAlignment.START),
+                ft.Divider(height=12,color='#E7EDF3'),
+                ft.Row([
+                    ft.Container(width=58,height=chart_h+30,
+                                 content=ft.Column(y_labels,alignment=ft.MainAxisAlignment.SPACE_BETWEEN)),
+                    ft.Container(
+                        expand=True,
+                        border=ft.Border.only(bottom=ft.BorderSide(1,'#AEBAC6')),
+                        content=ft.Row(groups,spacing=18,scroll=ft.ScrollMode.AUTO,
+                                       vertical_alignment=ft.CrossAxisAlignment.END),
+                    ),
+                ],vertical_alignment=ft.CrossAxisAlignment.END),
+                ft.Container(alignment=ft.Alignment.CENTER,content=ft.Text('EQUIPO',size=11,weight=ft.FontWeight.BOLD,color=TEXT_MUTED)),
+                ft.Text('Costo US$/hora = (LL/NEW + LL/REE) / Hr-Rod.',size=10,color=TEXT_MUTED),
+            ],spacing=8),
+        )
 
-            tcols=[
-                ft.DataColumn(ft.Text('EQUIPO',weight=ft.FontWeight.BOLD,color=ft.Colors.WHITE)),
-                ft.DataColumn(ft.Text('Hr-Rod',weight=ft.FontWeight.BOLD,color=ft.Colors.WHITE),numeric=True),
-                ft.DataColumn(ft.Text('LL/NEW',weight=ft.FontWeight.BOLD,color=ft.Colors.WHITE),numeric=True),
-                ft.DataColumn(ft.Text('LL/REE',weight=ft.FontWeight.BOLD,color=ft.Colors.WHITE),numeric=True),
-                ft.DataColumn(ft.Text('COSTO TOTAL',weight=ft.FontWeight.BOLD,color=ft.Colors.WHITE),numeric=True),
-                ft.DataColumn(ft.Text('$/HRS',weight=ft.FontWeight.BOLD,color=ft.Colors.WHITE),numeric=True),
-                ft.DataColumn(ft.Text('CIERRE INSC',weight=ft.FontWeight.BOLD,color=ft.Colors.WHITE)),
-            ]
-            trows=[]
-            close_label=f"{month_names[selected_month]} {ym[:4]}"
-            for r in current:
-                trows.append(ft.DataRow(cells=[
-                    ft.DataCell(ft.Text(str(r['code']),weight=ft.FontWeight.BOLD,color=TEXT_MAIN)),
-                    ft.DataCell(ft.Text(f"{r['hr_rod']:,.0f} h",color=TEXT_MAIN)),
-                    ft.DataCell(ft.Text(money(r['ll_new']),color=TEXT_MAIN)),
-                    ft.DataCell(ft.Text(money(r['ll_ree']),color=TEXT_MAIN)),
-                    ft.DataCell(ft.Text(money(r['cost_total']),color=TEXT_MAIN)),
-                    ft.DataCell(ft.Text(f"${r['cost_hour']:.2f}/h",weight=ft.FontWeight.BOLD,color=TEXT_MAIN)),
-                    ft.DataCell(ft.Text(close_label,color=TEXT_MAIN)),
-                ]))
-            if not trows:
-                trows=[ft.DataRow(cells=[ft.DataCell(ft.Text('Sin datos para este cierre',color=TEXT_MUTED))]+[ft.DataCell(ft.Text('—')) for _ in range(6)])]
-            tbl=ft.DataTable(columns=tcols,rows=trows,heading_row_color=NAV_BG,heading_row_height=44,
-                             data_row_min_height=40,data_row_max_height=44,horizontal_margin=14,column_spacing=28,
-                             border=ft.Border.all(1,'#DCE4EC'),divider_thickness=1)
-
-            cost_hour_host.content=ft.Column([
-                chart,
-                ft.Container(content=ft.Row([tbl],scroll=ft.ScrollMode.AUTO))
-            ],spacing=12)
-
-        def on_year_change(e):
-            fill_closure_options(year_dd.value)
-            build_cost_hour_panel()
-            page.update()
-
-        def on_closure_change(e):
-            build_cost_hour_panel()
-            page.update()
-
-        year_dd.on_change=on_year_change
-        closure_dd.on_change=on_closure_change
-        build_cost_hour_panel()
+        cost_columns=[
+            ft.DataColumn(ft.Text('EQUIPO',weight=ft.FontWeight.BOLD,color=ft.Colors.WHITE)),
+            ft.DataColumn(ft.Text('Hr-Rod',weight=ft.FontWeight.BOLD,color=ft.Colors.WHITE),numeric=True),
+            ft.DataColumn(ft.Text('LL/NEW',weight=ft.FontWeight.BOLD,color=ft.Colors.WHITE),numeric=True),
+            ft.DataColumn(ft.Text('LL/REE',weight=ft.FontWeight.BOLD,color=ft.Colors.WHITE),numeric=True),
+            ft.DataColumn(ft.Text('COSTO TOTAL',weight=ft.FontWeight.BOLD,color=ft.Colors.WHITE),numeric=True),
+            ft.DataColumn(ft.Text('$/HRS',weight=ft.FontWeight.BOLD,color=ft.Colors.WHITE),numeric=True),
+        ]
+        cost_table_rows=[]
+        for r in cost_rows:
+            cost_table_rows.append(ft.DataRow(cells=[
+                ft.DataCell(ft.Text(str(r['code']),weight=ft.FontWeight.BOLD,color=TEXT_MAIN)),
+                ft.DataCell(ft.Text(f"{r['hr_rod']:,.0f} h",color=TEXT_MAIN)),
+                ft.DataCell(ft.Text(money(r['ll_new']),color=TEXT_MAIN)),
+                ft.DataCell(ft.Text(money(r['ll_ree']),color=TEXT_MAIN)),
+                ft.DataCell(ft.Text(money(r['cost_total']),color=TEXT_MAIN)),
+                ft.DataCell(ft.Text(f"${r['cost_hour']:.2f}/h",weight=ft.FontWeight.BOLD,color=TEXT_MAIN)),
+            ]))
+        if not cost_table_rows:
+            cost_table_rows=[ft.DataRow(cells=[ft.DataCell(ft.Text('Sin datos',color=TEXT_MUTED))]+[ft.DataCell(ft.Text('—')) for _ in range(5)])]
+        cost_table=ft.DataTable(
+            columns=cost_columns,rows=cost_table_rows,heading_row_color=NAV_BG,heading_row_height=44,
+            data_row_min_height=40,data_row_max_height=44,horizontal_margin=14,column_spacing=30,
+            border=ft.Border.all(1,'#DCE4EC'),divider_thickness=1,
+        )
 
         section_62=ft.Column([
-            ft.Row([
-                ft.Column([
-                    ft.Text('6.2 EQUIPOS COSTO POR HORA',size=17,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
-                    ft.Text('Histórico mensual según inspecciones INSC de cierre',size=12,color=TEXT_MUTED),
-                ],spacing=2),
-                ft.Container(expand=True),
-                year_dd,closure_dd,
-            ],vertical_alignment=ft.CrossAxisAlignment.END),
-            cost_hour_host,
+            ft.Column([
+                ft.Text('6.2 EQUIPOS COSTO POR HORA',size=17,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
+                ft.Text('Comparativo por equipo con los datos actualmente obtenidos',size=12,color=TEXT_MUTED),
+            ],spacing=2),
+            cost_chart,
+            ft.Container(content=ft.Row([cost_table],scroll=ft.ScrollMode.AUTO)),
         ],spacing=12)
 
         note=ft.Container(
