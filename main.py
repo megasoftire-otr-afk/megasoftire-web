@@ -72,6 +72,8 @@ MASTER_TIRE_UPDATES_20260902 = [
     ('1373', 'HC5MYC850', '01/01/2026', 7800.0, 'Yokohama', '29.5-29', 'Y524', 'L-5', 'Tire SOL', 100.0, 104.0, 104.0, 15.0, 2800.0, 'Convencional', 'Nueva'),
 ]
 
+NFU_BAJAS_20260908 = [('1308', '10241Y10617', '2025-10-02', 3850.0, 'GY', '18.00-25', 'SMO 5D', 'L-5S', 'SOLTRAK', 95.0, 84.0, 103.0, 15.0, 'Convencional', 'Nueva', '2026-05-04', 'CAT 47', 'P3', 4060.0, 22.0, 24.0, 'DR', '', 'DESGASTE REGULAR', 2502.0), ('1309', '08251Y10369', '2025-10-09', 3850.0, 'GY', '18.00-25', 'SMO 5D', 'L-5S', 'SOLTRAK', 94.0, 84.0, 103.0, 15.0, 'Convencional', 'Nueva', '2026-03-01', 'CAT 47', 'P4', 4060.0, 34.0, 36.0, 'CPB', '', 'CORTE PASANTE', 2534.0), ('1297', 'AH8GVC327', '2025-09-06', 7800.0, 'YK', '29.5-29', 'Y-524', 'L-5', 'TIRE SOL', 94.0, 103.0, 103.0, 15.0, 'Convencional', 'Nueva', '2026-01-06', 'CAT 43', 'P1', 14776.0, 22.0, 26.0, 'DR', '', 'DESGASTE REGULAR', 12915.0), ('1298', 'XS6YVC157', '2025-09-06', 7800.0, 'YK', '29.5-29', 'Y-524', 'L-5', 'TIRE SOL', 94.0, 103.0, 103.0, 15.0, 'Convencional', 'Nueva', '2026-02-21', 'CAT 43', 'P2', 15124.0, 25.0, 28.0, 'DR', '', 'DESGASTE REGULAR', 12915.0), ('1322', 'AE2HVC374', '2025-12-12', 7800.0, 'YK', '29.5-29', 'Y-524', 'L-5', 'TIRE SOL', 94.0, 103.0, 103.0, 15.0, 'Convencional', 'Nueva', '2026-03-01', 'CAT 44', 'P1', 15166.0, 80.0, 84.0, 'CPB', '', 'CORTE PASANTE', 13602.0), ('1331', 'AE4HVC656', '2026-01-17', 7800.0, 'YK', '29.5-29', 'Y-524', 'L-5', 'TIRE SOL', 94.0, 103.0, 103.0, 15.0, 'Convencional', 'Nueva', '2026-03-01', 'CAT 44', 'P2', 15210.0, 91.0, 92.0, 'CPB', '', 'CORTE PASANTE', 14087.0), ('1332', 'AE2HVC372', '2026-01-30', 7800.0, 'YK', '29.5-29', 'Y-524', 'L-5', 'TIRE SOL', 94.0, 103.0, 103.0, 15.0, 'Convencional', 'Nueva', '2026-04-30', 'CAT 51', 'P1', 3707.0, 29.0, 35.0, 'CPB', '', 'CORTE PASANTE', 2466.0), ('1333', 'AE3HVC508', '2026-01-30', 7800.0, 'YK', '29.5-29', 'Y-524', 'L-5', 'TIRE SOL', 94.0, 103.0, 103.0, 15.0, 'Convencional', 'Nueva', '2026-04-30', 'CAT 51', 'P2', 3707.0, 24.0, 27.0, 'CPB', '', 'CORTE PASANTE', 2466.0), ('1425', 'XY0AVC151', '2025-12-26', 7800.0, 'YK', '29.5-29', 'Y-524', 'L-5', 'TIRE SOL', 94.0, 103.0, 103.0, 15.0, 'Convencional', 'Nueva', '2026-05-03', 'CAT 51', 'P4', 3759.0, 88.0, 90.0, 'CPB', '', 'CORTE PASANTE', 2029.0)]
+
 
 def main(page: ft.Page):
     init_db()
@@ -89,6 +91,7 @@ def main(page: ft.Page):
         ('tire_condition', 'TEXT'),
         ('retirement_tread', 'REAL'),
         ('projected_life_target', 'REAL'),
+        ('installation_meter', 'REAL'),
     ]:
         if col_name not in startup_cols:
             execute(f'ALTER TABLE tires ADD COLUMN {col_name} {col_type}')
@@ -137,6 +140,29 @@ def main(page: ft.Page):
             'INSERT OR REPLACE INTO app_meta(key,value) VALUES(?,?)',
             (master_migration_key, '36 neumáticos actualizados por código - 02/09/2026')
         )
+
+    nfu_migration_key='nfu_bajas_20260908_v1'
+    if not query('SELECT value FROM app_meta WHERE key=?',(nfu_migration_key,)):
+        for rec in NFU_BAJAS_20260908:
+            (code,serial,entry_date,cost,brand,size,design,tra,supplier,pressure,new_ext,new_int,retirement,construction,condition,baja_date,equipment_label,position,baja_meter,rtd_ext,rtd_int,reason,location,notes,install_meter)=rec
+            ex=query('SELECT id FROM tires WHERE code=?',(code,))
+            if ex:
+                tid=int(ex[0]['id'])
+                execute("UPDATE tires SET serial=?,entry_date=?,cost_usd=?,brand=?,size=?,design=?,compound=?,supplier=?,recommended_pressure=?,new_tread=?,new_tread_outer=?,new_tread_inner=?,retirement_tread=?,construction_type=?,tire_condition=?,installation_meter=?,tread_outer=?,tread_inner=?,current_meter=?,status='BAJA',equipment_id=NULL,position=NULL WHERE id=?",(serial,entry_date,cost,brand,size,design,tra,supplier,pressure,max(new_ext,new_int),new_ext,new_int,retirement,construction,condition,install_meter,rtd_ext,rtd_int,baja_meter,tid))
+            else:
+                execute("INSERT INTO tires(code,serial,brand,size,design,new_tread,recommended_pressure,tread_inner,tread_outer,status,current_meter,entry_date,cost_usd,compound,supplier,new_tread_outer,new_tread_inner,construction_type,tire_condition,retirement_tread,installation_meter) VALUES(?,?,?,?,?,?,?,?,?,'BAJA',?,?,?,?,?,?,?,?,?,?,?)",(code,serial,brand,size,design,max(new_ext,new_int),pressure,rtd_int,rtd_ext,baja_meter,entry_date,cost,tra,supplier,new_ext,new_int,construction,condition,retirement,install_meter))
+                tid=int(query('SELECT id FROM tires WHERE code=?',(code,))[0]['id'])
+            digits=''.join(ch for ch in str(equipment_label) if ch.isdigit())
+            eq=None
+            for cand in [equipment_label,f'SC-{digits}',f'SC {digits}',f'CAT-{digits}']:
+                q=query('SELECT id FROM equipment WHERE UPPER(TRIM(code))=UPPER(TRIM(?)) LIMIT 1',(cand,))
+                if q: eq=int(q[0]['id']); break
+            ob=query("SELECT id FROM occurrences WHERE tire_id=? AND event_code='BAJA' ORDER BY id DESC LIMIT 1",(tid,))
+            if ob:
+                execute('UPDATE occurrences SET event_date=?,equipment_id=?,position=?,meter=?,tread_outer=?,tread_inner=?,reason=?,location=?,notes=? WHERE id=?',(baja_date,eq,position,baja_meter,rtd_ext,rtd_int,reason,location,notes,int(ob[0]['id'])))
+            else:
+                execute("INSERT INTO occurrences(tire_id,event_code,event_date,equipment_id,position,meter,tread_inner,tread_outer,pressure,pressure_condition,reason,location,notes) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",(tid,'BAJA',baja_date,eq,position,baja_meter,rtd_int,rtd_ext,None,'FRIO',reason,location,notes))
+        execute('INSERT OR REPLACE INTO app_meta(key,value) VALUES(?,?)',(nfu_migration_key,'9 NFU/BAJA - 08/09/2026'))
 
     page.title = 'MegaSoftire Web 2026'
     page.padding = 0
@@ -5026,7 +5052,10 @@ def main(page: ft.Page):
                     if diff>=0:
                         total += diff
                     start=None
-            return total if total>0 else None
+            if total>0: return total
+            z=query('SELECT installation_meter FROM tires WHERE id=?',(tire_id,)); b=query("SELECT meter FROM occurrences WHERE tire_id=? AND event_code='BAJA' ORDER BY id DESC LIMIT 1",(tire_id,))
+            im=num(z[0]['installation_meter']) if z else None; bm=num(b[0]['meter']) if b else None
+            return (bm-im) if im is not None and bm is not None and bm>=im else None
 
         def parse_year(raw):
             if not raw: return None
@@ -5569,7 +5598,10 @@ def main(page: ft.Page):
                 elif code in ('DINS','BAJA') and start is not None and meter is not None:
                     if meter>=start: total += meter-start
                     start=None
-            return total if total>0 else None
+            if total>0: return total
+            z=query('SELECT installation_meter FROM tires WHERE id=?',(tire_id,)); b=query("SELECT meter FROM occurrences WHERE tire_id=? AND event_code='BAJA' ORDER BY id DESC LIMIT 1",(tire_id,))
+            im=n(z[0]['installation_meter']) if z else None; bm=n(b[0]['meter']) if b else None
+            return (bm-im) if im is not None and bm is not None and bm>=im else None
 
         for t in baja_tires:
             last=query("""SELECT o.reason,o.equipment_id,e.code equipment_code,e.model equipment_model,e.vehicle_type
