@@ -1995,20 +1995,20 @@ def main(page: ft.Page):
             width=265,
             options=[ft.dropdown.Option(k,f'{k} - {v}') for k,v in EVENTS.items() if k != 'ROT']
         )
-        date=ft.TextField(label='Fecha',value=dt.date.today().strftime('%d/%m/%Y'),width=165)
-        equip=ft.Dropdown(label='Equipo',width=220,options=[ft.dropdown.Option(str(r['id']),r['code']) for r in query('SELECT id,code FROM equipment WHERE active=1 ORDER BY code')])
-        pos=ft.TextField(label='Posición',width=120)
-        meter=ft.TextField(label='Horómetro / km',width=165)
-        ti=ft.TextField(label='Cocada int.',width=130)
-        to=ft.TextField(label='Cocada ext.',width=130)
-        press=ft.TextField(label='Presión',width=120)
+        date=ft.TextField(label='Fecha',value=dt.date.today().strftime('%d/%m/%Y'),width=135,dense=True)
+        equip=ft.Dropdown(label='Equipo',width=125,dense=True,options=[ft.dropdown.Option(str(r['id']),r['code']) for r in query('SELECT id,code FROM equipment WHERE active=1 ORDER BY code')])
+        pos=ft.TextField(label='Pos.',width=70,dense=True)
+        meter=ft.TextField(label='Horómetro',width=135,dense=True)
+        ti=ft.TextField(label='INT',width=72,dense=True)
+        to=ft.TextField(label='EXT',width=72,dense=True)
+        press=ft.TextField(label='Psi',width=72,dense=True)
         cond=ft.Dropdown(
-            label='Condición', width=160, value='FRIO',
+            label='Cond.', width=105, value='FRIO', dense=True,
             options=[ft.dropdown.Option('FRIO','FRIO'), ft.dropdown.Option('CALIENTE','CALIENTE')]
         )
-        reason=ft.TextField(label='Motivo',width=280)
-        loc=ft.TextField(label='Ubicación',width=220)
-        notes=ft.TextField(label='Observaciones',multiline=True,min_lines=2,max_lines=3)
+        reason=ft.TextField(label='Motivo',width=180,dense=True)
+        loc=ft.TextField(label='Lugar',width=180,dense=True)
+        notes=ft.TextField(label='Observaciones',multiline=True,min_lines=1,max_lines=2,width=180,dense=True)
         ref=ft.Text('',size=11,color=TEXT_MUTED)
         pre_tire = session.pop('movement_tire_id', None)
         pre_event = session.pop('movement_event', None)
@@ -2299,6 +2299,10 @@ def main(page: ft.Page):
 
         def update_save_state(e=None):
             save_btn.disabled = not form_is_valid()
+            try:
+                refresh_new_event_preview()
+            except Exception:
+                pass
             page.update()
 
         def refresh(e=None):
@@ -2482,7 +2486,9 @@ def main(page: ft.Page):
                 )
 
             snack(f'Evento {ec} registrado correctamente.')
+            set_inline_event_mode(False)
             refresh()
+            load_foxpro_ficha(tid)
             update_event_button_states(tid)
             save_btn.disabled = True
             page.update()
@@ -2568,46 +2574,90 @@ def main(page: ft.Page):
             'Costo x Hrs.',
             'Tapa Válvula',
             'Lugar de Operación',
+            'Motivo',
+            'Observaciones',
         ]
-        event_values = [foxpro_values]
-        for _ in range(2):
-            event_values.append({
-                label: ft.Text('—', size=13, color=TEXT_MAIN)
-                for label in vertical_labels
-            })
+        # Las tres columnas históricas son independientes de la ficha maestra.
+        event_values = [
+            {label: ft.Text('—', size=13, color=TEXT_MAIN) for label in vertical_labels}
+            for _ in range(3)
+        ]
 
         event_headers = [
             ft.Text('Último evento', size=11, weight=ft.FontWeight.BOLD, color=TEXT_MUTED),
             ft.Text('Penúltimo evento', size=11, weight=ft.FontWeight.BOLD, color=TEXT_MUTED),
             ft.Text('Antepenúltimo evento', size=11, weight=ft.FontWeight.BOLD, color=TEXT_MUTED),
         ]
-        # Cabecera de las tres columnas de eventos.
+
+        # Primera columna editable que aparece al seleccionar un evento.
+        new_event_header = ft.Text('NUEVO EVENTO', size=11, weight=ft.FontWeight.BOLD, color='#1565C0')
+        new_event_header_box = ft.Container(content=new_event_header, expand=True, visible=False)
+        new_event_cells = {}
+        new_event_text = {
+            'Nro. Eventos': ft.Text('NUEVO', size=12, weight=ft.FontWeight.BOLD, color='#1565C0'),
+            'Hrs Acumuladas': ft.Text('—', size=12, color=TEXT_MAIN),
+            'Ext/Int - Inicial': ft.Text('—', size=12, color=TEXT_MAIN),
+            'Proyección Hrs': ft.Text('—', size=12, color=TEXT_MAIN),
+            'Horas Acumuladas': ft.Text('—', size=12, color=TEXT_MAIN),
+            'Costo x Hrs.': ft.Text('—', size=12, color=TEXT_MAIN),
+            'Tapa Válvula': ft.Text('—', size=12, color=TEXT_MAIN),
+        }
+        inline_controls = {
+            'Nro. Eventos': new_event_text['Nro. Eventos'],
+            'Fecha': date,
+            'Equipo-Posición': ft.Row([equip, pos], spacing=4, tight=True),
+            'Horómetro': meter,
+            'Hrs Acumuladas': new_event_text['Hrs Acumuladas'],
+            'Ext/Int - Inicial': new_event_text['Ext/Int - Inicial'],
+            'Ext/Int - Último': ft.Row([to, ti], spacing=4, tight=True),
+            'Psi Act(F/C)-Rec': ft.Row([press, cond], spacing=4, tight=True),
+            'Proyección Hrs': new_event_text['Proyección Hrs'],
+            'Horas Acumuladas': new_event_text['Horas Acumuladas'],
+            'Costo x Hrs.': new_event_text['Costo x Hrs.'],
+            'Tapa Válvula': new_event_text['Tapa Válvula'],
+            'Lugar de Operación': loc,
+            'Motivo': reason,
+            'Observaciones': notes,
+        }
+
+        # Cabecera: NUEVO EVENTO + tres columnas históricas.
         ficha_rows.append(
             ft.Row([
-                ft.Container(width=185),
-                *[
-                    ft.Container(content=event_headers[i], expand=True)
-                    for i in range(3)
-                ],
-            ], spacing=12)
+                ft.Container(width=155),
+                new_event_header_box,
+                *[ft.Container(content=event_headers[i], expand=True) for i in range(3)],
+            ], spacing=8)
         )
 
         for label in vertical_labels:
+            new_box = ft.Container(content=inline_controls[label], expand=True, visible=False)
+            new_event_cells[label] = new_box
             ficha_rows.append(
                 ft.Row([
                     ft.Container(
-                        content=ft.Text(label, size=12, weight=ft.FontWeight.W_600, color=TEXT_MUTED),
-                        width=185
+                        content=ft.Text(label, size=11, weight=ft.FontWeight.W_600, color=TEXT_MUTED),
+                        width=155
                     ),
+                    new_box,
                     *[
-                        ft.Container(
-                            content=event_values[i][label],
-                            expand=True
-                        )
+                        ft.Container(content=event_values[i][label], expand=True)
                         for i in range(3)
                     ],
-                ], spacing=12)
+                ], spacing=8)
             )
+
+        inline_action_box = ft.Container(
+            content=ft.Row([], spacing=6),
+            expand=True,
+            visible=False
+        )
+        ficha_rows.append(
+            ft.Row([
+                ft.Container(content=ft.Text('Acción', size=11, weight=ft.FontWeight.W_600, color=TEXT_MUTED), width=155),
+                inline_action_box,
+                ft.Container(expand=True), ft.Container(expand=True), ft.Container(expand=True),
+            ], spacing=8)
+        )
 
         ficha_panel = card(
             ft.Column([
@@ -2653,32 +2703,85 @@ def main(page: ft.Page):
             width=None
         )
 
-        movement_form = card(ft.Column([
-            ft.Text('Datos del movimiento',size=17,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
-            ft.Row([tire,event,date],wrap=True),
-            ref,
-            ft.Row([equip,pos,meter],wrap=True),
-            ft.Row([to,ti,press,cond],wrap=True),
-            ft.Row([reason,loc],wrap=True),
-            notes,
-            ft.Row([
-                save_btn,
-                ft.Text(
-                    'Guardar se habilita solo cuando fecha, horómetro y cocadas cumplen las validaciones.',
-                    size=11,color=TEXT_MUTED
-                )
-            ],wrap=True)
-        ]))
-        movement_form.visible = False
+        # El formulario tradicional se mantiene como marcador interno, pero ya no se muestra.
+        # Los mismos controles se editan directamente en la primera columna de eventos.
+        movement_form = ft.Container(visible=False)
+        inline_mode = {'active': False}
+
+        cancel_inline_btn = ft.TextButton('Cancelar', icon=ft.Icons.CLOSE)
+        save_btn.text = 'GUARDAR'
+        save_btn.icon = ft.Icons.SAVE
+        inline_action_box.content = ft.Row([save_btn, cancel_inline_btn], spacing=6, wrap=True)
+
+        def set_inline_event_mode(active):
+            inline_mode['active'] = bool(active)
+            new_event_header_box.visible = bool(active)
+            inline_action_box.visible = bool(active)
+            for box in new_event_cells.values():
+                box.visible = bool(active)
+            if not active:
+                event.value = None
+
+        def refresh_new_event_preview():
+            if not inline_mode['active'] or not tire.value:
+                return
+            r = current_tire()
+            if not r:
+                return
+            ec = event.value or ''
+            new_event_header.value = f'NUEVO: {ec}' if ec else 'NUEVO EVENTO'
+
+            occ = query('SELECT * FROM occurrences WHERE tire_id=? ORDER BY id', (int(tire.value),))
+            base_inst = None
+            for item in reversed(occ):
+                if item['event_code'] == 'INST':
+                    base_inst = item
+                    break
+
+            init_e = base_inst['tread_outer'] if base_inst and base_inst['tread_outer'] is not None else r['new_tread']
+            init_i = base_inst['tread_inner'] if base_inst and base_inst['tread_inner'] is not None else r['new_tread']
+            new_event_text['Ext/Int - Inicial'].value = f"{fmt(init_e)}/{fmt(init_i)}"
+
+            event_hours = None
+            try:
+                m = num(meter.value)
+                if m is not None and base_inst and base_inst['meter'] is not None:
+                    event_hours = max(0, float(m) - float(base_inst['meter']))
+            except Exception:
+                event_hours = None
+            hrs_text = f'{event_hours:.1f}' if event_hours is not None else '—'
+            new_event_text['Hrs Acumuladas'].value = hrs_text
+            new_event_text['Horas Acumuladas'].value = hrs_text
+
+            life_value = r['projected_life_target'] if r['projected_life_target'] is not None else r['projected_life']
+            new_event_text['Proyección Hrs'].value = fmt(life_value) or '—'
+            try:
+                c = float(r['cost_usd']) if r['cost_usd'] is not None else None
+            except Exception:
+                c = None
+            new_event_text['Costo x Hrs.'].value = (
+                f'$ {c / event_hours:.2f}/h' if c is not None and event_hours is not None and event_hours > 0 else '—'
+            )
+            new_event_text['Tapa Válvula'].value = '—'
+
+        def cancel_inline(e=None):
+            set_inline_event_mode(False)
+            if tire.value:
+                load_foxpro_ficha(int(tire.value))
+                update_event_button_states(int(tire.value))
+            page.update()
+
+        cancel_inline_btn.on_click = cancel_inline
 
         def clear_foxpro_ficha():
             header_tire.value = 'Seleccione un neumático'
             header_detail.value = ''
             for label in foxpro_order:
                 foxpro_values[label].value = '—'
-            for i in range(1, 3):
+            for i in range(3):
                 for label in vertical_labels:
                     event_values[i][label].value = '—'
+            set_inline_event_mode(False)
             event_headers[0].value = 'Último evento'
             event_headers[1].value = 'Penúltimo evento'
             event_headers[2].value = 'Antepenúltimo evento'
@@ -2868,6 +2971,8 @@ def main(page: ft.Page):
                     'SI' if ('TAPA' in note_text or 'VALVULA' in note_text or 'VÁLVULA' in note_text) else 'NO'
                 )
                 values['Lugar de Operación'].value = fmt(target['location']) if target['location'] else '—'
+                values['Motivo'].value = fmt(target['reason']) if 'reason' in target.keys() and target['reason'] else '—'
+                values['Observaciones'].value = fmt(target['notes']) if 'notes' in target.keys() and target['notes'] else '—'
 
             for col_idx in range(3):
                 target = last_three[col_idx] if col_idx < len(last_three) else None
@@ -2882,8 +2987,8 @@ def main(page: ft.Page):
             if not tid:
                 return
             tire.value = str(tid)
+            set_inline_event_mode(False)
             movement_form.visible = False
-            event.value = None
             load_foxpro_ficha(tid)
             update_event_button_states(tid)
             refresh()
@@ -2900,8 +3005,8 @@ def main(page: ft.Page):
 
         def do_search(e=None):
             term = (search_tire.value or '').strip()
+            set_inline_event_mode(False)
             movement_form.visible = False
-            event.value = None
             register_missing_btn.visible = False
             if not term:
                 search_result.visible = False
@@ -3003,9 +3108,11 @@ def main(page: ft.Page):
             if ec == 'ROT':
                 return snack('ROT permanece bloqueado hasta definir su funcionalidad.', True)
             event.value = ec
-            movement_form.visible = True
+            movement_form.visible = False
+            set_inline_event_mode(True)
             load_current_state()
             apply_event_rules()
+            refresh_new_event_preview()
             update_save_state()
             page.update()
 
@@ -3053,7 +3160,6 @@ def main(page: ft.Page):
         content.content=ft.Column([
             page_title('Movimiento de neumáticos','Registro operativo del ciclo de vida'),
             top_operational_area,
-            movement_form,
             card(ft.Column([
                 ft.Text('Historial del neumático',size=17,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
                 ft.Text('Use la barra inferior para desplazarse horizontalmente. La columna Acción permite eliminar eventos.',size=11,color=TEXT_MUTED),
