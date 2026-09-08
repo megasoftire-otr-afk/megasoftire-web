@@ -5147,6 +5147,216 @@ def main(page: ft.Page):
         ],scroll=ft.ScrollMode.AUTO,spacing=14)
         page.update()
 
+    def inventory_consumption_view():
+        """6. Inventarios y consumos -> 6.1 Utilización y pérdida por equipo.
+
+        Criterio evaluado:
+        - Hr-Rod: MAX(horómetro) - MIN(horómetro) registrado por equipo.
+        - LL/NEW / LL/REE: valor del caucho efectivamente consumido en cada equipo,
+          según mm usados y costo por mm del neumático.
+        - $CORTE: valor remanente perdido en bajas cuyo motivo contiene CORTE/CTL/CTB.
+        - $NO OPT: valor remanente por encima de la profundidad de retiro en otras bajas.
+        """
+
+        def n(v):
+            try:
+                return float(v) if v is not None else None
+            except Exception:
+                return None
+
+        def tread_min(row):
+            vals=[]
+            for key in ('tread_outer','tread_inner'):
+                try:
+                    v=n(row[key])
+                except Exception:
+                    v=None
+                if v is not None and v >= 0:
+                    vals.append(v)
+            return min(vals) if vals else None
+
+        def tire_original_min(t):
+            vals=[]
+            for key in ('new_tread_outer','new_tread_inner','new_tread'):
+                if key in t.keys():
+                    v=n(t[key])
+                    if v is not None and v > 0:
+                        vals.append(v)
+            return min(vals) if vals else None
+
+        def is_reencauchada(value):
+            txt=str(value or '').strip().upper()
+            return ('REENCAUCH' in txt) or ('REENC' in txt)
+
+        def is_cut_reason(value):
+            txt=str(value or '').strip().upper()
+            return ('CORTE' in txt) or txt in ('CTL','CTB') or txt.startswith('CT')
+
+        eq_rows=query("SELECT id,code,brand,model,vehicle_type,active FROM equipment ORDER BY code")
+        result=[]
+
+        for eq in eq_rows:
+            eid=int(eq['id'])
+            occs=query("""
+                SELECT o.id,o.tire_id,o.event_code,o.event_date,o.meter,
+                       o.tread_outer,o.tread_inner,o.reason,
+                       t.cost_usd,t.new_tread,t.new_tread_outer,t.new_tread_inner,
+                       t.retirement_tread,t.tire_condition
+                FROM occurrences o
+                JOIN tires t ON t.id=o.tire_id
+                WHERE o.equipment_id=?
+                ORDER BY o.id
+            """,(eid,))
+
+            if not occs:
+                continue
+
+            meters=[n(r['meter']) for r in occs if n(r['meter']) is not None]
+            hr_rod=(max(meters)-min(meters)) if len(meters)>=2 else 0.0
+            if hr_rod < 0:
+                hr_rod=0.0
+
+            by_tire={}
+            for r in occs:
+                by_tire.setdefault(int(r['tire_id']),[]).append(r)
+
+            ll_new=0.0
+            ll_ree=0.0
+            cut_loss=0.0
+            no_opt=0.0
+
+            for tid,events in by_tire.items():
+                first=events[0]
+                original=tire_original_min(first)
+                cost=n(first['cost_usd'])
+                if not original or not cost or original <= 0:
+                    continue
+                pxmm=cost/original
+
+                # Inicio: preferir cocada del evento INST en este equipo; si no existe,
+                # usar la primera cocada conocida. Fin: última cocada conocida.
+                start_tread=None
+                for ev in events:
+                    tm=tread_min(ev)
+                    if ev['event_code']=='INST' and tm is not None:
+                        start_tread=tm
+                        break
+                if start_tread is None:
+                    for ev in events:
+                        tm=tread_min(ev)
+                        if tm is not None:
+                            start_tread=tm
+                            break
+
+                end_tread=None
+                for ev in reversed(events):
+                    tm=tread_min(ev)
+                    if tm is not None:
+                        end_tread=tm
+                        break
+
+                used_mm=0.0
+                if start_tread is not None and end_tread is not None:
+                    used_mm=max(0.0,start_tread-end_tread)
+                used_value=used_mm*pxmm
+
+                if is_reencauchada(first['tire_condition']):
+                    ll_ree += used_value
+                else:
+                    ll_new += used_value
+
+                # Pérdidas: solo si existe una BAJA registrada en este equipo.
+                baja=None
+                for ev in reversed(events):
+                    if ev['event_code']=='BAJA':
+                        baja=ev
+                        break
+                if baja is not None:
+                    baja_tread=tread_min(baja)
+                    if baja_tread is None:
+                        baja_tread=end_tread
+                    if baja_tread is not None:
+                        reason=baja['reason']
+                        retirement=n(first['retirement_tread']) or 0.0
+                        if is_cut_reason(reason):
+                            cut_loss += max(0.0,baja_tread)*pxmm
+                        else:
+                            no_opt += max(0.0,baja_tread-retirement)*pxmm
+
+            result.append({
+                'code':eq['code'],
+                'll_new':ll_new,
+                'll_ree':ll_ree,
+                'cut':cut_loss,
+                'no_opt':no_opt,
+                'hr_rod':hr_rod,
+            })
+
+        def money(v):
+            return f"${v:,.2f}"
+
+        columns=[
+            ft.DataColumn(ft.Text('EQUIP',weight=ft.FontWeight.BOLD,color=ft.Colors.WHITE)),
+            ft.DataColumn(ft.Text('LL/NEW',weight=ft.FontWeight.BOLD,color=ft.Colors.WHITE),numeric=True),
+            ft.DataColumn(ft.Text('LL/REE',weight=ft.FontWeight.BOLD,color=ft.Colors.WHITE),numeric=True),
+            ft.DataColumn(ft.Text('$CORTE',weight=ft.FontWeight.BOLD,color=ft.Colors.WHITE),numeric=True),
+            ft.DataColumn(ft.Text('$NO OPT',weight=ft.FontWeight.BOLD,color=ft.Colors.WHITE),numeric=True),
+            ft.DataColumn(ft.Text('Hr-Rod',weight=ft.FontWeight.BOLD,color=ft.Colors.WHITE),numeric=True),
+        ]
+        rows=[]
+        for r in result:
+            rows.append(ft.DataRow(cells=[
+                ft.DataCell(ft.Text(str(r['code']),weight=ft.FontWeight.BOLD,color=TEXT_MAIN)),
+                ft.DataCell(ft.Text(money(r['ll_new']),color=TEXT_MAIN)),
+                ft.DataCell(ft.Text(money(r['ll_ree']),color=TEXT_MAIN)),
+                ft.DataCell(ft.Text(money(r['cut']),color=TEXT_MAIN)),
+                ft.DataCell(ft.Text(money(r['no_opt']),color=TEXT_MAIN)),
+                ft.DataCell(ft.Text(f"{r['hr_rod']:,.0f} h",color=TEXT_MAIN)),
+            ]))
+
+        if not rows:
+            rows=[ft.DataRow(cells=[
+                ft.DataCell(ft.Text('Sin movimientos registrados',color=TEXT_MUTED)),
+                ft.DataCell(ft.Text('—')),ft.DataCell(ft.Text('—')),
+                ft.DataCell(ft.Text('—')),ft.DataCell(ft.Text('—')),ft.DataCell(ft.Text('—')),
+            ])]
+
+        table=ft.DataTable(
+            columns=columns,
+            rows=rows,
+            heading_row_color=NAV_BG,
+            heading_row_height=44,
+            data_row_min_height=42,
+            data_row_max_height=46,
+            horizontal_margin=16,
+            column_spacing=38,
+            border=ft.Border.all(1,'#DCE4EC'),
+            divider_thickness=1,
+        )
+
+        note=ft.Container(
+            bgcolor='#F7FAFC',
+            border=ft.Border.all(1,'#DCE4EC'),
+            border_radius=8,
+            padding=12,
+            content=ft.Text(
+                'Criterio Hr-Rod: diferencia entre el mayor y el menor horómetro registrado para cada equipo. '
+                'LL/NEW y LL/REE valorizan los mm consumidos; $CORTE y $NO OPT muestran pérdida de remanente.',
+                size=11,color=TEXT_MUTED
+            )
+        )
+
+        content.content=ft.Column([
+            page_title('6. INVENTARIOS Y CONSUMOS','Existencias, costos, consumos y remanentes'),
+            card(ft.Column([
+                ft.Text('6.1 UTILIZACIÓN Y PÉRDIDA POR EQUIPO',size=17,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
+                ft.Text('Resumen económico y horas rodadas por equipo',size=12,color=TEXT_MUTED),
+                ft.Row([table],scroll=ft.ScrollMode.ALWAYS),
+                note,
+            ],spacing=12))
+        ],scroll=ft.ScrollMode.AUTO,spacing=14)
+        page.update()
+
     def placeholder(title,desc):
         content.content=ft.Column([
             page_title(title,desc),
@@ -5168,7 +5378,7 @@ def main(page: ft.Page):
         elif idx==3: maintenance_final_report_view()
         elif idx==4: standby_view()
         elif idx==5: nfu_view()
-        elif idx==6: placeholder('Inventarios y consumos','Existencias, costos, consumos y remanentes')
+        elif idx==6: inventory_consumption_view()
         elif idx==7: equipment_view()
         elif idx==8: tires_view()
         elif idx==9: reports_view()
