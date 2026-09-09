@@ -5319,7 +5319,50 @@ def main(page: ft.Page):
         page.update()
 
     def standby_view():
-        """Módulo 4 · Retén / Stand-by: control operativo de neumáticos disponibles."""
+        """4. Retén / Stand-by - menú visual con el mismo estándar de los módulos 3, 6 y 9."""
+        def access_card():
+            accent='#1565C0'; soft='#EEF5FF'
+            return ft.Container(
+                width=292,height=260,bgcolor=soft,
+                border=ft.Border.all(1,accent+'55'),border_radius=14,padding=18,
+                on_click=lambda e: standby_detail_view(),ink=True,
+                content=ft.Column([
+                    ft.Row([
+                        ft.Container(bgcolor=accent,border_radius=9,padding=ft.Padding(11,6,11,6),
+                                     content=ft.Text('4.1',size=16,weight=ft.FontWeight.BOLD,color='#FFFFFF')),
+                        ft.Container(expand=True),
+                        ft.Container(width=54,height=54,border_radius=14,bgcolor='#FFFFFF',alignment=ft.Alignment.CENTER,
+                                     content=ft.Icon(ft.Icons.INVENTORY_2_OUTLINED,size=31,color=accent)),
+                    ]),
+                    ft.Text('NEUMÁTICOS EN\nRETÉN / STAND-BY',size=16,weight=ft.FontWeight.BOLD,color=TEXT_MAIN,text_align=ft.TextAlign.CENTER),
+                    ft.Text('Control de neumáticos desmontados disponibles y sus acciones operativas.',size=11,color=TEXT_MUTED,text_align=ft.TextAlign.CENTER),
+                    ft.Container(height=4),
+                    ft.Container(bgcolor=accent,border_radius=9,padding=10,alignment=ft.Alignment.CENTER,
+                                 content=ft.Row([
+                                     ft.Icon(ft.Icons.BAR_CHART,color='#FFFFFF',size=20),
+                                     ft.Text('VER REPORTE',color='#FFFFFF',weight=ft.FontWeight.BOLD,size=13),
+                                     ft.Icon(ft.Icons.CHEVRON_RIGHT,color='#FFFFFF',size=20),
+                                 ],alignment=ft.MainAxisAlignment.CENTER,spacing=8)),
+                ],spacing=12,horizontal_alignment=ft.CrossAxisAlignment.CENTER)
+            )
+        content.content=ft.Column([
+            page_title('4. RETÉN / STAND-BY','Control operativo de neumáticos disponibles'),
+            card(ft.Column([
+                ft.Row([
+                    ft.Container(width=48,height=48,border_radius=24,bgcolor='#EAF2FF',alignment=ft.Alignment.CENTER,
+                                 content=ft.Icon(ft.Icons.INVENTORY_2_OUTLINED,color=NAV_ACCENT,size=27)),
+                    ft.Column([
+                        ft.Text('RETÉN / STAND-BY',size=18,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
+                        ft.Text('Seleccione el reporte para visualizar el detalle.',size=11,color=TEXT_MUTED),
+                    ],spacing=2),
+                ],spacing=12),
+                ft.Row([access_card(),ft.Container(width=292,height=260),ft.Container(width=292,height=260),ft.Container(width=292,height=260)],spacing=12),
+            ],spacing=16),padding=16),
+        ],scroll=ft.ScrollMode.AUTO,spacing=16)
+        page.update()
+
+    def standby_detail_view():
+        """Módulo 4.1 · Retén / Stand-by: control operativo de neumáticos disponibles."""
         search=ft.TextField(label='Buscar código / serie / marca / medida',prefix_icon=ft.Icons.SEARCH,width=330)
         rows_box=ft.Column(spacing=0)
         summary=ft.Text('',size=12,color=TEXT_MUTED)
@@ -5427,7 +5470,8 @@ def main(page: ft.Page):
         kpis=ft.Row([],wrap=True,spacing=12,run_spacing=12)
         refresh()
         content.content=ft.Column([
-            page_title('4. RETÉN / STAND-BY','Neumáticos desmontados disponibles para instalación, inversión, reparación o baja'),
+            page_title('4. RETÉN / STAND-BY · 4.1 NEUMÁTICOS EN RETÉN / STAND-BY','Neumáticos desmontados disponibles para instalación, inversión, reparación o baja'),
+            ft.Row([ft.OutlinedButton('VOLVER A RETÉN / STAND-BY',icon=ft.Icons.ARROW_BACK,on_click=lambda e: standby_view())]),
             kpis,
             card(ft.Column([
                 ft.Row([ft.Text('NEUMÁTICOS EN RETÉN / STAND-BY',size=16,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),ft.Container(expand=True),search]),
@@ -5593,7 +5637,50 @@ def main(page: ft.Page):
         page.update()
 
     def nfu_view():
-        """Módulo 10 · NFU / BAJA: cuadro independiente de neumáticos dados de baja."""
+        """5. NFU / Bajas - menú visual con el mismo estándar de los módulos 3, 6 y 9."""
+        def access_card():
+            accent='#C62828'; soft='#FFF0F0'
+            return ft.Container(
+                width=292,height=260,bgcolor=soft,
+                border=ft.Border.all(1,accent+'55'),border_radius=14,padding=18,
+                on_click=lambda e: nfu_detail_view(),ink=True,
+                content=ft.Column([
+                    ft.Row([
+                        ft.Container(bgcolor=accent,border_radius=9,padding=ft.Padding(11,6,11,6),
+                                     content=ft.Text('5.1',size=16,weight=ft.FontWeight.BOLD,color='#FFFFFF')),
+                        ft.Container(expand=True),
+                        ft.Container(width=54,height=54,border_radius=14,bgcolor='#FFFFFF',alignment=ft.Alignment.CENTER,
+                                     content=ft.Icon(ft.Icons.DELETE_FOREVER_OUTLINED,size=31,color=accent)),
+                    ]),
+                    ft.Text('NEUMÁTICOS\nNFU / BAJAS',size=16,weight=ft.FontWeight.BOLD,color=TEXT_MAIN,text_align=ft.TextAlign.CENTER),
+                    ft.Text('Control técnico e histórico de neumáticos retirados definitivamente de operación.',size=11,color=TEXT_MUTED,text_align=ft.TextAlign.CENTER),
+                    ft.Container(height=4),
+                    ft.Container(bgcolor=accent,border_radius=9,padding=10,alignment=ft.Alignment.CENTER,
+                                 content=ft.Row([
+                                     ft.Icon(ft.Icons.BAR_CHART,color='#FFFFFF',size=20),
+                                     ft.Text('VER REPORTE',color='#FFFFFF',weight=ft.FontWeight.BOLD,size=13),
+                                     ft.Icon(ft.Icons.CHEVRON_RIGHT,color='#FFFFFF',size=20),
+                                 ],alignment=ft.MainAxisAlignment.CENTER,spacing=8)),
+                ],spacing=12,horizontal_alignment=ft.CrossAxisAlignment.CENTER)
+            )
+        content.content=ft.Column([
+            page_title('5. NFU / BAJAS','Control de neumáticos fuera de servicio'),
+            card(ft.Column([
+                ft.Row([
+                    ft.Container(width=48,height=48,border_radius=24,bgcolor='#EAF2FF',alignment=ft.Alignment.CENTER,
+                                 content=ft.Icon(ft.Icons.DELETE_FOREVER_OUTLINED,color=NAV_ACCENT,size=27)),
+                    ft.Column([
+                        ft.Text('NFU / BAJAS',size=18,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
+                        ft.Text('Seleccione el reporte para visualizar el detalle.',size=11,color=TEXT_MUTED),
+                    ],spacing=2),
+                ],spacing=12),
+                ft.Row([access_card(),ft.Container(width=292,height=260),ft.Container(width=292,height=260),ft.Container(width=292,height=260)],spacing=12),
+            ],spacing=16),padding=16),
+        ],scroll=ft.ScrollMode.AUTO,spacing=16)
+        page.update()
+
+    def nfu_detail_view():
+        """Módulo 5.1 · NFU / BAJA: cuadro independiente de neumáticos dados de baja."""
         search=ft.TextField(
             label='Buscar código / serie / marca / medida / equipo',
             prefix_icon=ft.Icons.SEARCH,
