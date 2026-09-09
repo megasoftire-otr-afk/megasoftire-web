@@ -6394,76 +6394,118 @@ def main(page: ft.Page):
             ('','Inventario Cierre Llantas de Repuesto',close_spare,_pct(close_spare)),
         ]
 
-        def balance_cell(text,width,bold=False,align=ft.TextAlign.LEFT,color=TEXT_MAIN):
+        # Presentación 6.4: réplica del balance histórico tipo Excel aprobado.
+        # Se muestran subtotales numéricos por bloque sin etiquetas adicionales.
+        def balance_cell(text,width,bold=False,align=ft.TextAlign.LEFT,color=TEXT_MAIN,size=11):
             return ft.Container(
-                width=width,padding=ft.Padding(left=8,top=7,right=8,bottom=7),
-                content=ft.Text(str(text),size=11,weight=ft.FontWeight.BOLD if bold else ft.FontWeight.NORMAL,
-                                color=color,text_align=align,no_wrap=True)
+                width=width,
+                padding=ft.Padding(left=4,top=4,right=4,bottom=4),
+                content=ft.Text(
+                    str(text),size=size,
+                    weight=ft.FontWeight.BOLD if bold else ft.FontWeight.NORMAL,
+                    color=color,text_align=align,no_wrap=True
+                )
             )
 
-        bal_controls=[]
-        current_block=None
-        for i,(block,label,value,pct) in enumerate(balance_rows):
-            block_changed=bool(block)
-            if block_changed and current_block is not None:
-                bal_controls.append(ft.Divider(height=1,color='#1F1F1F'))
-            if block_changed:
-                current_block=block
-            bal_controls.append(ft.Container(
-                bgcolor='#FFFFFF' if i%2==0 else '#FAFAFA',
-                content=ft.Row([
-                    balance_cell(block,125,bold=bool(block)),
-                    balance_cell(label,420),
-                    balance_cell(f'US$ {value:,.2f}',130,bold=False,align=ft.TextAlign.RIGHT),
-                    balance_cell(f'{pct:.1f}%',70,bold=True,align=ft.TextAlign.RIGHT),
-                ],spacing=0)
-            ))
-        # Totales por bloque y comprobación final del balance.
-        bal_controls.extend([
-            ft.Divider(height=1,color='#1F1F1F'),
-            ft.Container(bgcolor='#F2F2F2',content=ft.Row([
-                balance_cell('',125),balance_cell('TOTAL INVENTARIO INICIAL + INGRESOS',420,True),
-                balance_cell(f'US$ {total_available:,.2f}',130,True,ft.TextAlign.RIGHT),balance_cell('100.0%',70,True,ft.TextAlign.RIGHT)
-            ],spacing=0)),
-            ft.Container(bgcolor='#F2F2F2',content=ft.Row([
-                balance_cell('',125),balance_cell('TOTAL SALIDAS + SALDO',420,True),
-                balance_cell(f'US$ {(total_out+total_close):,.2f}',130,True,ft.TextAlign.RIGHT),balance_cell('100.0%',70,True,ft.TextAlign.RIGHT)
-            ],spacing=0)),
-            ft.Container(
-                bgcolor='#0B4A72',border=ft.Border(top=ft.BorderSide(3,'#D32F2F')),
-                content=ft.Row([
-                    balance_cell('BALANCE FINAL',125,True,color=ft.Colors.WHITE),
-                    balance_cell('Inventario inicial + Ingresos - Salidas - Saldo',420,True,color=ft.Colors.WHITE),
-                    balance_cell(f'US$ {balance_final:,.2f}',130,True,ft.TextAlign.RIGHT,ft.Colors.WHITE),
-                    balance_cell('CUADRADO' if abs(balance_final)<0.01 else 'REVISAR',70,True,ft.TextAlign.RIGHT,ft.Colors.WHITE),
-                ],spacing=0)
-            )
-        ])
+        month_names={1:'ENE',2:'FEB',3:'MAR',4:'ABR',5:'MAY',6:'JUN',7:'JUL',8:'AGO',9:'SEP',10:'OCT',11:'NOV',12:'DIC'}
+        _today=dt.datetime.now()
+        period_label=f"{month_names.get(_today.month,'')}-{_today.year} $"
+
+        # Anchos fijos para conservar simetría y alineación del formato original.
+        W_BLOCK=112
+        W_LABEL=515
+        W_VALUE=132
+        W_PCT=68
+
+        def balance_data_row(block,label,value,pct=None,bold_value=False):
+            pct_text='' if pct is None else f'{pct:.1f}%'
+            return ft.Row([
+                balance_cell(block,W_BLOCK),
+                balance_cell(label,W_LABEL),
+                balance_cell(f'{value:,.2f}',W_VALUE,bold=bold_value,align=ft.TextAlign.RIGHT),
+                balance_cell(pct_text,W_PCT,bold=(pct is not None),align=ft.TextAlign.RIGHT),
+            ],spacing=0,vertical_alignment=ft.CrossAxisAlignment.CENTER)
+
+        def balance_subtotal(value,pct_text=''):
+            return ft.Row([
+                balance_cell('',W_BLOCK),
+                balance_cell('',W_LABEL),
+                ft.Container(
+                    width=W_VALUE,
+                    border=ft.Border(top=ft.BorderSide(1.2,'#1F1F1F')),
+                    padding=ft.Padding(left=4,top=4,right=4,bottom=5),
+                    content=ft.Text(f'{value:,.2f}',size=11,weight=ft.FontWeight.BOLD,text_align=ft.TextAlign.RIGHT,color=TEXT_MAIN,no_wrap=True),
+                ),
+                balance_cell(pct_text,W_PCT,bold=bool(pct_text),align=ft.TextAlign.RIGHT),
+            ],spacing=0)
+
+        # El % conserva la lógica del formato: participación respecto al total disponible
+        # (Inventario inicial + Ingresos).
+        bal_controls=[
+            # Encabezado de columnas monetarias.
+            ft.Row([
+                balance_cell('',W_BLOCK),
+                balance_cell('',W_LABEL),
+                balance_cell(period_label,W_VALUE,align=ft.TextAlign.RIGHT,size=11),
+                balance_cell('%',W_PCT,align=ft.TextAlign.RIGHT,size=11),
+            ],spacing=0),
+            ft.Container(height=8),
+
+            # INVENTARIO INICIAL (sin porcentaje individual, como el formato fuente).
+            balance_data_row('INVENTARIO','Inventario Apertura Llantas Operativas en Equipos',opening_oper,None),
+            balance_data_row('INICIAL','Inventario Apertura Llantas de Repuesto',opening_spare,None),
+            ft.Container(height=12),
+
+            # INGRESOS.
+            balance_data_row('INGRESOS','Llantas Nuevas Instaladas  (compras)',income_new,_pct(income_new)),
+            balance_data_row('','Equipos que ingresaron con llantas a la operación',income_equipment_arrival,_pct(income_equipment_arrival)),
+            balance_data_row('','Llantas Reencauchadas Instaladas (compras)',income_reenc,_pct(income_reenc)),
+            # Subtotal INVENTARIO + INGRESOS, sin texto adicional.
+            balance_subtotal(total_available,'100%'),
+            ft.Container(height=14),
+            ft.Divider(height=1,thickness=1.2,color='#1F1F1F'),
+            ft.Container(height=12),
+
+            # SALIDAS.
+            balance_data_row('SALIDAS','Neumáticos Originales - Retiros x Desgaste Regular',out_new,_pct(out_new)),
+            balance_data_row('','Neumáticos Reencauchados - Retiros x Desgaste',out_reenc,_pct(out_reenc)),
+            balance_data_row('','Neumáticos Retirados x Cortes',out_cut,_pct(out_cut)),
+            balance_data_row('','Remanente No utilizado (Retiro de llanta x Seguridad)',out_noopt,_pct(out_noopt)),
+            balance_data_row('','Remanente utilizado para el Reencauche',out_mmree_value,_pct(out_mmree_value)),
+            balance_data_row('','Remanente No utilizado (Retiro de llanta x Equipo de baja)',out_rteq,_pct(out_rteq)),
+            # Subtotal SALIDAS, sin etiqueta.
+            balance_subtotal(total_out),
+            ft.Container(height=14),
+            ft.Divider(height=1,thickness=1.2,color='#1F1F1F'),
+            ft.Container(height=12),
+
+            # SALDO.
+            balance_data_row('SALDO','Inventario Cierre Operativas en Equipos',close_oper,_pct(close_oper)),
+            balance_data_row('','Inventario Cierre Llantas de Repuesto',close_spare,_pct(close_spare)),
+            # Subtotal SALDO, sin etiqueta.
+            balance_subtotal(total_close),
+            ft.Container(height=12),
+            ft.Divider(height=1,thickness=1.2,color='#1F1F1F'),
+        ]
 
         section_64=ft.Column([
+            # Título rojo, centrado, como el formato Excel.
             ft.Container(
-                bgcolor='#C00000',padding=ft.Padding.symmetric(horizontal=14,vertical=10),
-                content=ft.Row([
-                    ft.Text('6.4  BALANCE GENERAL',size=17,weight=ft.FontWeight.BOLD,color=ft.Colors.WHITE),
-                    ft.Container(expand=True),
-                    ft.Text('UTILIZACIÓN Y PÉRDIDA DE NEUMÁTICOS OTR',size=12,weight=ft.FontWeight.BOLD,color=ft.Colors.WHITE),
-                ],vertical_alignment=ft.CrossAxisAlignment.CENTER)
+                bgcolor='#F00000',height=48,alignment=ft.Alignment.CENTER,
+                content=ft.Text('BALANCE GENERAL',size=20,weight=ft.FontWeight.BOLD,color=ft.Colors.WHITE,text_align=ft.TextAlign.CENTER)
             ),
-            ft.Text('Conciliación económica: Inventario inicial + Ingresos = Salidas + Saldo',size=11,color=TEXT_MUTED),
+            # Subtítulo gris independiente.
             ft.Container(
-                border=ft.Border.all(1,'#D9DEE5'),border_radius=6,
+                bgcolor='#D9D9D9',height=45,alignment=ft.Alignment.CENTER,
+                content=ft.Text('UTILIZACIÓN Y PERDIDA DE NEUMÁTICOS OTR',size=15,weight=ft.FontWeight.BOLD,color='#000000',text_align=ft.TextAlign.CENTER)
+            ),
+            ft.Container(height=12),
+            ft.Container(
+                bgcolor='#FFFFFF',
+                padding=ft.Padding(left=10,top=4,right=10,bottom=4),
                 content=ft.Column(bal_controls,spacing=0)
             ),
-            ft.Container(
-                bgcolor='#FFFDEB',border=ft.Border.all(1,'#D9D2A8'),padding=9,
-                content=ft.Text(
-                    'Criterio temporal de apertura: mientras no exista un inventario histórico de apertura, '
-                    'Inventario Apertura Repuestos = US$ 0.00 e Inventario Apertura Operativas se obtiene por diferencia. '
-                    '“Equipos que ingresaron con llantas” se mantiene en US$ 0.00 hasta disponer de un campo que identifique ese origen.',
-                    size=10,color=TEXT_MUTED
-                )
-            ),
-        ],spacing=8)
+        ],spacing=0)
 
         note=ft.Container(
             bgcolor='#F7FAFC',
