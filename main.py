@@ -17,12 +17,11 @@ MODULES = [
     ('Movimiento de neumáticos', ft.Icons.SWAP_HORIZ),
     ('Neumáticos en servicio', ft.Icons.DIRECTIONS_CAR),
     ('Programa de mantenimiento', ft.Icons.BUILD_CIRCLE_OUTLINED),
-    ('Retén / Stand-by', ft.Icons.INVENTORY_2_OUTLINED),
-    ('NFU / BAJAS', ft.Icons.DELETE_FOREVER_OUTLINED),
-    ('Inventarios y consumos', ft.Icons.WAREHOUSE_OUTLINED),
-    ('Administración de equipos', ft.Icons.ADMIN_PANEL_SETTINGS_OUTLINED),
-    ('Registro maestro de neumáticos', ft.Icons.TABLE_CHART_OUTLINED),
-    ('Reportes e indicadores', ft.Icons.ASSESSMENT_OUTLINED),
+    ('Neumáticos en Stand By', ft.Icons.INVENTORY_2_OUTLINED),
+    ('Neumáticos de Baja', ft.Icons.DELETE_FOREVER_OUTLINED),
+    ('Análisis de operación', ft.Icons.ANALYTICS_OUTLINED),
+    ('Tablas y reportes', ft.Icons.ASSESSMENT_OUTLINED),
+    ('Administración', ft.Icons.ADMIN_PANEL_SETTINGS_OUTLINED),
 ]
 
 BG = '#F4F7FB'
@@ -435,7 +434,7 @@ def main(page: ft.Page):
 
         refresh()
         content.content=ft.Column([
-            page_title('Administración de equipos','Registro y consulta de la flota'),
+            page_title('8.1 EQUIPOS','Administración de equipos · Registro y consulta de la flota'),
             card(ft.Column([
                 ft.Text('Nuevo equipo',size=17,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
                 ft.Row([code,brand,model,location,kind,motor],wrap=True),
@@ -893,8 +892,8 @@ def main(page: ft.Page):
                 snack(str(ex),True)
 
         refresh()
-        title='Registro maestro de neumáticos' if not status_filter else f'Neumáticos: {status_filter}'
-        subtitle='Consulta y estado actual de cada neumático'
+        title='8.2 NEUMÁTICOS' if not status_filter else f'Neumáticos: {status_filter}'
+        subtitle='Registro maestro de neumáticos · Consulta y estado actual de cada neumático'
         blocks=[page_title(title,subtitle)]
 
         if not status_filter:
@@ -4691,7 +4690,7 @@ def main(page: ft.Page):
         page.update()
 
     def reports_view():
-        """Módulo 9 · Reportes e indicadores.
+        """Módulo 7 · Tablas y reportes.
 
         Replica la separación funcional observada en NEXA/FLT8000:
         9.1 formato llantas de baja-anual,
@@ -5182,46 +5181,46 @@ def main(page: ft.Page):
 
         report_meta={
             '91':{
-                'num':'9.1','icon':ft.Icons.DELETE_SWEEP_OUTLINED,'accent':'#B71C1C','soft':'#FFF1F1',
+                'num':'7.1','icon':ft.Icons.DELETE_SWEEP_OUTLINED,'accent':'#B71C1C','soft':'#FFF1F1',
                 'title':'FORMATO LLANTAS DE BAJA - ANUAL',
                 'desc':'Historial anual de neumáticos dados de baja, rendimiento, remanente, costo y motivo de retiro.',
-                'detail':'9.1 FORMATO LLANTAS DE BAJA - ANUAL','body':body_91,
+                'detail':'7.1 FORMATO LLANTAS DE BAJA - ANUAL','body':body_91,
             },
             '92':{
-                'num':'9.2','icon':ft.Icons.EXIT_TO_APP_OUTLINED,'accent':'#C62828','soft':'#FFF4F4',
+                'num':'7.2','icon':ft.Icons.EXIT_TO_APP_OUTLINED,'accent':'#C62828','soft':'#FFF4F4',
                 'title':'RETIRO POR EQUIPO',
                 'desc':'Neumáticos retirados por salida del equipo a otra operación (RTEQ), con costo utilizado y remanente económico no utilizado.',
-                'detail':'9.2 REPORT - RETIRO POR EQUIPO','body':body_92,
+                'detail':'7.2 REPORT - RETIRO POR EQUIPO','body':body_92,
             },
             '94':{
-                'num':'9.3','icon':ft.Icons.ASSESSMENT_OUTLINED,'accent':'#00796B','soft':'#ECF8F6',
+                'num':'7.3','icon':ft.Icons.ASSESSMENT_OUTLINED,'accent':'#00796B','soft':'#ECF8F6',
                 'title':'FORMATO REPORTE GENERAL',
                 'desc':'Relación técnica general de los neumáticos actualmente instalados y en uso.',
-                'detail':'9.3 FORMATO REPORTE GENERAL','body':body_94,
+                'detail':'7.3 FORMATO REPORTE GENERAL','body':body_94,
             },
             '95':{
-                'num':'9.4','icon':ft.Icons.SUMMARIZE_OUTLINED,'accent':'#6A1B9A','soft':'#F7F0FB',
+                'num':'7.4','icon':ft.Icons.SUMMARIZE_OUTLINED,'accent':'#6A1B9A','soft':'#F7F0FB',
                 'title':'RESUMEN POR EQUIPO',
                 'desc':'Historial consolidado por equipo: utilización, costos, pérdidas, rendimiento y eventos.',
-                'detail':'9.4 RESUMEN POR EQUIPO','body':body_95,
+                'detail':'7.4 RESUMEN POR EQUIPO','body':body_95,
             },
             '97':{
-                'num':'9.5','icon':ft.Icons.RECEIPT_LONG_OUTLINED,'accent':'#1565C0','soft':'#EEF6FF',
+                'num':'7.5','icon':ft.Icons.RECEIPT_LONG_OUTLINED,'accent':'#1565C0','soft':'#EEF6FF',
                 'title':'COSTO ACUMULADO\nLL/NUEVAS Y REENCAUCHADAS INSTALADAS',
                 'desc':'Inversión histórica de neumáticos nuevos y reencauchados que registran instalación.',
-                'detail':'9.5 COSTO ACUMUL. LL/NUEVAS Y REENC. INSTALADAS','body':body_97,
+                'detail':'7.5 COSTO ACUMUL. LL/NUEVAS Y REENC. INSTALADAS','body':body_97,
             },
             '98':{
-                'num':'9.6','icon':ft.Icons.PRECISION_MANUFACTURING_OUTLINED,'accent':'#138A3D','soft':'#EEFAF2',
+                'num':'7.6','icon':ft.Icons.PRECISION_MANUFACTURING_OUTLINED,'accent':'#138A3D','soft':'#EEFAF2',
                 'title':'COSTO ACTUAL\nLL/OPERATIVAS EN EQUIPOS',
                 'desc':'Valorización económica actual de los neumáticos que se encuentran en servicio.',
-                'detail':'9.6 COSTO ACTUAL LL/OPERATIVAS EN EQUIPOS','body':body_98,
+                'detail':'7.6 COSTO ACTUAL LL/OPERATIVAS EN EQUIPOS','body':body_98,
             },
             '99':{
-                'num':'9.7','icon':ft.Icons.INVENTORY_2_OUTLINED,'accent':'#EF6C00','soft':'#FFF5EA',
+                'num':'7.7','icon':ft.Icons.INVENTORY_2_OUTLINED,'accent':'#EF6C00','soft':'#FFF5EA',
                 'title':'COSTO ACTUAL\nLL/DE REPUESTO',
                 'desc':'Valorización económica de los neumáticos disponibles actualmente en Stand-by.',
-                'detail':'9.7 COSTO ACTUAL LL/DE REPUESTOS','body':body_99,
+                'detail':'7.7 COSTO ACTUAL LL/DE REPUESTOS','body':body_99,
             },
         }
 
@@ -5312,7 +5311,7 @@ def main(page: ft.Page):
 
         report_detail.visible=False
         content.content=ft.Column([
-            page_title('9. REPORTES E INDICADORES','Información para una mejor toma de decisiones'),
+            page_title('7. TABLAS Y REPORTES','Información técnica y económica para una mejor toma de decisiones'),
             report_cards,
             report_detail,
         ],scroll=ft.ScrollMode.AUTO,spacing=16)
@@ -5346,13 +5345,13 @@ def main(page: ft.Page):
                 ],spacing=12,horizontal_alignment=ft.CrossAxisAlignment.CENTER)
             )
         content.content=ft.Column([
-            page_title('4. RETÉN / STAND-BY','Control operativo de neumáticos disponibles'),
+            page_title('4. NEUMÁTICOS EN STAND BY','Control operativo de neumáticos disponibles'),
             card(ft.Column([
                 ft.Row([
                     ft.Container(width=48,height=48,border_radius=24,bgcolor='#EAF2FF',alignment=ft.Alignment.CENTER,
                                  content=ft.Icon(ft.Icons.INVENTORY_2_OUTLINED,color=NAV_ACCENT,size=27)),
                     ft.Column([
-                        ft.Text('RETÉN / STAND-BY',size=18,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
+                        ft.Text('NEUMÁTICOS EN STAND BY',size=18,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
                         ft.Text('Seleccione el reporte para visualizar el detalle.',size=11,color=TEXT_MUTED),
                     ],spacing=2),
                 ],spacing=12),
@@ -5664,7 +5663,7 @@ def main(page: ft.Page):
                 ],spacing=12,horizontal_alignment=ft.CrossAxisAlignment.CENTER)
             )
         content.content=ft.Column([
-            page_title('5. NFU / BAJAS','Control de neumáticos fuera de servicio'),
+            page_title('5. NEUMÁTICOS DE BAJA','Control de neumáticos fuera de servicio'),
             card(ft.Column([
                 ft.Row([
                     ft.Container(width=48,height=48,border_radius=24,bgcolor='#EAF2FF',alignment=ft.Alignment.CENTER,
@@ -5884,7 +5883,7 @@ def main(page: ft.Page):
         page.update()
 
     def inventory_consumption_view():
-        """6. Inventarios y consumos -> 6.1 Utilización y pérdida por equipo.
+        """6. Análisis de operación -> 6.1 Utilización y pérdida por equipo.
 
         Criterio evaluado:
         - Hr-Rod: MAX(horómetro) - MIN(horómetro) registrado por equipo.
@@ -6747,7 +6746,7 @@ def main(page: ft.Page):
             m=inventory_meta[key]
             inventory_detail.controls=[
                 ft.Row([
-                    ft.OutlinedButton('VOLVER A INVENTARIOS Y CONSUMOS',icon=ft.Icons.ARROW_BACK,on_click=lambda e: close_inventory_section()),
+                    ft.OutlinedButton('VOLVER A ANÁLISIS DE OPERACIÓN',icon=ft.Icons.ARROW_BACK,on_click=lambda e: close_inventory_section()),
                     ft.Container(expand=True),
                     ft.Container(bgcolor=m['accent'],border_radius=8,padding=ft.Padding(10,5,10,5),
                                  content=ft.Text(m['num'],color='#FFFFFF',weight=ft.FontWeight.BOLD,size=13)),
@@ -6800,7 +6799,7 @@ def main(page: ft.Page):
                     ft.Container(width=48,height=48,border_radius=24,bgcolor='#EAF2FF',alignment=ft.Alignment.CENTER,
                                  content=ft.Icon(ft.Icons.WAREHOUSE_OUTLINED,color=NAV_ACCENT,size=27)),
                     ft.Column([
-                        ft.Text('INVENTARIOS Y CONSUMOS',size=18,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
+                        ft.Text('ANÁLISIS DE OPERACIÓN',size=18,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
                         ft.Text('Seleccione un reporte para visualizar el detalle.',size=11,color=TEXT_MUTED),
                     ],spacing=2),
                 ],spacing=12),
@@ -6809,9 +6808,73 @@ def main(page: ft.Page):
         ]
 
         content.content=ft.Column([
-            page_title('6. INVENTARIOS Y CONSUMOS','Existencias, costos, consumos y remanentes'),
+            page_title('6. ANÁLISIS DE OPERACIÓN','Indicadores de utilización, costos, consumos y remanentes'),
             inventory_cards,
             inventory_detail,
+        ],scroll=ft.ScrollMode.AUTO,spacing=16)
+        page.update()
+
+    def administration_view():
+        """8. Administración - menú visual para equipos y neumáticos."""
+        admin_meta={
+            '81':{
+                'num':'8.1','icon':ft.Icons.PRECISION_MANUFACTURING_OUTLINED,'accent':'#1565C0','soft':'#EEF5FF',
+                'title':'EQUIPOS',
+                'desc':'Administración de equipos: registro, consulta y actualización de la flota.',
+                'action':equipment_view,
+            },
+            '82':{
+                'num':'8.2','icon':ft.Icons.TIRE_REPAIR,'accent':'#138A3D','soft':'#EEFAF2',
+                'title':'NEUMÁTICOS',
+                'desc':'Registro maestro de neumáticos: datos técnicos, costos y parámetros de control.',
+                'action':lambda: tires_view(),
+            },
+        }
+
+        def admin_access_card(key):
+            m=admin_meta[key]
+            return ft.Container(
+                width=292,height=260,bgcolor=m['soft'],
+                border=ft.Border.all(1,m['accent']+'55'),border_radius=14,padding=18,
+                on_click=lambda e,k=key: admin_meta[k]['action'](),ink=True,
+                content=ft.Column([
+                    ft.Row([
+                        ft.Container(bgcolor=m['accent'],border_radius=9,padding=ft.Padding(11,6,11,6),
+                                     content=ft.Text(m['num'],size=16,weight=ft.FontWeight.BOLD,color='#FFFFFF')),
+                        ft.Container(expand=True),
+                        ft.Container(width=54,height=54,border_radius=14,bgcolor='#FFFFFF',alignment=ft.Alignment.CENTER,
+                                     content=ft.Icon(m['icon'],size=31,color=m['accent'])),
+                    ]),
+                    ft.Text(m['title'],size=16,weight=ft.FontWeight.BOLD,color=TEXT_MAIN,text_align=ft.TextAlign.CENTER),
+                    ft.Text(m['desc'],size=11,color=TEXT_MUTED,text_align=ft.TextAlign.CENTER),
+                    ft.Container(height=4),
+                    ft.Container(
+                        bgcolor=m['accent'],border_radius=9,padding=10,alignment=ft.Alignment.CENTER,
+                        content=ft.Row([
+                            ft.Icon(ft.Icons.LOGIN,color='#FFFFFF',size=20),
+                            ft.Text('INGRESAR',color='#FFFFFF',weight=ft.FontWeight.BOLD,size=13),
+                            ft.Icon(ft.Icons.CHEVRON_RIGHT,color='#FFFFFF',size=20),
+                        ],alignment=ft.MainAxisAlignment.CENTER,spacing=8)
+                    ),
+                ],spacing=12,horizontal_alignment=ft.CrossAxisAlignment.CENTER)
+            )
+
+        content.content=ft.Column([
+            page_title('8. ADMINISTRACIÓN','Gestión maestra de equipos y neumáticos'),
+            card(ft.Column([
+                ft.Row([
+                    ft.Container(width=48,height=48,border_radius=24,bgcolor='#EAF2FF',alignment=ft.Alignment.CENTER,
+                                 content=ft.Icon(ft.Icons.ADMIN_PANEL_SETTINGS_OUTLINED,color=NAV_ACCENT,size=27)),
+                    ft.Column([
+                        ft.Text('ADMINISTRACIÓN',size=18,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
+                        ft.Text('Seleccione una opción para ingresar al registro maestro.',size=11,color=TEXT_MUTED),
+                    ],spacing=2),
+                ],spacing=12),
+                ft.Row([
+                    admin_access_card('81'),admin_access_card('82'),
+                    ft.Container(width=292,height=260),ft.Container(width=292,height=260)
+                ],spacing=12),
+            ],spacing=16),padding=16),
         ],scroll=ft.ScrollMode.AUTO,spacing=16)
         page.update()
 
@@ -6837,9 +6900,8 @@ def main(page: ft.Page):
         elif idx==4: standby_view()
         elif idx==5: nfu_view()
         elif idx==6: inventory_consumption_view()
-        elif idx==7: equipment_view()
-        elif idx==8: tires_view()
-        elif idx==9: reports_view()
+        elif idx==7: reports_view()
+        elif idx==8: administration_view()
 
     def build_shell():
         nonlocal nav
