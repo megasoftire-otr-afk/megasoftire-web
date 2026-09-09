@@ -4737,6 +4737,11 @@ def main(page: ft.Page):
                 return ('CORTE' in txt) or txt in ('CTL','CTB','CPB') or txt.startswith('CT')
 
             rows95=[]; grand95=0.0
+            totals95={
+                'll_new':0.0,'ll_ree':0.0,'cut_loss':0.0,'no_opt':0.0,
+                'hr_rod':0.0,'ll_ut':0,'mm_ree':0.0,'mm_baja':0.0,'total':0.0,
+                'DGT':0,'REP':0,'INV':0,'CTB':0,'CTL':0,'PSB':0,'XRE':0,'PRE':0,'SEP':0,'USA':0,
+            }
             eqs=query("SELECT id,code FROM equipment ORDER BY code")
             for eq in eqs:
                 occs=query("""SELECT o.id,o.tire_id,o.event_code,o.event_date,o.meter,o.tread_outer,o.tread_inner,o.reason,
@@ -4796,8 +4801,21 @@ def main(page: ft.Page):
                         if token==k or token.startswith(k): counters[k]+=1
                 rows95.append([eq['code'],money(ll_new),money(ll_ree),money(cut_loss),money(no_opt),f"${cph:.2f}",fnum(hrs_ll,0),'—',fnum(hr_rod,0),ll_ut,fnum(mm_ree,1),fnum(mm_baja,1),money(total),
                                counters['DGT'],counters['REP'],counters['INV'],counters['CTB'],counters['CTL'],counters['PSB'],counters['XRE'],counters['PRE'],counters['SEP'],counters['USA']])
-            total_95.value=f"VALOR TOTAL RESUMEN POR EQUIPO: {money(grand95)}"
-            body_95.controls=[make_table(cols95,rows95,total_95)]
+                totals95['ll_new']+=ll_new; totals95['ll_ree']+=ll_ree
+                totals95['cut_loss']+=cut_loss; totals95['no_opt']+=no_opt
+                totals95['hr_rod']+=hr_rod; totals95['ll_ut']+=ll_ut
+                totals95['mm_ree']+=mm_ree; totals95['mm_baja']+=mm_baja; totals95['total']+=total
+                for k in counters: totals95[k]+=counters[k]
+            if rows95:
+                total_cph=((totals95['ll_new']+totals95['ll_ree'])/totals95['hr_rod']) if totals95['hr_rod']>0 else 0.0
+                total_hrs_ll=(totals95['hr_rod']/totals95['ll_ut']) if totals95['ll_ut']>0 else 0.0
+                rows95.append([
+                    'TOTAL GENERAL',money(totals95['ll_new']),money(totals95['ll_ree']),money(totals95['cut_loss']),money(totals95['no_opt']),
+                    f"${total_cph:.2f}",fnum(total_hrs_ll,0),'—',fnum(totals95['hr_rod'],0),totals95['ll_ut'],fnum(totals95['mm_ree'],1),fnum(totals95['mm_baja'],1),money(totals95['total']),
+                    totals95['DGT'],totals95['REP'],totals95['INV'],totals95['CTB'],totals95['CTL'],totals95['PSB'],totals95['XRE'],totals95['PRE'],totals95['SEP'],totals95['USA']
+                ])
+            total_95.value=''
+            body_95.controls=[make_table(cols95,rows95)]
 
             # 9.7: una inversión por neumático que haya sido instalado al menos una vez.
             # Se toma la primera INST para no duplicar el costo por reinstalaciones posteriores.
