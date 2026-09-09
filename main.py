@@ -5103,34 +5103,34 @@ def main(page: ft.Page):
                 'detail':'9.2 REPORT - RETIRO POR EQUIPO','body':body_92,
             },
             '94':{
-                'num':'9.4','icon':ft.Icons.ASSESSMENT_OUTLINED,'accent':'#00796B','soft':'#ECF8F6',
+                'num':'9.3','icon':ft.Icons.ASSESSMENT_OUTLINED,'accent':'#00796B','soft':'#ECF8F6',
                 'title':'FORMATO REPORTE GENERAL',
                 'desc':'Relación técnica general de los neumáticos actualmente instalados y en uso.',
-                'detail':'9.4 FORMATO REPORTE GENERAL','body':body_94,
+                'detail':'9.3 FORMATO REPORTE GENERAL','body':body_94,
             },
             '95':{
-                'num':'9.5','icon':ft.Icons.SUMMARIZE_OUTLINED,'accent':'#6A1B9A','soft':'#F7F0FB',
+                'num':'9.4','icon':ft.Icons.SUMMARIZE_OUTLINED,'accent':'#6A1B9A','soft':'#F7F0FB',
                 'title':'RESUMEN POR EQUIPO',
                 'desc':'Historial consolidado por equipo: utilización, costos, pérdidas, rendimiento y eventos.',
-                'detail':'9.5 RESUMEN POR EQUIPO','body':body_95,
+                'detail':'9.4 RESUMEN POR EQUIPO','body':body_95,
             },
             '97':{
-                'num':'9.7','icon':ft.Icons.RECEIPT_LONG_OUTLINED,'accent':'#1565C0','soft':'#EEF6FF',
+                'num':'9.5','icon':ft.Icons.RECEIPT_LONG_OUTLINED,'accent':'#1565C0','soft':'#EEF6FF',
                 'title':'COSTO ACUMULADO\nLL/NUEVAS Y REENCAUCHADAS INSTALADAS',
                 'desc':'Inversión histórica de neumáticos nuevos y reencauchados que registran instalación.',
-                'detail':'9.7 COSTO ACUMUL. LL/NUEVAS Y REENC. INSTALADAS','body':body_97,
+                'detail':'9.5 COSTO ACUMUL. LL/NUEVAS Y REENC. INSTALADAS','body':body_97,
             },
             '98':{
-                'num':'9.8','icon':ft.Icons.PRECISION_MANUFACTURING_OUTLINED,'accent':'#138A3D','soft':'#EEFAF2',
+                'num':'9.6','icon':ft.Icons.PRECISION_MANUFACTURING_OUTLINED,'accent':'#138A3D','soft':'#EEFAF2',
                 'title':'COSTO ACTUAL\nLL/OPERATIVAS EN EQUIPOS',
                 'desc':'Valorización económica actual de los neumáticos que se encuentran en servicio.',
-                'detail':'9.8 COSTO ACTUAL LL/OPERATIVAS EN EQUIPOS','body':body_98,
+                'detail':'9.6 COSTO ACTUAL LL/OPERATIVAS EN EQUIPOS','body':body_98,
             },
             '99':{
-                'num':'9.9','icon':ft.Icons.INVENTORY_2_OUTLINED,'accent':'#EF6C00','soft':'#FFF5EA',
+                'num':'9.7','icon':ft.Icons.INVENTORY_2_OUTLINED,'accent':'#EF6C00','soft':'#FFF5EA',
                 'title':'COSTO ACTUAL\nLL/DE REPUESTO',
                 'desc':'Valorización económica de los neumáticos disponibles actualmente en Stand-by.',
-                'detail':'9.9 COSTO ACTUAL LL/DE REPUESTOS','body':body_99,
+                'detail':'9.7 COSTO ACTUAL LL/DE REPUESTOS','body':body_99,
             },
         }
 
@@ -5172,7 +5172,8 @@ def main(page: ft.Page):
         def access_card(key):
             m=report_meta[key]
             return ft.Container(
-                expand=True,
+                width=292,
+                height=260,
                 bgcolor=m['soft'],
                 border=ft.Border.all(1,m['accent']+'55'),
                 border_radius=14,
@@ -5213,9 +5214,8 @@ def main(page: ft.Page):
                         ft.Text('Seleccione un reporte para visualizar el detalle.',size=11,color=TEXT_MUTED),
                     ],spacing=2),
                 ],spacing=12),
-                ft.Row([access_card('91'),access_card('92'),access_card('94')],spacing=14),
-                ft.Row([access_card('95'),access_card('97'),access_card('98')],spacing=14),
-                ft.Row([access_card('99')],spacing=14),
+                ft.Row([access_card('91'),access_card('92'),access_card('94'),access_card('95')],spacing=12),
+                ft.Row([access_card('97'),access_card('98'),access_card('99'),ft.Container(width=292,height=260)],spacing=12),
             ],spacing=16),padding=16),
         ],spacing=12)
 
