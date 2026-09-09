@@ -4600,7 +4600,100 @@ def main(page: ft.Page):
         page.update()
 
     def reports_view():
-        """Módulo 9 · Reportes e indicadores: rendimiento histórico de neumáticos dados de baja."""
+        """Módulo 9 · Reportes e indicadores."""
+
+        # 9.1 COSTO DE LLANTAS NUEVAS / REENCAUCHADAS INSTALADAS
+        # Consulta económica del maestro. Conserva el último evento INST como fecha
+        # de instalación y muestra la situación actual del neumático.
+        report_91_search=ft.TextField(
+            label='Buscar código / marca / diseño / equipo',
+            prefix_icon=ft.Icons.SEARCH, width=330
+        )
+        report_91_rows=ft.Column(spacing=0)
+        report_91_summary=ft.Text('',size=11,color=TEXT_MUTED)
+        report_91_columns=[
+            ('FECHA DE INSTALACIÓN',145),('CÓDIGO',90),('MARCA / DISEÑO',190),
+            ('RTD EXT/INT',110),('COSTO $',105),('CONDICIÓN',105),('ESTADO',110)
+        ]
+
+        def report_91_cell(value,width,header=False):
+            return ft.Container(
+                width=width,
+                padding=ft.Padding(left=7,top=8,right=7,bottom=8),
+                content=ft.Text(
+                    str(value if value not in (None,'') else '—'),
+                    size=10.5,
+                    weight=ft.FontWeight.BOLD if header else ft.FontWeight.NORMAL,
+                    color=ft.Colors.WHITE if header else TEXT_MAIN,
+                    no_wrap=True
+                )
+            )
+
+        report_91_header=ft.Container(
+            bgcolor='#12324A',
+            content=ft.Row([report_91_cell(a,b,True) for a,b in report_91_columns],spacing=0)
+        )
+
+        def report_91_refresh(e=None):
+            term=(report_91_search.value or '').strip()
+            sql="""
+                SELECT t.id,t.code,t.brand,t.design,t.tread_outer,t.tread_inner,
+                       t.cost_usd,t.tire_condition,t.status,e.code equipment_code,
+                       (SELECT o2.event_date FROM occurrences o2
+                        WHERE o2.tire_id=t.id AND UPPER(TRIM(o2.event_code))='INST'
+                        ORDER BY o2.id DESC LIMIT 1) install_date
+                FROM tires t
+                LEFT JOIN equipment e ON e.id=t.equipment_id
+            """
+            params=[]
+            if term:
+                q=f'%{term}%'
+                sql += " WHERE (t.code LIKE ? OR t.brand LIKE ? OR t.design LIKE ? OR e.code LIKE ?)"
+                params=[q,q,q,q]
+            sql += " ORDER BY CASE UPPER(TRIM(COALESCE(t.status,''))) WHEN 'SERVICIO' THEN 1 WHEN 'STAND-BY' THEN 2 WHEN 'STANDBY' THEN 2 WHEN 'BAJA' THEN 3 ELSE 4 END, t.code"
+            rows=query(sql,tuple(params))
+            report_91_rows.controls=[]
+            total_cost=0.0
+            for idx,r in enumerate(rows):
+                try: total_cost += float(r['cost_usd'] or 0)
+                except Exception: pass
+                ext='—' if r['tread_outer'] is None else fmt_report_number(r['tread_outer'])
+                inn='—' if r['tread_inner'] is None else fmt_report_number(r['tread_inner'])
+                cond='REENC.' if 'REENC' in str(r['tire_condition'] or '').upper() else 'ORIGINAL'
+                status=str(r['status'] or '').strip().upper()
+                if status=='SERVICIO' and r['equipment_code']:
+                    state=r['equipment_code']
+                elif status in ('STAND-BY','STANDBY','STAND BY'):
+                    state='STAND-BY'
+                elif status=='BAJA':
+                    state='BAJA'
+                else:
+                    state=status or 'STAND-BY'
+                try: cost_text=f"${float(r['cost_usd'] or 0):,.2f}"
+                except Exception: cost_text='$0.00'
+                vals=[
+                    format_date(r['install_date']) if r['install_date'] else '—',
+                    r['code'],
+                    f"{r['brand'] or ''} / {r['design'] or ''}".strip(' /'),
+                    f'{ext} / {inn}', cost_text, cond, state
+                ]
+                report_91_rows.controls.append(ft.Container(
+                    bgcolor='#FFFFFF' if idx%2==0 else '#F8FAFC',
+                    border=ft.Border(bottom=ft.BorderSide(1,'#E5E9EF')),
+                    content=ft.Row([report_91_cell(vals[i],report_91_columns[i][1]) for i in range(len(vals))],spacing=0)
+                ))
+            report_91_summary.value=f"{len(rows)} neumático(s) · Costo registrado total: ${total_cost:,.2f}"
+            page.update()
+
+        def fmt_report_number(v):
+            try:
+                f=float(v)
+                return str(int(f)) if f.is_integer() else f'{f:.1f}'
+            except Exception:
+                return str(v)
+
+        report_91_search.on_change=report_91_refresh
+
         mode=ft.Dropdown(
             label='Analizar por', width=210, value='MARCA',
             options=[ft.dropdown.Option('MARCA','Marca'),ft.dropdown.Option('MEDIDA','Medida'),ft.dropdown.Option('EQUIPO','Equipo')]
@@ -4688,8 +4781,23 @@ def main(page: ft.Page):
 
         mode.on_change=refresh; size_filter.on_change=refresh
         refresh()
+        report_91_refresh()
         content.content=ft.Column([
-            page_title('9. REPORTES E INDICADORES','Análisis estadístico del rendimiento histórico de neumáticos'),
+            page_title('9. REPORTES E INDICADORES','Consultas económicas e indicadores de gestión de neumáticos'),
+            card(ft.Column([
+                ft.Row([
+                    ft.Row([
+                        ft.Icon(ft.Icons.MONETIZATION_ON_OUTLINED,color=NAV_ACCENT,size=24),
+                        ft.Text('9.1 COSTO DE LLANTAS NUEVAS / REENCAUCHADAS INSTALADAS',size=16,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
+                    ],spacing=8),
+                    ft.Container(expand=True),
+                    report_91_search
+                ],wrap=True),
+                report_91_summary,
+                ft.Row([ft.Container(content=ft.Column([report_91_header,report_91_rows],spacing=0),width=955)],scroll=ft.ScrollMode.ALWAYS)
+            ],spacing=10)),
+            ft.Divider(height=18,color='#DCE4EC'),
+            ft.Text('ANÁLISIS HISTÓRICO DE NEUMÁTICOS DADOS DE BAJA',size=16,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
             ft.Row([mode,size_filter],spacing=12),
             stats,
             card(chart_box),
