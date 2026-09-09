@@ -23,6 +23,7 @@ MODULES = [
     ('Administración de equipos', ft.Icons.ADMIN_PANEL_SETTINGS_OUTLINED),
     ('Registro maestro de neumáticos', ft.Icons.TABLE_CHART_OUTLINED),
     ('Reportes e indicadores', ft.Icons.ASSESSMENT_OUTLINED),
+    ('Costos de neumáticos', ft.Icons.PAID_OUTLINED),
 ]
 
 BG = '#F4F7FB'
@@ -4602,98 +4603,6 @@ def main(page: ft.Page):
     def reports_view():
         """Módulo 9 · Reportes e indicadores."""
 
-        # 9.1 COSTO DE LLANTAS NUEVAS / REENCAUCHADAS INSTALADAS
-        # Consulta económica del maestro. Conserva el último evento INST como fecha
-        # de instalación y muestra la situación actual del neumático.
-        report_91_search=ft.TextField(
-            label='Buscar código / marca / diseño / equipo',
-            prefix_icon=ft.Icons.SEARCH, width=330
-        )
-        report_91_rows=ft.Column(spacing=0)
-        report_91_summary=ft.Text('',size=11,color=TEXT_MUTED)
-        report_91_columns=[
-            ('FECHA DE INSTALACIÓN',145),('CÓDIGO',90),('MARCA / DISEÑO',190),
-            ('RTD EXT/INT',110),('COSTO $',105),('CONDICIÓN',105),('ESTADO',110)
-        ]
-
-        def report_91_cell(value,width,header=False):
-            return ft.Container(
-                width=width,
-                padding=ft.Padding(left=7,top=8,right=7,bottom=8),
-                content=ft.Text(
-                    str(value if value not in (None,'') else '—'),
-                    size=10.5,
-                    weight=ft.FontWeight.BOLD if header else ft.FontWeight.NORMAL,
-                    color=ft.Colors.WHITE if header else TEXT_MAIN,
-                    no_wrap=True
-                )
-            )
-
-        report_91_header=ft.Container(
-            bgcolor='#12324A',
-            content=ft.Row([report_91_cell(a,b,True) for a,b in report_91_columns],spacing=0)
-        )
-
-        def report_91_refresh(e=None):
-            term=(report_91_search.value or '').strip()
-            sql="""
-                SELECT t.id,t.code,t.brand,t.design,t.tread_outer,t.tread_inner,
-                       t.cost_usd,t.tire_condition,t.status,e.code equipment_code,
-                       (SELECT o2.event_date FROM occurrences o2
-                        WHERE o2.tire_id=t.id AND UPPER(TRIM(o2.event_code))='INST'
-                        ORDER BY o2.id DESC LIMIT 1) install_date
-                FROM tires t
-                LEFT JOIN equipment e ON e.id=t.equipment_id
-            """
-            params=[]
-            if term:
-                q=f'%{term}%'
-                sql += " WHERE (t.code LIKE ? OR t.brand LIKE ? OR t.design LIKE ? OR e.code LIKE ?)"
-                params=[q,q,q,q]
-            sql += " ORDER BY CASE UPPER(TRIM(COALESCE(t.status,''))) WHEN 'SERVICIO' THEN 1 WHEN 'STAND-BY' THEN 2 WHEN 'STANDBY' THEN 2 WHEN 'BAJA' THEN 3 ELSE 4 END, t.code"
-            rows=query(sql,tuple(params))
-            report_91_rows.controls=[]
-            total_cost=0.0
-            for idx,r in enumerate(rows):
-                try: total_cost += float(r['cost_usd'] or 0)
-                except Exception: pass
-                ext='—' if r['tread_outer'] is None else fmt_report_number(r['tread_outer'])
-                inn='—' if r['tread_inner'] is None else fmt_report_number(r['tread_inner'])
-                cond='REENC.' if 'REENC' in str(r['tire_condition'] or '').upper() else 'ORIGINAL'
-                status=str(r['status'] or '').strip().upper()
-                if status=='SERVICIO' and r['equipment_code']:
-                    state=r['equipment_code']
-                elif status in ('STAND-BY','STANDBY','STAND BY'):
-                    state='STAND-BY'
-                elif status=='BAJA':
-                    state='BAJA'
-                else:
-                    state=status or 'STAND-BY'
-                try: cost_text=f"${float(r['cost_usd'] or 0):,.2f}"
-                except Exception: cost_text='$0.00'
-                vals=[
-                    format_date(r['install_date']) if r['install_date'] else '—',
-                    r['code'],
-                    f"{r['brand'] or ''} / {r['design'] or ''}".strip(' /'),
-                    f'{ext} / {inn}', cost_text, cond, state
-                ]
-                report_91_rows.controls.append(ft.Container(
-                    bgcolor='#FFFFFF' if idx%2==0 else '#F8FAFC',
-                    border=ft.Border(bottom=ft.BorderSide(1,'#E5E9EF')),
-                    content=ft.Row([report_91_cell(vals[i],report_91_columns[i][1]) for i in range(len(vals))],spacing=0)
-                ))
-            report_91_summary.value=f"{len(rows)} neumático(s) · Costo registrado total: ${total_cost:,.2f}"
-            page.update()
-
-        def fmt_report_number(v):
-            try:
-                f=float(v)
-                return str(int(f)) if f.is_integer() else f'{f:.1f}'
-            except Exception:
-                return str(v)
-
-        report_91_search.on_change=report_91_refresh
-
         mode=ft.Dropdown(
             label='Analizar por', width=210, value='MARCA',
             options=[ft.dropdown.Option('MARCA','Marca'),ft.dropdown.Option('MEDIDA','Medida'),ft.dropdown.Option('EQUIPO','Equipo')]
@@ -4781,21 +4690,8 @@ def main(page: ft.Page):
 
         mode.on_change=refresh; size_filter.on_change=refresh
         refresh()
-        report_91_refresh()
         content.content=ft.Column([
             page_title('9. REPORTES E INDICADORES','Consultas económicas e indicadores de gestión de neumáticos'),
-            card(ft.Column([
-                ft.Row([
-                    ft.Row([
-                        ft.Icon(ft.Icons.MONETIZATION_ON_OUTLINED,color=NAV_ACCENT,size=24),
-                        ft.Text('9.1 COSTO DE LLANTAS NUEVAS / REENCAUCHADAS INSTALADAS',size=16,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
-                    ],spacing=8),
-                    ft.Container(expand=True),
-                    report_91_search
-                ],wrap=True),
-                report_91_summary,
-                ft.Row([ft.Container(content=ft.Column([report_91_header,report_91_rows],spacing=0),width=955)],scroll=ft.ScrollMode.ALWAYS)
-            ],spacing=10)),
             ft.Divider(height=18,color='#DCE4EC'),
             ft.Text('ANÁLISIS HISTÓRICO DE NEUMÁTICOS DADOS DE BAJA',size=16,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
             ft.Row([mode,size_filter],spacing=12),
@@ -4803,6 +4699,103 @@ def main(page: ft.Page):
             card(chart_box),
             card(ft.Column([ft.Text('DETALLE DE NEUMÁTICOS EVALUADOS',size=16,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
                             ft.Row([detail_box],scroll=ft.ScrollMode.ALWAYS)],spacing=8))
+        ],scroll=ft.ScrollMode.AUTO,spacing=16)
+        page.update()
+
+    def tire_costs_view():
+        """Módulo 10 · Costos de neumáticos."""
+        search=ft.TextField(label='Buscar código / marca / diseño / equipo',prefix_icon=ft.Icons.SEARCH,width=330)
+        summary=ft.Text('',size=11,color=TEXT_MUTED)
+        metrics=ft.Row([],wrap=True,spacing=12,run_spacing=12)
+
+        columns=['FECHA DE INSTALACIÓN','CÓDIGO','MARCA / DISEÑO','RTD EXT/INT','COSTO $','CONDICIÓN','ESTADO']
+        table=ft.DataTable(
+            columns=[ft.DataColumn(ft.Text(x,size=10,weight=ft.FontWeight.BOLD,color=ft.Colors.WHITE)) for x in columns],
+            rows=[],
+            heading_row_color='#12324A',
+            heading_row_height=44,
+            data_row_min_height=42,
+            data_row_max_height=48,
+            column_spacing=26,
+            border=ft.Border.all(1,'#D9E1E8'),
+            horizontal_lines=ft.BorderSide(1,'#E5E9EF'),
+        )
+
+        def nfmt(v):
+            try:
+                f=float(v)
+                return str(int(f)) if f.is_integer() else f'{f:.1f}'
+            except Exception:
+                return '—' if v in (None,'') else str(v)
+
+        def metric(title,value,icon):
+            return ft.Container(width=225,padding=14,bgcolor='#FFFFFF',border=ft.Border.all(1,'#E0E6EE'),border_radius=12,
+                content=ft.Row([ft.Icon(icon,color=NAV_ACCENT,size=23),ft.Column([
+                    ft.Text(title,size=10,weight=ft.FontWeight.BOLD,color=TEXT_MUTED),
+                    ft.Text(value,size=20,weight=ft.FontWeight.BOLD,color=TEXT_MAIN)
+                ],spacing=2)],spacing=10))
+
+        def refresh(e=None):
+            term=(search.value or '').strip()
+            sql="""
+                SELECT t.id,t.code,t.brand,t.design,t.tread_outer,t.tread_inner,
+                       t.cost_usd,t.tire_condition,t.status,e.code equipment_code,
+                       (SELECT o2.event_date FROM occurrences o2
+                        WHERE o2.tire_id=t.id AND UPPER(TRIM(o2.event_code))='INST'
+                        ORDER BY o2.id DESC LIMIT 1) install_date
+                FROM tires t
+                LEFT JOIN equipment e ON e.id=t.equipment_id
+                WHERE UPPER(TRIM(COALESCE(t.status,'')))='SERVICIO'
+            """
+            params=[]
+            if term:
+                q=f'%{term}%'
+                sql += " AND (t.code LIKE ? OR t.brand LIKE ? OR t.design LIKE ? OR e.code LIKE ?)"
+                params=[q,q,q,q]
+            sql += " ORDER BY e.code, CAST(REPLACE(UPPER(COALESCE(t.position,'')),'P','') AS INTEGER), t.code"
+            rows=query(sql,tuple(params))
+            table.rows=[]
+            total=original=ree=0.0
+            for r in rows:
+                try: cost=float(r['cost_usd'] or 0)
+                except Exception: cost=0.0
+                is_ree='REENC' in str(r['tire_condition'] or '').upper()
+                total+=cost
+                if is_ree: ree+=cost
+                else: original+=cost
+                vals=[
+                    format_date(r['install_date']) if r['install_date'] else '—',
+                    r['code'] or '—',
+                    f"{r['brand'] or ''} / {r['design'] or ''}".strip(' /') or '—',
+                    f"{nfmt(r['tread_outer'])} / {nfmt(r['tread_inner'])}",
+                    f"${cost:,.2f}",
+                    'REENC.' if is_ree else 'ORIGINAL',
+                    r['equipment_code'] or 'SERVICIO'
+                ]
+                table.rows.append(ft.DataRow(cells=[ft.DataCell(ft.Text(str(v),size=10.5,color=TEXT_MAIN)) for v in vals]))
+            summary.value=f'{len(rows)} neumático(s) actualmente instalados'
+            metrics.controls=[
+                metric('TOTAL LLANTAS',str(len(rows)),ft.Icons.TIRE_REPAIR),
+                metric('COSTO LLANTAS NUEVAS',f'${original:,.2f}',ft.Icons.ADD_CIRCLE_OUTLINE),
+                metric('COSTO REENCAUCHADAS',f'${ree:,.2f}',ft.Icons.AUTORENEW),
+                metric('COSTO TOTAL INSTALADO',f'${total:,.2f}',ft.Icons.PAID_OUTLINED),
+            ]
+            page.update()
+
+        search.on_change=refresh
+        refresh()
+        content.content=ft.Column([
+            page_title('10. COSTOS DE NEUMÁTICOS','Valorización económica de neumáticos instalados'),
+            card(ft.Column([
+                ft.Row([
+                    ft.Row([ft.Icon(ft.Icons.PAID_OUTLINED,color=NAV_ACCENT,size=24),
+                            ft.Text('10.1 COSTO DE LLANTAS NUEVAS / REENCAUCHADAS INSTALADAS',size=16,weight=ft.FontWeight.BOLD,color=TEXT_MAIN)],spacing=8),
+                    ft.Container(expand=True),search
+                ],wrap=True),
+                metrics,
+                summary,
+                ft.Row([table],scroll=ft.ScrollMode.ALWAYS)
+            ],spacing=12))
         ],scroll=ft.ScrollMode.AUTO,spacing=16)
         page.update()
 
@@ -5858,6 +5851,7 @@ def main(page: ft.Page):
         elif idx==7: equipment_view()
         elif idx==8: tires_view()
         elif idx==9: reports_view()
+        elif idx==10: tire_costs_view()
 
     def build_shell():
         nonlocal nav
