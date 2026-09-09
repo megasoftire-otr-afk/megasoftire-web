@@ -4674,27 +4674,44 @@ def main(page: ft.Page):
             total=rem*usdmm
             return cur_avg,usdmm,total
 
-        def make_table(columns, rows, total_text=None, width=None):
-            def cell(value,w,header=False):
+        def make_table(columns, rows, total_text=None, width=None, highlight_last=False):
+            # Estándar visual para reportes 9.x y futuros:
+            # encabezado azul, filas alternadas y total general resaltado con
+            # línea divisoria roja, fondo azul oscuro y texto blanco en negrita.
+            def cell(value,w,header=False,total=False):
                 return ft.Container(
                     width=w,
                     padding=ft.Padding(left=6,top=8,right=6,bottom=8),
-                    content=ft.Text(str(value if value not in (None,'') else '—'),size=10,
-                                    weight=ft.FontWeight.BOLD if header else ft.FontWeight.NORMAL,
-                                    color='#FFFFFF' if header else TEXT_MAIN,no_wrap=True)
+                    content=ft.Text(
+                        str(value if value not in (None,'') else '—'),size=10,
+                        weight=ft.FontWeight.BOLD if (header or total) else ft.FontWeight.NORMAL,
+                        color='#FFFFFF' if (header or total) else TEXT_MAIN,
+                        no_wrap=True
+                    )
                 )
             hdr=ft.Container(bgcolor='#1F4E78',content=ft.Row([cell(label,w,True) for label,w in columns],spacing=0))
             controls=[hdr]
             for i,row in enumerate(rows):
+                is_total=bool(highlight_last and i==len(rows)-1)
                 controls.append(ft.Container(
-                    bgcolor='#FFFFFF' if i%2==0 else '#F8FAFC',
-                    border=ft.Border(bottom=ft.BorderSide(1,'#E5E9EF')),
-                    content=ft.Row([cell(row[j],columns[j][1]) for j in range(len(columns))],spacing=0)
+                    bgcolor='#0B4A72' if is_total else ('#FFFFFF' if i%2==0 else '#F8FAFC'),
+                    border=ft.Border(
+                        top=ft.BorderSide(3,'#D32F2F') if is_total else ft.BorderSide(0,'#00000000'),
+                        bottom=ft.BorderSide(1,'#E5E9EF')
+                    ),
+                    content=ft.Row([cell(row[j],columns[j][1],total=is_total) for j in range(len(columns))],spacing=0)
                 ))
             if not rows:
                 controls.append(ft.Container(padding=14,content=ft.Text('Sin registros para esta condición.',size=11,color=TEXT_MUTED)))
             if total_text is not None:
-                controls.append(ft.Container(bgcolor='#EEF2F7',padding=10,content=total_text))
+                total_text.color='#FFFFFF'
+                total_text.weight=ft.FontWeight.BOLD
+                controls.append(ft.Container(
+                    bgcolor='#0B4A72',
+                    border=ft.Border(top=ft.BorderSide(3,'#D32F2F')),
+                    padding=ft.Padding(left=10,top=9,right=10,bottom=9),
+                    content=total_text
+                ))
             table=ft.Column(controls,spacing=0)
             return ft.Row([ft.Container(content=table,width=width or sum(w for _,w in columns))],scroll=ft.ScrollMode.ALWAYS)
 
@@ -4815,7 +4832,7 @@ def main(page: ft.Page):
                     totals95['DGT'],totals95['REP'],totals95['INV'],totals95['CTB'],totals95['CTL'],totals95['PSB'],totals95['XRE'],totals95['PRE'],totals95['SEP'],totals95['USA']
                 ])
             total_95.value=''
-            body_95.controls=[make_table(cols95,rows95)]
+            body_95.controls=[make_table(cols95,rows95,highlight_last=bool(rows95))]
 
             # 9.7: una inversión por neumático que haya sido instalado al menos una vez.
             # Se toma la primera INST para no duplicar el costo por reinstalaciones posteriores.
@@ -4839,7 +4856,7 @@ def main(page: ft.Page):
                     format_date(inst['event_date']),r['code'],r['brand'],r['size'],r['design'],eq,
                     inst['position'],f"{fnum(ext,0)}/{fnum(inn,0)}",money(cost),r['supplier'],('REENC.' if is_ree else 'NUEVA')
                 ])
-            total_97.value=f"LLANTAS NUEVAS: {money(sum_new)}   |   REENCAUCHADAS: {money(sum_ree)}   |   VALOR TOTAL DE LLANTAS: {money(sum_new+sum_ree)}"
+            total_97.value=f"TOTAL GENERAL   |   LLANTAS NUEVAS: {money(sum_new)}   |   REENCAUCHADAS: {money(sum_ree)}   |   VALOR TOTAL: {money(sum_new+sum_ree)}"
             body_97.controls=[make_table(cols97,rows97,total_97)]
 
             # 9.8: equivalente a NEXA c_est_tire=0 y c_sit_tire=1 -> operativas en equipos.
@@ -4866,7 +4883,7 @@ def main(page: ft.Page):
                     fnum(ht,0),f"${cph:.2f}",cond,fnum(r['tread_outer'],0),fnum(r['tread_inner'],0),fnum(prom,1),
                     money(cost),f"${usdmm:.2f}",money(val),format_date(inst['event_date']) if inst else '—'
                 ])
-            total_98.value=f"VALOR TOTAL DE LLANTAS OPERATIVAS: {money(total98)}"
+            total_98.value=f"TOTAL GENERAL   |   VALOR DE LLANTAS OPERATIVAS: {money(total98)}"
             body_98.controls=[make_table(cols98,rows98,total_98)]
 
             # 9.9: NEXA FLTRET08 = NEUMÁTICOS EN STAND BY / repuestos.
@@ -4883,7 +4900,7 @@ def main(page: ft.Page):
                     r['size'],format_date(dins['event_date']) if dins else '—','STAND-BY',r['code'],r['brand'],r['design'],cond,
                     f"{fnum(r['tread_outer'],0)}/{fnum(r['tread_inner'],0)}",fnum(prom,1),money(r['cost_usd']),f"${usdmm:.2f}",money(val),eqout or '—'
                 ])
-            total_99.value=f"VALOR TOTAL DE LLANTAS DE REPUESTO: {money(total99)}"
+            total_99.value=f"TOTAL GENERAL   |   VALOR DE LLANTAS DE REPUESTO: {money(total99)}"
             body_99.controls=[make_table(cols99,rows99,total_99)]
             page.update()
 
