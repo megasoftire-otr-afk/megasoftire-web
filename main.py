@@ -652,6 +652,43 @@ def main(page: ft.Page):
             master_rows,
         ], spacing=0)
 
+        # Cuadro general del Registro Maestro: resumen operativo compacto de todos
+        # los neumáticos registrados, visible debajo del formulario de alta.
+        general_columns = [
+            ('FECHA DE INSTALACIÓN', 165),
+            ('CÓDIGO', 105),
+            ('MARCA / DISEÑO', 210),
+            ('RTD EXT/INT', 120),
+            ('COSTO $', 110),
+            ('CONDICIÓN', 125),
+            ('ESTADO', 125),
+        ]
+
+        def general_cell(value, width, header=False, align=ft.TextAlign.LEFT):
+            return ft.Container(
+                content=ft.Text(
+                    value,
+                    size=12,
+                    weight=ft.FontWeight.BOLD if header else ft.FontWeight.NORMAL,
+                    color='#FFFFFF' if header else TEXT_MAIN,
+                    no_wrap=True,
+                    text_align=align,
+                ),
+                width=width,
+                padding=ft.Padding(left=8, top=9, right=8, bottom=9),
+            )
+
+        general_header = ft.Row(
+            [general_cell(label, width, True) for label, width in general_columns],
+            spacing=0,
+        )
+        general_rows = ft.Column(spacing=0)
+        general_table = ft.Column([
+            ft.Container(content=general_header, bgcolor='#12324A'),
+            general_rows,
+        ], spacing=0)
+        general_summary = ft.Text('', size=12, color=TEXT_MUTED)
+
         history=ft.DataTable(columns=[ft.DataColumn(ft.Text(x)) for x in [
             'Fecha','Evento','Neumático','Serie','Equipo','Pos.','Lectura','Cocada I/E','Presión','Ubicación'
         ]],rows=[])
@@ -716,6 +753,66 @@ def main(page: ft.Page):
                 )
 
             summary.value=f'{len(rows)} neumático(s) registrado(s)'
+
+            # Resumen general del módulo 8. La fecha corresponde al último INST
+            # registrado para el neumático; para STAND-BY y BAJA se conserva la
+            # última fecha de instalación histórica. RTD muestra EXT/INT.
+            general_sql = '''
+                SELECT t.id,t.code,t.brand,t.design,t.tread_outer,t.tread_inner,
+                       t.cost_usd,t.tire_condition,t.status,e.code equipment_code,
+                       (SELECT o2.event_date
+                          FROM occurrences o2
+                         WHERE o2.tire_id=t.id AND UPPER(TRIM(o2.event_code))='INST'
+                         ORDER BY o2.id DESC LIMIT 1) install_date
+                  FROM tires t
+                  LEFT JOIN equipment e ON e.id=t.equipment_id
+            '''
+            gp=[]; gc=[]
+            if term:
+                gc.append('(t.code LIKE ? OR t.serial LIKE ? OR t.brand LIKE ? OR t.design LIKE ? OR e.code LIKE ?)')
+                gp += [f'%{term}%',f'%{term}%',f'%{term}%',f'%{term}%',f'%{term}%']
+            if gc:
+                general_sql += ' WHERE ' + ' AND '.join(gc)
+            general_sql += " ORDER BY CASE UPPER(COALESCE(t.status,'')) WHEN 'SERVICIO' THEN 1 WHEN 'STAND BY' THEN 2 WHEN 'STAND-BY' THEN 2 WHEN 'BAJA' THEN 3 ELSE 4 END, t.code"
+            grows=query(general_sql,tuple(gp))
+            general_rows.controls=[]
+            for gidx, g in enumerate(grows):
+                status_txt=str(g['status'] or '').strip().upper()
+                if status_txt == 'SERVICIO' and g['equipment_code']:
+                    estado=str(g['equipment_code'])
+                elif status_txt in ('STAND BY','STAND-BY','STAN BY','STAN-BY'):
+                    estado='STAND-BY'
+                elif status_txt == 'BAJA':
+                    estado='BAJA'
+                else:
+                    estado=status_txt or 'STAND-BY'
+
+                cond_raw=str(g['tire_condition'] or '').strip().upper()
+                condicion='REENC.' if 'REENC' in cond_raw else 'ORIGINAL'
+                ext='—' if g['tread_outer'] is None else fmt(g['tread_outer'])
+                inn='—' if g['tread_inner'] is None else fmt(g['tread_inner'])
+                costo='—' if g['cost_usd'] is None else f"${float(g['cost_usd']):,.2f}"
+                marca_diseno=' / '.join([x for x in [str(g['brand'] or '').strip(),str(g['design'] or '').strip()] if x]) or '—'
+                vals=[
+                    format_date(g['install_date']) if g['install_date'] else '—',
+                    str(g['code'] or '—'),
+                    marca_diseno,
+                    f'{ext} / {inn}',
+                    costo,
+                    condicion,
+                    estado,
+                ]
+                general_rows.controls.append(
+                    ft.Container(
+                        content=ft.Row([
+                            general_cell(vals[i], general_columns[i][1])
+                            for i in range(len(general_columns))
+                        ], spacing=0),
+                        bgcolor='#FFFFFF' if gidx % 2 == 0 else '#F8FAFC',
+                        border=ft.Border(bottom=ft.BorderSide(1, '#DDE3EA')),
+                    )
+                )
+            general_summary.value=f'{len(grows)} neumático(s) en el cuadro general'
 
             hist_sql=("SELECT o.event_date,o.event_code,t.code tire_code,t.serial,e.code equipment_code,"
                       "o.position,o.meter,o.tread_inner,o.tread_outer,o.pressure,o.location "
@@ -909,6 +1006,19 @@ def main(page: ft.Page):
 
                 ft.ElevatedButton('Registrar neumático',icon=ft.Icons.SAVE,on_click=save)
             ])))
+
+        if not status_filter:
+            blocks.append(card(ft.Column([
+                ft.Row([
+                    ft.Text('Cuadro general de neumáticos',size=17,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
+                    ft.Container(expand=True),search
+                ],wrap=True),
+                general_summary,
+                ft.Row(
+                    [ft.Container(content=general_table, width=960)],
+                    scroll=ft.ScrollMode.AUTO
+                )
+            ], spacing=10)))
 
         if status_filter:
             blocks.append(card(ft.Column([
