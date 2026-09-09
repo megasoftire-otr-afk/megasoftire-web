@@ -4814,7 +4814,10 @@ def main(page: ft.Page):
                 ],wrap=True),
                 metrics,
                 summary,
-                ft.Row([table],scroll=ft.ScrollMode.ALWAYS)
+                # El cuadro 10.1 cabe completo en el área útil. No se usa un Row
+                # con scroll horizontal porque en Flet Web/Render ese viewport
+                # estaba cubriendo el contenido con un bloque gris.
+                ft.Container(content=table, width=sum(width for _, width in columns))
             ],spacing=12))
         ],scroll=ft.ScrollMode.AUTO,spacing=16)
         page.update()
