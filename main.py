@@ -6519,27 +6519,122 @@ def main(page: ft.Page):
             )
         )
 
+        # Presentación de accesos 6.x: mismo estándar visual aprobado para el módulo 9.
+        section_61=ft.Column([
+            ft.Text('6.1 UTILIZACIÓN Y PÉRDIDA POR EQUIPO',size=17,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
+            ft.Text('Resumen económico y horas rodadas por equipo',size=12,color=TEXT_MUTED),
+            ft.Row([
+                ft.Container(width=520,content=ft.Row([table],scroll=ft.ScrollMode.ALWAYS)),
+                ft.Container(expand=True,content=chart_panel),
+            ],spacing=14,vertical_alignment=ft.CrossAxisAlignment.START,scroll=ft.ScrollMode.AUTO),
+            note,
+        ],spacing=12)
+
+        inventory_meta={
+            '61':{
+                'num':'6.1','icon':ft.Icons.ACCOUNT_BALANCE_WALLET_OUTLINED,'accent':'#1976D2','soft':'#EEF5FF',
+                'title':'UTILIZACIÓN Y PÉRDIDA\nPOR EQUIPO',
+                'desc':'Resumen económico de utilización, pérdidas y horas rodadas por equipo.',
+                'body':section_61,
+            },
+            '62':{
+                'num':'6.2','icon':ft.Icons.SPEED_OUTLINED,'accent':'#138A3D','soft':'#EEFAF2',
+                'title':'EQUIPOS\nCOSTO POR HORA',
+                'desc':'Comparativo del costo por hora acumulado para cada equipo.',
+                'body':section_62,
+            },
+            '63':{
+                'num':'6.3','icon':ft.Icons.ANALYTICS_OUTLINED,'accent':'#EF6C00','soft':'#FFF5EA',
+                'title':'ANÁLISIS DE NEUMÁTICOS\nDE BAJA',
+                'desc':'Rendimiento y costo comparativo según concepto de retiro.',
+                'body':section_63,
+            },
+            '64':{
+                'num':'6.4','icon':ft.Icons.BALANCE_OUTLINED,'accent':'#C62828','soft':'#FFF0F0',
+                'title':'BALANCE GENERAL',
+                'desc':'Utilización y pérdida de neumáticos OTR, ingresos, salidas y saldo.',
+                'body':section_64,
+            },
+        }
+
+        inventory_cards=ft.Column(spacing=12)
+        inventory_detail=ft.Column(spacing=12,visible=False)
+
+        def close_inventory_section():
+            inventory_detail.visible=False
+            inventory_cards.visible=True
+            page.update()
+
+        def show_inventory_section(key):
+            m=inventory_meta[key]
+            inventory_detail.controls=[
+                ft.Row([
+                    ft.OutlinedButton('VOLVER A INVENTARIOS Y CONSUMOS',icon=ft.Icons.ARROW_BACK,on_click=lambda e: close_inventory_section()),
+                    ft.Container(expand=True),
+                    ft.Container(bgcolor=m['accent'],border_radius=8,padding=ft.Padding(10,5,10,5),
+                                 content=ft.Text(m['num'],color='#FFFFFF',weight=ft.FontWeight.BOLD,size=13)),
+                ]),
+                card(ft.Column([
+                    ft.Row([
+                        ft.Container(width=46,height=46,border_radius=12,bgcolor=m['soft'],alignment=ft.Alignment.CENTER,
+                                     content=ft.Icon(m['icon'],color=m['accent'],size=26)),
+                        ft.Column([
+                            ft.Text(m['title'].replace('\n',' '),size=17,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
+                            ft.Text(m['desc'],size=10.5,color=TEXT_MUTED),
+                        ],spacing=2,expand=True),
+                    ],spacing=12),
+                    m['body'],
+                ],spacing=12),padding=16),
+            ]
+            inventory_cards.visible=False
+            inventory_detail.visible=True
+            page.update()
+
+        def inventory_access_card(key):
+            m=inventory_meta[key]
+            return ft.Container(
+                width=292,height=260,bgcolor=m['soft'],
+                border=ft.Border.all(1,m['accent']+'55'),border_radius=14,padding=18,
+                on_click=lambda e,k=key: show_inventory_section(k),ink=True,
+                content=ft.Column([
+                    ft.Row([
+                        ft.Container(bgcolor=m['accent'],border_radius=9,padding=ft.Padding(11,6,11,6),
+                                     content=ft.Text(m['num'],size=16,weight=ft.FontWeight.BOLD,color='#FFFFFF')),
+                        ft.Container(expand=True),
+                        ft.Container(width=54,height=54,border_radius=14,bgcolor='#FFFFFF',alignment=ft.Alignment.CENTER,
+                                     content=ft.Icon(m['icon'],size=31,color=m['accent'])),
+                    ]),
+                    ft.Text(m['title'],size=16,weight=ft.FontWeight.BOLD,color=TEXT_MAIN,text_align=ft.TextAlign.CENTER),
+                    ft.Text(m['desc'],size=11,color=TEXT_MUTED,text_align=ft.TextAlign.CENTER),
+                    ft.Container(height=4),
+                    ft.Container(bgcolor=m['accent'],border_radius=9,padding=10,alignment=ft.Alignment.CENTER,
+                                 content=ft.Row([
+                                     ft.Icon(ft.Icons.BAR_CHART,color='#FFFFFF',size=20),
+                                     ft.Text('VER REPORTE',color='#FFFFFF',weight=ft.FontWeight.BOLD,size=13),
+                                     ft.Icon(ft.Icons.CHEVRON_RIGHT,color='#FFFFFF',size=20),
+                                 ],alignment=ft.MainAxisAlignment.CENTER,spacing=8)),
+                ],spacing=12,horizontal_alignment=ft.CrossAxisAlignment.CENTER)
+            )
+
+        inventory_cards.controls=[
+            card(ft.Column([
+                ft.Row([
+                    ft.Container(width=48,height=48,border_radius=24,bgcolor='#EAF2FF',alignment=ft.Alignment.CENTER,
+                                 content=ft.Icon(ft.Icons.WAREHOUSE_OUTLINED,color=NAV_ACCENT,size=27)),
+                    ft.Column([
+                        ft.Text('INVENTARIOS Y CONSUMOS',size=18,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
+                        ft.Text('Seleccione un reporte para visualizar el detalle.',size=11,color=TEXT_MUTED),
+                    ],spacing=2),
+                ],spacing=12),
+                ft.Row([inventory_access_card('61'),inventory_access_card('62'),inventory_access_card('63'),inventory_access_card('64')],spacing=12),
+            ],spacing=16),padding=16),
+        ]
+
         content.content=ft.Column([
             page_title('6. INVENTARIOS Y CONSUMOS','Existencias, costos, consumos y remanentes'),
-            card(ft.Column([
-                ft.Text('6.1 UTILIZACIÓN Y PÉRDIDA POR EQUIPO',size=17,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
-                ft.Text('Resumen económico y horas rodadas por equipo',size=12,color=TEXT_MUTED),
-                ft.Row([
-                    ft.Container(
-                        width=520,
-                        content=ft.Row([table],scroll=ft.ScrollMode.ALWAYS),
-                    ),
-                    ft.Container(expand=True,content=chart_panel),
-                ],spacing=14,vertical_alignment=ft.CrossAxisAlignment.START,scroll=ft.ScrollMode.AUTO),
-                note,
-                ft.Divider(height=20,color='#DCE4EC'),
-                section_62,
-                ft.Divider(height=20,color='#DCE4EC'),
-                section_63,
-                ft.Divider(height=20,color='#DCE4EC'),
-                section_64,
-            ],spacing=12))
-        ],scroll=ft.ScrollMode.AUTO,spacing=14)
+            inventory_cards,
+            inventory_detail,
+        ],scroll=ft.ScrollMode.AUTO,spacing=16)
         page.update()
 
     def placeholder(title,desc):
