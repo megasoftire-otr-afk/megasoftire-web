@@ -4603,16 +4603,22 @@ def main(page: ft.Page):
         """Módulo 9 · Reportes e indicadores.
 
         Replica la separación funcional observada en NEXA/FLT8000:
+        9.1 formato llantas de baja-anual,
+        9.4 formato reporte general,
         9.5 resumen por equipo,
         9.7 costo acumulado de llantas nuevas/reencauchadas instaladas,
         9.8 costo actual de llantas operativas en equipos y
         9.9 costo actual de llantas de repuesto (stand-by).
         """
         search=ft.TextField(label='Buscar código / marca / medida / equipo',prefix_icon=ft.Icons.SEARCH,width=330)
+        body_91=ft.Column(spacing=0)
+        body_94=ft.Column(spacing=0)
         body_95=ft.Column(spacing=0)
         body_97=ft.Column(spacing=0)
         body_98=ft.Column(spacing=0)
         body_99=ft.Column(spacing=0)
+        total_91=ft.Text('',size=11,weight=ft.FontWeight.BOLD,color=TEXT_MAIN)
+        total_94=ft.Text('',size=11,weight=ft.FontWeight.BOLD,color=TEXT_MAIN)
         total_95=ft.Text('',size=11,weight=ft.FontWeight.BOLD,color=TEXT_MAIN)
         total_97=ft.Text('',size=11,weight=ft.FontWeight.BOLD,color=TEXT_MAIN)
         total_98=ft.Text('',size=11,weight=ft.FontWeight.BOLD,color=TEXT_MAIN)
@@ -4715,6 +4721,8 @@ def main(page: ft.Page):
             table=ft.Column(controls,spacing=0)
             return ft.Row([ft.Container(content=table,width=width or sum(w for _,w in columns))],scroll=ft.ScrollMode.ALWAYS)
 
+        cols91=[('MEDIDA',90),('FECHA RETIRO',100),('SEC',115),('CÓDIGO',75),('MC',75),('MODELO',100),('V.U %',65),('REMA mm',75),('HORAS ACUM.',95),('US$/HR',80),('HsxMM',75),('COSTO',90),('OC N°',70),('EST',82),('MOTIVO',120),('EQ-I',75),('P',48),('EQ-F',75),('P',48)]
+        cols94=[('EQ',70),('P',45),('COD',68),('MC',75),('MED',85),('MOD',90),('H.T.',65),('$/H',70),('CO',72),('EX',50),('IN',50),('REM',60),('DR',50),('DH',50),('P-Ac',60),('Rc',55),('COND',78),('T',45),('Hs/mm',65),('Proye',70),('FECHA',88),('HORO',70),('OC',58)]
         cols95=[('EQUIP',78),('LL/NEW',92),('LL/REE',92),('$CORTE',92),('$NO OPT',92),('$/HRS',78),('HRS/LL',82),('H/D',60),('Hr-Rod',82),('LL-UT',68),('MM$REE',78),('MM$BAJA',82),('$TOTAL',92),('DGT',55),('REP',55),('INV',55),('CTB',55),('CTL',55),('PSB',55),('XRE',55),('PRE',55),('SEP',55),('USA',55)]
         cols97=[('FECHA',95),('CÓDIGO',78),('MARCA',105),('MEDIDA',95),('DISEÑO',105),('EQUIPO',85),('POS.',58),('RTD EXT/INT',100),('COSTO US$',100),('PROVEEDOR',105),('CONDICIÓN',105)]
         cols98=[('EQUIPO',82),('POS.',55),('CÓDIGO',75),('MARCA',95),('MEDIDA',88),('DISEÑO',95),('H.T.',70),('$/H',70),('COND.',82),('EXT',55),('INT',55),('PROM.',65),('U$ COSTO',90),('U$/mm',75),('U$ TOTAL',95),('FECHA',95)]
@@ -4722,6 +4730,97 @@ def main(page: ft.Page):
 
         def refresh(e=None):
             term=(search.value or '').strip().upper()
+
+            # 9.1: FORMATO LLANTAS DE BAJA-ANUAL (NEXA FLT2015.FXP).
+            # Historial de neumáticos dados de baja. Conserva la estructura del formato original.
+            bajas=query("""SELECT t.* FROM tires t WHERE UPPER(TRIM(t.status))='BAJA' ORDER BY t.size,t.code""")
+            rows91=[]; total91_cost=0.0
+            for r in bajas:
+                bq=query("""SELECT o.*,e.code equipment_code FROM occurrences o
+                            LEFT JOIN equipment e ON e.id=o.equipment_id
+                            WHERE o.tire_id=? AND UPPER(TRIM(o.event_code))='BAJA'
+                            ORDER BY o.id DESC LIMIT 1""",(r['id'],))
+                baja=bq[0] if bq else None
+                iq=query("""SELECT o.*,e.code equipment_code FROM occurrences o
+                            LEFT JOIN equipment e ON e.id=o.equipment_id
+                            WHERE o.tire_id=? AND UPPER(TRIM(o.event_code))='INST'
+                            ORDER BY o.id ASC LIMIT 1""",(r['id'],))
+                ini=iq[0] if iq else None
+                eqf=(baja['equipment_code'] if baja else '') or ''
+                hay=' '.join(str(x or '') for x in (r['code'],r['serial'],r['brand'],r['size'],r['design'],eqf)).upper()
+                if term and term not in hay: continue
+                ext=(baja['tread_outer'] if baja and baja['tread_outer'] is not None else r['tread_outer'])
+                inn=(baja['tread_inner'] if baja and baja['tread_inner'] is not None else r['tread_inner'])
+                remavg=avg2(ext,inn)
+                newavg=avg2(r['new_tread_outer'],r['new_tread_inner'])
+                if newavg is None:
+                    try: newavg=float(r['new_tread'])
+                    except Exception: newavg=None
+                vu=(remavg/newavg*100.0) if remavg is not None and newavg and newavg>0 else None
+                events=query("""SELECT event_code,meter FROM occurrences WHERE tire_id=?
+                                AND UPPER(TRIM(event_code)) IN ('INST','DINS','BAJA') ORDER BY id""",(r['id'],))
+                hrs=0.0; st=None
+                for ev in events:
+                    try: mv=float(ev['meter']) if ev['meter'] is not None else None
+                    except Exception: mv=None
+                    ec=str(ev['event_code'] or '').upper().strip()
+                    if ec=='INST' and mv is not None: st=mv
+                    elif ec in ('DINS','BAJA') and st is not None and mv is not None:
+                        if mv>=st: hrs+=mv-st
+                        st=None
+                if hrs<=0:
+                    try:
+                        im=float(r['installation_meter']) if r['installation_meter'] is not None else None
+                        bm=float(baja['meter']) if baja and baja['meter'] is not None else None
+                        hrs=(bm-im) if im is not None and bm is not None and bm>=im else 0.0
+                    except Exception: hrs=0.0
+                cost=float(r['cost_usd'] or 0); total91_cost+=cost
+                cph=(cost/hrs) if hrs>0 else 0.0
+                wear=(newavg-remavg) if newavg is not None and remavg is not None else 0.0
+                hsmm=(hrs/wear) if wear and wear>0 else 0.0
+                reason=(baja['reason'] if baja else '') or ''
+                cond='REENC.' if 'REENC' in str(r['tire_condition'] or '').upper() else 'NUEVA'
+                rows91.append([r['size'],format_date(baja['event_date']) if baja else '—',r['serial'],r['code'],r['brand'],r['design'],fnum(vu,1),fnum(remavg,1),fnum(hrs,0),f"${cph:.2f}",fnum(hsmm,1),money(cost),'BAJA',cond,reason,(ini['equipment_code'] if ini else '—'),(ini['position'] if ini else '—'),eqf or '—',(baja['position'] if baja else '—')])
+            total_91.value=f"TOTAL GENERAL   |   LLANTAS DE BAJA: {len(rows91)}   |   COSTO ACUMULADO: {money(total91_cost)}"
+            body_91.controls=[make_table(cols91,rows91,total_91)]
+
+            # 9.4: FORMATO REPORTE GENERAL (NEXA DEMO13.FXP).
+            # Equivalente a RELACION DE NEUMATICOS EN USO: solo neumáticos actualmente en servicio.
+            active94=query("""SELECT t.*,e.code equipment_code FROM tires t LEFT JOIN equipment e ON e.id=t.equipment_id
+                              WHERE UPPER(TRIM(t.status))='SERVICIO' AND t.equipment_id IS NOT NULL
+                              ORDER BY e.code,t.position,t.code""")
+            rows94=[]
+            for r in active94:
+                hay=' '.join(str(x or '') for x in (r['code'],r['brand'],r['size'],r['design'],r['equipment_code'])).upper()
+                if term and term not in hay: continue
+                inst=install_info(r['id'],latest=True)
+                lq=query("""SELECT event_date,event_code,meter,tread_outer,tread_inner,pressure,notes
+                            FROM occurrences WHERE tire_id=? ORDER BY id DESC LIMIT 1""",(r['id'],))
+                last=lq[0] if lq else None
+                try:
+                    cm=float(last['meter']) if last and last['meter'] is not None else (float(r['current_meter']) if r['current_meter'] is not None else None)
+                    im=float(inst['meter']) if inst and inst['meter'] is not None else None
+                    ht=max(0.0,cm-im) if cm is not None and im is not None else 0.0
+                except Exception: ht=0.0; cm=None
+                cost=float(r['cost_usd'] or 0); cph=(cost/ht) if ht>0 else 0.0
+                ext=(last['tread_outer'] if last and last['tread_outer'] is not None else r['tread_outer'])
+                inn=(last['tread_inner'] if last and last['tread_inner'] is not None else r['tread_inner'])
+                curavg=avg2(ext,inn); newavg=avg2(r['new_tread_outer'],r['new_tread_inner'])
+                if newavg is None:
+                    try: newavg=float(r['new_tread'])
+                    except Exception: newavg=None
+                rem=(curavg/newavg*100.0) if curavg is not None and newavg and newavg>0 else None
+                wear=(newavg-curavg) if newavg is not None and curavg is not None else 0.0
+                hsmm=(ht/wear) if wear and wear>0 else 0.0
+                try: proy=float(r['projected_life']) if r['projected_life'] is not None else None
+                except Exception: proy=None
+                pact=(last['pressure'] if last else None)
+                notes=str(last['notes'] or '').upper() if last else ''
+                tapa='SI' if ('TAPA' in notes or 'VALVULA' in notes or 'VÁLVULA' in notes) else 'NO'
+                cond='REENC.' if 'REENC' in str(r['tire_condition'] or '').upper() else 'NUEVA'
+                rows94.append([r['equipment_code'],r['position'],r['code'],r['brand'],r['size'],r['design'],fnum(ht,0),f"${cph:.2f}",r['construction_type'] or '—',fnum(ext,0),fnum(inn,0),fnum(rem,1),'—','—',fnum(pact,0),fnum(r['recommended_pressure'],0),cond,tapa,fnum(hsmm,1),fnum(proy,0),format_date(last['event_date']) if last else '—',fnum(cm,0),(last['event_code'] if last else '—')])
+            total_94.value=f"TOTAL GENERAL   |   NEUMÁTICOS OPERATIVOS: {len(rows94)}"
+            body_94.controls=[make_table(cols94,rows94,total_94)]
 
             # 9.5: RESUMEN POR EQUIPO (NEXA DEMO041.FXP / HISTORIAL POR EQUIPO).
             # H/D queda sin cálculo porque el FXP compilado no permite demostrar su fórmula.
@@ -4914,6 +5013,18 @@ def main(page: ft.Page):
         selected_report={'id':None}
 
         report_meta={
+            '91':{
+                'num':'9.1','icon':ft.Icons.DELETE_SWEEP_OUTLINED,'accent':'#B71C1C','soft':'#FFF1F1',
+                'title':'FORMATO LLANTAS DE BAJA - ANUAL',
+                'desc':'Historial anual de neumáticos dados de baja, rendimiento, remanente, costo y motivo de retiro.',
+                'detail':'9.1 FORMATO LLANTAS DE BAJA - ANUAL','body':body_91,
+            },
+            '94':{
+                'num':'9.4','icon':ft.Icons.ASSESSMENT_OUTLINED,'accent':'#00796B','soft':'#ECF8F6',
+                'title':'FORMATO REPORTE GENERAL',
+                'desc':'Relación técnica general de los neumáticos actualmente instalados y en uso.',
+                'detail':'9.4 FORMATO REPORTE GENERAL','body':body_94,
+            },
             '95':{
                 'num':'9.5','icon':ft.Icons.SUMMARIZE_OUTLINED,'accent':'#6A1B9A','soft':'#F7F0FB',
                 'title':'RESUMEN POR EQUIPO',
@@ -5019,7 +5130,7 @@ def main(page: ft.Page):
                         ft.Text('Seleccione un reporte para visualizar el detalle.',size=11,color=TEXT_MUTED),
                     ],spacing=2),
                 ],spacing=12),
-                ft.Row([access_card('95')],spacing=14),
+                ft.Row([access_card('91'),access_card('94'),access_card('95')],spacing=14),
                 ft.Row([access_card('97'),access_card('98'),access_card('99')],spacing=14),
             ],spacing=16),padding=16),
         ],spacing=12)
