@@ -4774,24 +4774,122 @@ def main(page: ft.Page):
 
         search.on_change=refresh
         refresh()
+
+        # Presentación tipo panel: los tres reportes se muestran como accesos visuales
+        # y solamente se abre la tabla seleccionada. La lógica NEXA de 9.7/9.8/9.9
+        # permanece intacta; este bloque modifica únicamente la navegación/presentación.
+        report_detail=ft.Column(spacing=12)
+        selected_report={'id':None}
+
+        report_meta={
+            '97':{
+                'num':'9.7','icon':ft.Icons.RECEIPT_LONG_OUTLINED,'accent':'#1565C0','soft':'#EEF6FF',
+                'title':'COSTO ACUMULADO\nLL/NUEVAS Y REENCAUCHADAS INSTALADAS',
+                'desc':'Inversión histórica de neumáticos nuevos y reencauchados que registran instalación.',
+                'detail':'9.7 COSTO ACUMUL. LL/NUEVAS Y REENC. INSTALADAS','body':body_97,
+            },
+            '98':{
+                'num':'9.8','icon':ft.Icons.PRECISION_MANUFACTURING_OUTLINED,'accent':'#138A3D','soft':'#EEFAF2',
+                'title':'COSTO ACTUAL\nLL/OPERATIVAS EN EQUIPOS',
+                'desc':'Valorización económica actual de los neumáticos que se encuentran en servicio.',
+                'detail':'9.8 COSTO ACTUAL LL/OPERATIVAS EN EQUIPOS','body':body_98,
+            },
+            '99':{
+                'num':'9.9','icon':ft.Icons.INVENTORY_2_OUTLINED,'accent':'#EF6C00','soft':'#FFF5EA',
+                'title':'COSTO ACTUAL\nLL/DE REPUESTO',
+                'desc':'Valorización económica de los neumáticos disponibles actualmente en Stand-by.',
+                'detail':'9.9 COSTO ACTUAL LL/DE REPUESTOS','body':body_99,
+            },
+        }
+
+        def show_report(key):
+            selected_report['id']=key
+            m=report_meta[key]
+            report_detail.controls=[
+                ft.Row([
+                    ft.OutlinedButton('VOLVER A REPORTES',icon=ft.Icons.ARROW_BACK,on_click=lambda e: close_report()),
+                    ft.Container(expand=True),
+                    ft.Container(
+                        bgcolor=m['accent'],border_radius=8,padding=ft.Padding(10,5,10,5),
+                        content=ft.Text(m['num'],color='#FFFFFF',weight=ft.FontWeight.BOLD,size=13)
+                    ),
+                ]),
+                card(ft.Column([
+                    ft.Row([
+                        ft.Container(width=46,height=46,border_radius=12,bgcolor=m['soft'],alignment=ft.Alignment.CENTER,
+                                     content=ft.Icon(m['icon'],color=m['accent'],size=26)),
+                        ft.Column([
+                            ft.Text(m['detail'],size=17,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
+                            ft.Text(m['desc'],size=10.5,color=TEXT_MUTED),
+                        ],spacing=2,expand=True),
+                    ],spacing=12),
+                    search,
+                    m['body'],
+                ],spacing=12),padding=16),
+            ]
+            report_cards.visible=False
+            report_detail.visible=True
+            page.update()
+
+        def close_report():
+            selected_report['id']=None
+            report_detail.visible=False
+            report_cards.visible=True
+            page.update()
+
+        def access_card(key):
+            m=report_meta[key]
+            return ft.Container(
+                expand=True,
+                bgcolor=m['soft'],
+                border=ft.Border.all(1,m['accent']+'55'),
+                border_radius=14,
+                padding=18,
+                on_click=lambda e,k=key: show_report(k),
+                ink=True,
+                content=ft.Column([
+                    ft.Row([
+                        ft.Container(
+                            bgcolor=m['accent'],border_radius=9,padding=ft.Padding(11,6,11,6),
+                            content=ft.Text(m['num'],size=16,weight=ft.FontWeight.BOLD,color='#FFFFFF')
+                        ),
+                        ft.Container(expand=True),
+                        ft.Container(width=54,height=54,border_radius=14,bgcolor='#FFFFFF',alignment=ft.Alignment.CENTER,
+                                     content=ft.Icon(m['icon'],size=31,color=m['accent'])),
+                    ]),
+                    ft.Text(m['title'],size=16,weight=ft.FontWeight.BOLD,color=TEXT_MAIN,text_align=ft.TextAlign.CENTER),
+                    ft.Text(m['desc'],size=11,color=TEXT_MUTED,text_align=ft.TextAlign.CENTER),
+                    ft.Container(height=4),
+                    ft.Container(
+                        bgcolor=m['accent'],border_radius=9,padding=10,alignment=ft.Alignment.CENTER,
+                        content=ft.Row([
+                            ft.Icon(ft.Icons.BAR_CHART,color='#FFFFFF',size=20),
+                            ft.Text('VER REPORTE',color='#FFFFFF',weight=ft.FontWeight.BOLD,size=13),
+                            ft.Icon(ft.Icons.CHEVRON_RIGHT,color='#FFFFFF',size=20),
+                        ],alignment=ft.MainAxisAlignment.CENTER,spacing=8)
+                    ),
+                ],spacing=12,horizontal_alignment=ft.CrossAxisAlignment.CENTER)
+            )
+
+        report_cards=ft.Column([
+            card(ft.Column([
+                ft.Row([
+                    ft.Container(width=48,height=48,border_radius=24,bgcolor='#EAF2FF',alignment=ft.Alignment.CENTER,
+                                 content=ft.Icon(ft.Icons.PAID_OUTLINED,color=NAV_ACCENT,size=27)),
+                    ft.Column([
+                        ft.Text('COSTOS ECONÓMICOS DE NEUMÁTICOS',size=18,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
+                        ft.Text('Seleccione un reporte para visualizar el detalle.',size=11,color=TEXT_MUTED),
+                    ],spacing=2),
+                ],spacing=12),
+                ft.Row([access_card('97'),access_card('98'),access_card('99')],spacing=14),
+            ],spacing=16),padding=16),
+        ],spacing=12)
+
+        report_detail.visible=False
         content.content=ft.Column([
-            page_title('9. REPORTES E INDICADORES','Reportes económicos replicados desde el esquema NEXA'),
-            search,
-            card(ft.Column([
-                ft.Row([ft.Icon(ft.Icons.RECEIPT_LONG_OUTLINED,color=NAV_ACCENT),ft.Text('9.7 COSTO ACUMUL. LL/NUEVAS Y REENC. INSTALADAS',size=16,weight=ft.FontWeight.BOLD,color=TEXT_MAIN)],spacing=8),
-                ft.Text('Inversión acumulada de neumáticos nuevos y reencauchados que registran instalación.',size=10.5,color=TEXT_MUTED),
-                body_97
-            ],spacing=8)),
-            card(ft.Column([
-                ft.Row([ft.Icon(ft.Icons.PRECISION_MANUFACTURING_OUTLINED,color=NAV_ACCENT),ft.Text('9.8 COSTO ACTUAL LL/OPERATIVAS EN EQUIPOS',size=16,weight=ft.FontWeight.BOLD,color=TEXT_MAIN)],spacing=8),
-                ft.Text('Relación de neumáticos actualmente en uso en equipos.',size=10.5,color=TEXT_MUTED),
-                body_98
-            ],spacing=8)),
-            card(ft.Column([
-                ft.Row([ft.Icon(ft.Icons.INVENTORY_2_OUTLINED,color=NAV_ACCENT),ft.Text('9.9 COSTO ACTUAL LL/DE REPUESTOS',size=16,weight=ft.FontWeight.BOLD,color=TEXT_MAIN)],spacing=8),
-                ft.Text('Valorización de neumáticos actualmente disponibles en STAND-BY.',size=10.5,color=TEXT_MUTED),
-                body_99
-            ],spacing=8)),
+            page_title('9. REPORTES E INDICADORES','Información para una mejor toma de decisiones'),
+            report_cards,
+            report_detail,
         ],scroll=ft.ScrollMode.AUTO,spacing=16)
         page.update()
 
