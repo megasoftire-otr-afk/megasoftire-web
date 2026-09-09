@@ -4604,6 +4604,7 @@ def main(page: ft.Page):
 
         Replica la separación funcional observada en NEXA/FLT8000:
         9.1 formato llantas de baja-anual,
+        9.2 retiro por equipo (RTEQ),
         9.4 formato reporte general,
         9.5 resumen por equipo,
         9.7 costo acumulado de llantas nuevas/reencauchadas instaladas,
@@ -4612,12 +4613,14 @@ def main(page: ft.Page):
         """
         search=ft.TextField(label='Buscar código / marca / medida / equipo',prefix_icon=ft.Icons.SEARCH,width=330)
         body_91=ft.Column(spacing=0)
+        body_92=ft.Column(spacing=0)
         body_94=ft.Column(spacing=0)
         body_95=ft.Column(spacing=0)
         body_97=ft.Column(spacing=0)
         body_98=ft.Column(spacing=0)
         body_99=ft.Column(spacing=0)
         total_91=ft.Text('',size=11,weight=ft.FontWeight.BOLD,color=TEXT_MAIN)
+        total_92=ft.Text('',size=11,weight=ft.FontWeight.BOLD,color=TEXT_MAIN)
         total_94=ft.Text('',size=11,weight=ft.FontWeight.BOLD,color=TEXT_MAIN)
         total_95=ft.Text('',size=11,weight=ft.FontWeight.BOLD,color=TEXT_MAIN)
         total_97=ft.Text('',size=11,weight=ft.FontWeight.BOLD,color=TEXT_MAIN)
@@ -4722,6 +4725,7 @@ def main(page: ft.Page):
             return ft.Row([ft.Container(content=table,width=width or sum(w for _,w in columns))],scroll=ft.ScrollMode.ALWAYS)
 
         cols91=[('MEDIDA',90),('FECHA RETIRO',100),('SEC',115),('CÓDIGO',75),('MC',75),('MODELO',100),('V.U %',65),('REMA mm',75),('HORAS ACUM.',95),('US$/HR',80),('HsxMM',75),('COSTO',90),('OC N°',70),('EST',82),('MOTIVO',120),('EQ-I',75),('P',48),('EQ-F',75),('P',48)]
+        cols92=[('CÓDIGO',78),('SERIE',115),('EQUIPO OUT',88),('POS.',55),('RTD NUEVO',82),('RTD RETIRO',82),('RTD ACTUAL',82),('% REM. ÚTIL',90),('HORAS ACUM.',95),('COSTO NEUM. US$',110),('COSTO ACUM. US$',110),('US$/NO UTILIZADO',125),('US$/H',78),('Hs/mm',75),('FECHA RETIRO',100),('MOTIVO',105)]
         cols94=[('EQ',70),('P',45),('COD',68),('MC',75),('MED',85),('MOD',90),('H.T.',65),('$/H',70),('CO',72),('EX',50),('IN',50),('REM',60),('DR',50),('DH',50),('P-Ac',60),('Rc',55),('COND',78),('T',45),('Hs/mm',65),('Proye',70),('FECHA',88),('HORO',70),('OC',58)]
         cols95=[('EQUIP',78),('LL/NEW',92),('LL/REE',92),('$CORTE',92),('$NO OPT',92),('$/HRS',78),('HRS/LL',82),('H/D',60),('Hr-Rod',82),('LL-UT',68),('MM$REE',78),('MM$BAJA',82),('$TOTAL',92),('DGT',55),('REP',55),('INV',55),('CTB',55),('CTL',55),('PSB',55),('XRE',55),('PRE',55),('SEP',55),('USA',55)]
         cols97=[('FECHA',95),('CÓDIGO',78),('MARCA',105),('MEDIDA',95),('DISEÑO',105),('EQUIPO',85),('POS.',58),('RTD EXT/INT',100),('COSTO US$',100),('PROVEEDOR',105),('CONDICIÓN',105)]
@@ -4783,6 +4787,79 @@ def main(page: ft.Page):
                 rows91.append([r['size'],format_date(baja['event_date']) if baja else '—',r['serial'],r['code'],r['brand'],r['design'],fnum(vu,1),fnum(remavg,1),fnum(hrs,0),f"${cph:.2f}",fnum(hsmm,1),money(cost),'BAJA',cond,reason,(ini['equipment_code'] if ini else '—'),(ini['position'] if ini else '—'),eqf or '—',(baja['position'] if baja else '—')])
             total_91.value=f"TOTAL GENERAL   |   LLANTAS DE BAJA: {len(rows91)}   |   COSTO ACUMULADO: {money(total91_cost)}"
             body_91.controls=[make_table(cols91,rows91,total_91)]
+
+            # 9.2: RETIRO POR EQUIPO (NEXA FLT2080.FXP / RTEQ).
+            # Se incluyen solo BAJAS cuyo motivo identifica retiro del equipo hacia otra operación.
+            # Costo acumulado = costo del neumático x porcentaje de profundidad útil consumida.
+            # US$/NO UTILIZADO = costo del neumático - costo acumulado.
+            rteq_rows=[]
+            rteq_tot_cost=0.0; rteq_tot_acc=0.0; rteq_tot_unused=0.0; rteq_tot_hours=0.0
+            all_bajas=query("""SELECT t.* FROM tires t WHERE UPPER(TRIM(t.status))='BAJA' ORDER BY t.code""")
+            for r in all_bajas:
+                bq=query("""SELECT o.*,e.code equipment_code FROM occurrences o
+                            LEFT JOIN equipment e ON e.id=o.equipment_id
+                            WHERE o.tire_id=? AND UPPER(TRIM(o.event_code))='BAJA'
+                            ORDER BY o.id DESC LIMIT 1""",(r['id'],))
+                if not bq: continue
+                baja=bq[0]
+                motivo=str(baja['reason'] or '').strip()
+                motup=motivo.upper()
+                if not (motup=='RTEQ' or 'RETIRO' in motup and 'EQUIP' in motup):
+                    continue
+                eqout=baja['equipment_code'] or ''
+                hay=' '.join(str(x or '') for x in (r['code'],r['serial'],r['brand'],r['size'],r['design'],eqout,motivo)).upper()
+                if term and term not in hay: continue
+
+                newavg=avg2(r['new_tread_outer'],r['new_tread_inner'])
+                if newavg is None:
+                    try: newavg=float(r['new_tread'])
+                    except Exception: newavg=None
+                actual=avg2(baja['tread_outer'],baja['tread_inner'])
+                if actual is None: actual=avg2(r['tread_outer'],r['tread_inner'])
+                try: retiro=float(r['retirement_tread'] or 0)
+                except Exception: retiro=0.0
+                try: costo=float(r['cost_usd'] or 0)
+                except Exception: costo=0.0
+
+                util_original=max(0.0,(newavg or 0)-retiro)
+                util_actual=max(0.0,(actual or 0)-retiro)
+                if util_original>0:
+                    util_actual=min(util_actual,util_original)
+                    pct_rem=util_actual/util_original*100.0
+                    pct_consumido=1.0-(util_actual/util_original)
+                else:
+                    pct_rem=0.0; pct_consumido=0.0
+                costo_acum=costo*pct_consumido
+                no_utilizado=max(0.0,costo-costo_acum)
+
+                # Horas reales acumuladas entre INST y DINS/BAJA.
+                evs=query("""SELECT event_code,meter FROM occurrences WHERE tire_id=?
+                              AND UPPER(TRIM(event_code)) IN ('INST','DINS','BAJA') ORDER BY id""",(r['id'],))
+                hrs=0.0; st=None
+                for ev in evs:
+                    ec=str(ev['event_code'] or '').upper().strip()
+                    try: mv=float(ev['meter']) if ev['meter'] is not None else None
+                    except Exception: mv=None
+                    if ec=='INST' and mv is not None: st=mv
+                    elif ec in ('DINS','BAJA') and st is not None and mv is not None:
+                        if mv>=st: hrs+=mv-st
+                        st=None
+                if hrs<=0:
+                    try:
+                        im=float(r['installation_meter']) if r['installation_meter'] is not None else None
+                        bm=float(baja['meter']) if baja['meter'] is not None else None
+                        if im is not None and bm is not None and bm>=im: hrs=bm-im
+                    except Exception: pass
+                usd_h=(costo_acum/hrs) if hrs>0 else 0.0
+                mm_consumidos=max(0.0,(newavg or 0)-(actual or 0))
+                hs_mm=(hrs/mm_consumidos) if mm_consumidos>0 else 0.0
+
+                rteq_rows.append([r['code'],r['serial'],eqout or '—',baja['position'],fnum(newavg,1),fnum(retiro,1),fnum(actual,1),f'{pct_rem:.1f}%',fnum(hrs,0),money(costo),money(costo_acum),money(no_utilizado),f'${usd_h:.2f}',fnum(hs_mm,1),format_date(baja['event_date']),motivo or 'RTEQ'])
+                rteq_tot_cost+=costo; rteq_tot_acc+=costo_acum; rteq_tot_unused+=no_utilizado; rteq_tot_hours+=hrs
+            if rteq_rows:
+                rteq_rows.append(['TOTAL GENERAL','—','—','—','—','—','—','—',fnum(rteq_tot_hours,0),money(rteq_tot_cost),money(rteq_tot_acc),money(rteq_tot_unused),'—','—','—','—'])
+            total_92.value=''
+            body_92.controls=[make_table(cols92,rteq_rows,highlight_last=bool(rteq_rows))]
 
             # 9.4: FORMATO REPORTE GENERAL (NEXA DEMO13.FXP).
             # Equivalente a RELACION DE NEUMATICOS EN USO: solo neumáticos actualmente en servicio.
@@ -5019,6 +5096,12 @@ def main(page: ft.Page):
                 'desc':'Historial anual de neumáticos dados de baja, rendimiento, remanente, costo y motivo de retiro.',
                 'detail':'9.1 FORMATO LLANTAS DE BAJA - ANUAL','body':body_91,
             },
+            '92':{
+                'num':'9.2','icon':ft.Icons.EXIT_TO_APP_OUTLINED,'accent':'#C62828','soft':'#FFF4F4',
+                'title':'RETIRO POR EQUIPO',
+                'desc':'Neumáticos retirados por salida del equipo a otra operación (RTEQ), con costo utilizado y remanente económico no utilizado.',
+                'detail':'9.2 REPORT - RETIRO POR EQUIPO','body':body_92,
+            },
             '94':{
                 'num':'9.4','icon':ft.Icons.ASSESSMENT_OUTLINED,'accent':'#00796B','soft':'#ECF8F6',
                 'title':'FORMATO REPORTE GENERAL',
@@ -5130,8 +5213,9 @@ def main(page: ft.Page):
                         ft.Text('Seleccione un reporte para visualizar el detalle.',size=11,color=TEXT_MUTED),
                     ],spacing=2),
                 ],spacing=12),
-                ft.Row([access_card('91'),access_card('94'),access_card('95')],spacing=14),
-                ft.Row([access_card('97'),access_card('98'),access_card('99')],spacing=14),
+                ft.Row([access_card('91'),access_card('92'),access_card('94')],spacing=14),
+                ft.Row([access_card('95'),access_card('97'),access_card('98')],spacing=14),
+                ft.Row([access_card('99')],spacing=14),
             ],spacing=16),padding=16),
         ],spacing=12)
 
