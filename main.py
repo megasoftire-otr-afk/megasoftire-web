@@ -4603,14 +4603,17 @@ def main(page: ft.Page):
         """Módulo 9 · Reportes e indicadores.
 
         Replica la separación funcional observada en NEXA/FLT8000:
+        9.5 resumen por equipo,
         9.7 costo acumulado de llantas nuevas/reencauchadas instaladas,
         9.8 costo actual de llantas operativas en equipos y
         9.9 costo actual de llantas de repuesto (stand-by).
         """
         search=ft.TextField(label='Buscar código / marca / medida / equipo',prefix_icon=ft.Icons.SEARCH,width=330)
+        body_95=ft.Column(spacing=0)
         body_97=ft.Column(spacing=0)
         body_98=ft.Column(spacing=0)
         body_99=ft.Column(spacing=0)
+        total_95=ft.Text('',size=11,weight=ft.FontWeight.BOLD,color=TEXT_MAIN)
         total_97=ft.Text('',size=11,weight=ft.FontWeight.BOLD,color=TEXT_MAIN)
         total_98=ft.Text('',size=11,weight=ft.FontWeight.BOLD,color=TEXT_MAIN)
         total_99=ft.Text('',size=11,weight=ft.FontWeight.BOLD,color=TEXT_MAIN)
@@ -4695,12 +4698,106 @@ def main(page: ft.Page):
             table=ft.Column(controls,spacing=0)
             return ft.Row([ft.Container(content=table,width=width or sum(w for _,w in columns))],scroll=ft.ScrollMode.ALWAYS)
 
+        cols95=[('EQUIP',78),('LL/NEW',92),('LL/REE',92),('$CORTE',92),('$NO OPT',92),('$/HRS',78),('HRS/LL',82),('H/D',60),('Hr-Rod',82),('LL-UT',68),('MM$REE',78),('MM$BAJA',82),('$TOTAL',92),('DGT',55),('REP',55),('INV',55),('CTB',55),('CTL',55),('PSB',55),('XRE',55),('PRE',55),('SEP',55),('USA',55)]
         cols97=[('FECHA',95),('CÓDIGO',78),('MARCA',105),('MEDIDA',95),('DISEÑO',105),('EQUIPO',85),('POS.',58),('RTD EXT/INT',100),('COSTO US$',100),('PROVEEDOR',105),('CONDICIÓN',105)]
         cols98=[('EQUIPO',82),('POS.',55),('CÓDIGO',75),('MARCA',95),('MEDIDA',88),('DISEÑO',95),('H.T.',70),('$/H',70),('COND.',82),('EXT',55),('INT',55),('PROM.',65),('U$ COSTO',90),('U$/mm',75),('U$ TOTAL',95),('FECHA',95)]
         cols99=[('MEDIDA',90),('F. RETIRO',95),('ESTADO',90),('CÓDIGO',75),('MARCA',95),('DISEÑO',95),('COND.',82),('EXT/INT',82),('PROM.',65),('U$ COSTO',90),('U$/MM',75),('U$ TOTAL',95),('EQ-OUT',85)]
 
         def refresh(e=None):
             term=(search.value or '').strip().upper()
+
+            # 9.5: RESUMEN POR EQUIPO (NEXA DEMO041.FXP / HISTORIAL POR EQUIPO).
+            # H/D queda sin cálculo porque el FXP compilado no permite demostrar su fórmula.
+            def _n(v):
+                try: return float(v) if v is not None else None
+                except Exception: return None
+
+            def _tread_min(row):
+                vals=[]
+                for k in ('tread_outer','tread_inner'):
+                    try: v=_n(row[k])
+                    except Exception: v=None
+                    if v is not None and v>=0: vals.append(v)
+                return min(vals) if vals else None
+
+            def _orig_min(row):
+                vals=[]
+                for k in ('new_tread_outer','new_tread_inner','new_tread'):
+                    try: v=_n(row[k])
+                    except Exception: v=None
+                    if v is not None and v>0: vals.append(v)
+                return min(vals) if vals else None
+
+            def _is_ree(v):
+                txt=str(v or '').strip().upper()
+                return ('REENCAUCH' in txt) or ('REENC' in txt)
+
+            def _is_cut(v):
+                txt=str(v or '').strip().upper()
+                return ('CORTE' in txt) or txt in ('CTL','CTB','CPB') or txt.startswith('CT')
+
+            rows95=[]; grand95=0.0
+            eqs=query("SELECT id,code FROM equipment ORDER BY code")
+            for eq in eqs:
+                occs=query("""SELECT o.id,o.tire_id,o.event_code,o.event_date,o.meter,o.tread_outer,o.tread_inner,o.reason,
+                                      t.cost_usd,t.new_tread,t.new_tread_outer,t.new_tread_inner,t.retirement_tread,t.tire_condition
+                               FROM occurrences o JOIN tires t ON t.id=o.tire_id
+                               WHERE o.equipment_id=? ORDER BY o.id""",(eq['id'],))
+                if not occs: continue
+                if term and term not in str(eq['code'] or '').upper(): continue
+                meters=[_n(r['meter']) for r in occs if _n(r['meter']) is not None]
+                hr_rod=max(0.0,(max(meters)-min(meters))) if len(meters)>=2 else 0.0
+                by_tire={}
+                for r in occs: by_tire.setdefault(int(r['tire_id']),[]).append(r)
+                ll_new=ll_ree=cut_loss=no_opt=0.0
+                mm_ree=mm_baja=0.0
+                for tid,events in by_tire.items():
+                    first=events[0]; original=_orig_min(first); cost=_n(first['cost_usd'])
+                    if not original or not cost or original<=0: continue
+                    pxmm=cost/original
+                    start=None
+                    for ev in events:
+                        tm=_tread_min(ev)
+                        if ev['event_code']=='INST' and tm is not None: start=tm; break
+                    if start is None:
+                        for ev in events:
+                            tm=_tread_min(ev)
+                            if tm is not None: start=tm; break
+                    end=None
+                    for ev in reversed(events):
+                        tm=_tread_min(ev)
+                        if tm is not None: end=tm; break
+                    used_mm=max(0.0,start-end) if start is not None and end is not None else 0.0
+                    used_value=used_mm*pxmm
+                    if _is_ree(first['tire_condition']):
+                        ll_ree+=used_value; mm_ree+=used_mm
+                    else: ll_new+=used_value
+                    baja=next((ev for ev in reversed(events) if ev['event_code']=='BAJA'),None)
+                    if baja is not None:
+                        bt=_tread_min(baja)
+                        if bt is None: bt=end
+                        if bt is not None:
+                            mm_baja+=max(0.0,bt)
+                            retirement=_n(first['retirement_tread']) or 0.0
+                            if _is_cut(baja['reason']): cut_loss+=max(0.0,bt)*pxmm
+                            else: no_opt+=max(0.0,bt-retirement)*pxmm
+                ll_ut=len(by_tire)
+                cph=((ll_new+ll_ree)/hr_rod) if hr_rod>0 else 0.0
+                hrs_ll=(hr_rod/ll_ut) if ll_ut>0 else 0.0
+                total=ll_new+ll_ree+cut_loss+no_opt; grand95+=total
+                counters={k:0 for k in ('DGT','REP','INV','CTB','CTL','PSB','XRE','PRE','SEP','USA')}
+                for ev in occs:
+                    code=str(ev['event_code'] or '').upper().strip()
+                    reason=str(ev['reason'] or '').upper().strip()
+                    if code=='REPA': counters['REP']+=1
+                    if code in ('INVE','INV'): counters['INV']+=1
+                    token=reason or code
+                    for k in counters:
+                        if token==k or token.startswith(k): counters[k]+=1
+                rows95.append([eq['code'],money(ll_new),money(ll_ree),money(cut_loss),money(no_opt),f"${cph:.2f}",fnum(hrs_ll,0),'—',fnum(hr_rod,0),ll_ut,fnum(mm_ree,1),fnum(mm_baja,1),money(total),
+                               counters['DGT'],counters['REP'],counters['INV'],counters['CTB'],counters['CTL'],counters['PSB'],counters['XRE'],counters['PRE'],counters['SEP'],counters['USA']])
+            total_95.value=f"VALOR TOTAL RESUMEN POR EQUIPO: {money(grand95)}"
+            body_95.controls=[make_table(cols95,rows95,total_95)]
 
             # 9.7: una inversión por neumático que haya sido instalado al menos una vez.
             # Se toma la primera INST para no duplicar el costo por reinstalaciones posteriores.
@@ -4782,6 +4879,12 @@ def main(page: ft.Page):
         selected_report={'id':None}
 
         report_meta={
+            '95':{
+                'num':'9.5','icon':ft.Icons.SUMMARIZE_OUTLINED,'accent':'#6A1B9A','soft':'#F7F0FB',
+                'title':'RESUMEN POR EQUIPO',
+                'desc':'Historial consolidado por equipo: utilización, costos, pérdidas, rendimiento y eventos.',
+                'detail':'9.5 RESUMEN POR EQUIPO','body':body_95,
+            },
             '97':{
                 'num':'9.7','icon':ft.Icons.RECEIPT_LONG_OUTLINED,'accent':'#1565C0','soft':'#EEF6FF',
                 'title':'COSTO ACUMULADO\nLL/NUEVAS Y REENCAUCHADAS INSTALADAS',
@@ -4881,6 +4984,7 @@ def main(page: ft.Page):
                         ft.Text('Seleccione un reporte para visualizar el detalle.',size=11,color=TEXT_MUTED),
                     ],spacing=2),
                 ],spacing=12),
+                ft.Row([access_card('95')],spacing=14),
                 ft.Row([access_card('97'),access_card('98'),access_card('99')],spacing=14),
             ],spacing=16),padding=16),
         ],spacing=12)
