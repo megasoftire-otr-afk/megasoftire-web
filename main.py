@@ -6221,6 +6221,250 @@ def main(page: ft.Page):
                          content=ft.Text('Costo/hora del neumático = costo registrado / horas reales acumuladas. La variación se compara con Desgaste Regular dentro de la misma medida, marca y diseño.',size=10,color=TEXT_MUTED)),
         ],spacing=8)
 
+        # 6.4 · BALANCE GENERAL – UTILIZACIÓN Y PÉRDIDA DE NEUMÁTICOS OTR.
+        # Ecuación aprobada por el usuario:
+        # Inventario inicial + Ingresos = Salidas + Saldo.
+        # Mientras no exista inventario histórico de apertura:
+        #   - Apertura repuestos = 0
+        #   - Apertura operativas = (Salidas + Saldo) - Ingresos
+        # De esta manera el balance queda conciliado por construcción.
+        def _avg_vals(a,b):
+            vals=[]
+            for x in (a,b):
+                v=n(x)
+                if v is not None:
+                    vals.append(v)
+            return (sum(vals)/len(vals)) if vals else None
+
+        def _current_residual_value(t):
+            new_avg=_avg_vals(t['new_tread_outer'],t['new_tread_inner'])
+            if new_avg is None:
+                new_avg=n(t['new_tread'])
+            cur_avg=_avg_vals(t['tread_outer'],t['tread_inner'])
+            retirement=n(t['retirement_tread']) or 0.0
+            cost=n(t['cost_usd']) or 0.0
+            usable=(new_avg-retirement) if new_avg is not None else 0.0
+            rem=max(0.0,(cur_avg-retirement)) if cur_avg is not None else 0.0
+            return (cost/usable)*rem if usable>0 else 0.0
+
+        # INGRESOS · fuente 9.7. Una sola inversión por neumático instalado.
+        income_new=0.0
+        income_reenc=0.0
+        seen_inst=set()
+        inst_rows=query("""SELECT o.tire_id,t.cost_usd,t.tire_condition
+                           FROM occurrences o JOIN tires t ON t.id=o.tire_id
+                           WHERE UPPER(TRIM(o.event_code))='INST' ORDER BY o.id""")
+        for r in inst_rows:
+            tid=int(r['tire_id'])
+            if tid in seen_inst:
+                continue
+            seen_inst.add(tid)
+            cost=n(r['cost_usd']) or 0.0
+            if is_reencauchada(r['tire_condition']):
+                income_reenc += cost
+            else:
+                income_new += cost
+
+        # No existe aún un indicador/campo específico para identificar neumáticos
+        # que llegaron montados con un equipo al ingresar a la operación.
+        income_equipment_arrival=0.0
+
+        # SALIDAS · fuente 9.5: consolidar los mismos conceptos económicos.
+        out_new=0.0
+        out_reenc=0.0
+        out_cut=0.0
+        out_noopt=0.0
+        out_mmree_value=0.0
+        for eq in eq_rows:
+            occs=query("""
+                SELECT o.id,o.tire_id,o.event_code,o.event_date,o.meter,
+                       o.tread_outer,o.tread_inner,o.reason,
+                       t.cost_usd,t.new_tread,t.new_tread_outer,t.new_tread_inner,
+                       t.retirement_tread,t.tire_condition
+                FROM occurrences o JOIN tires t ON t.id=o.tire_id
+                WHERE o.equipment_id=? ORDER BY o.id
+            """,(int(eq['id']),))
+            by_tire={}
+            for r in occs:
+                by_tire.setdefault(int(r['tire_id']),[]).append(r)
+            for events in by_tire.values():
+                first=events[0]
+                original=tire_original_min(first)
+                cost=n(first['cost_usd'])
+                if not original or not cost or original<=0:
+                    continue
+                pxmm=cost/original
+                start_tread=None
+                for ev in events:
+                    tm=tread_min(ev)
+                    if str(ev['event_code'] or '').upper().strip()=='INST' and tm is not None:
+                        start_tread=tm
+                        break
+                if start_tread is None:
+                    for ev in events:
+                        tm=tread_min(ev)
+                        if tm is not None:
+                            start_tread=tm
+                            break
+                end_tread=None
+                for ev in reversed(events):
+                    tm=tread_min(ev)
+                    if tm is not None:
+                        end_tread=tm
+                        break
+                used_mm=max(0.0,start_tread-end_tread) if start_tread is not None and end_tread is not None else 0.0
+                used_value=used_mm*pxmm
+                if is_reencauchada(first['tire_condition']):
+                    out_reenc += used_value
+                    # En 9.5 MM$REE representa el consumo asociado al reencauche.
+                    out_mmree_value += used_value
+                else:
+                    out_new += used_value
+                baja=next((ev for ev in reversed(events) if str(ev['event_code'] or '').upper().strip()=='BAJA'),None)
+                if baja is not None:
+                    bt=tread_min(baja)
+                    if bt is None:
+                        bt=end_tread
+                    if bt is not None:
+                        retirement=n(first['retirement_tread']) or 0.0
+                        if is_cut_reason(baja['reason']):
+                            out_cut += max(0.0,bt)*pxmm
+                        else:
+                            out_noopt += max(0.0,bt-retirement)*pxmm
+
+        # SALIDAS · fuente 9.2: valor del remanente no utilizado en bajas RTEQ.
+        out_rteq=0.0
+        rteq_rows=query("""SELECT t.*,o.tread_outer baja_outer,o.tread_inner baja_inner,o.reason
+                           FROM occurrences o JOIN tires t ON t.id=o.tire_id
+                           WHERE UPPER(TRIM(o.event_code))='BAJA'
+                           ORDER BY o.id""")
+        latest_rteq={}
+        for r in rteq_rows:
+            reason=str(r['reason'] or '').upper().strip()
+            if reason=='RTEQ' or 'RETIRO' in reason and 'EQUIP' in reason:
+                latest_rteq[int(r['id']) if 'id' in r.keys() else len(latest_rteq)]=r
+        for r in latest_rteq.values():
+            new_avg=_avg_vals(r['new_tread_outer'],r['new_tread_inner'])
+            if new_avg is None:
+                new_avg=n(r['new_tread'])
+            cur_avg=_avg_vals(r['baja_outer'],r['baja_inner'])
+            retirement=n(r['retirement_tread']) or 0.0
+            cost=n(r['cost_usd']) or 0.0
+            usable=(new_avg-retirement) if new_avg is not None else 0.0
+            consumed=max(0.0,(new_avg-cur_avg)) if new_avg is not None and cur_avg is not None else 0.0
+            consumed_pct=min(1.0,consumed/usable) if usable>0 else 0.0
+            cost_acum=cost*consumed_pct
+            out_rteq += max(0.0,cost-cost_acum)
+
+        # SALDO · fuentes 9.8 y 9.9: valor residual actual por RTD útil.
+        close_oper=0.0
+        for t in query("""SELECT * FROM tires
+                          WHERE UPPER(TRIM(status))='SERVICIO' AND equipment_id IS NOT NULL"""):
+            close_oper += _current_residual_value(t)
+        close_spare=0.0
+        for t in query("""SELECT * FROM tires
+                          WHERE UPPER(TRIM(status)) IN ('STAND-BY','STAND BY','STANDBY')"""):
+            close_spare += _current_residual_value(t)
+
+        total_income=income_new+income_equipment_arrival+income_reenc
+        total_out=out_new+out_reenc+out_cut+out_noopt+out_mmree_value+out_rteq
+        total_close=close_oper+close_spare
+        opening_spare=0.0
+        opening_oper=(total_out+total_close)-total_income
+        total_opening=opening_oper+opening_spare
+        total_available=total_opening+total_income
+        balance_final=(total_opening+total_income)-(total_out+total_close)
+
+        def _pct(v):
+            return (100.0*v/total_available) if abs(total_available)>1e-9 else 0.0
+
+        balance_rows=[
+            ('INVENTARIO INICIAL','Inventario Apertura Llantas Operativas en Equipos',opening_oper,_pct(opening_oper)),
+            ('','Inventario Apertura Llantas de Repuesto',opening_spare,_pct(opening_spare)),
+            ('INGRESOS','Llantas Nuevas Instaladas (compras)',income_new,_pct(income_new)),
+            ('','Equipos que ingresaron con llantas a la operación',income_equipment_arrival,_pct(income_equipment_arrival)),
+            ('','Llantas Reencauchadas Instaladas (compras)',income_reenc,_pct(income_reenc)),
+            ('SALIDAS','Neumáticos Originales - Retiros x Desgaste Regular',out_new,_pct(out_new)),
+            ('','Neumáticos Reencauchados - Retiros x Desgaste',out_reenc,_pct(out_reenc)),
+            ('','Neumáticos Retirados x Cortes',out_cut,_pct(out_cut)),
+            ('','Remanente No utilizado (Retiro de llanta x Seguridad)',out_noopt,_pct(out_noopt)),
+            ('','Remanente utilizado para el Reencauche',out_mmree_value,_pct(out_mmree_value)),
+            ('','Remanente No utilizado (Retiro de llanta x Equipo de baja)',out_rteq,_pct(out_rteq)),
+            ('SALDO','Inventario Cierre Llantas Operativas en Equipos',close_oper,_pct(close_oper)),
+            ('','Inventario Cierre Llantas de Repuesto',close_spare,_pct(close_spare)),
+        ]
+
+        def balance_cell(text,width,bold=False,align=ft.TextAlign.LEFT,color=TEXT_MAIN):
+            return ft.Container(
+                width=width,padding=ft.Padding(left=8,top=7,right=8,bottom=7),
+                content=ft.Text(str(text),size=11,weight=ft.FontWeight.BOLD if bold else ft.FontWeight.NORMAL,
+                                color=color,text_align=align,no_wrap=True)
+            )
+
+        bal_controls=[]
+        current_block=None
+        for i,(block,label,value,pct) in enumerate(balance_rows):
+            block_changed=bool(block)
+            if block_changed and current_block is not None:
+                bal_controls.append(ft.Divider(height=1,color='#1F1F1F'))
+            if block_changed:
+                current_block=block
+            bal_controls.append(ft.Container(
+                bgcolor='#FFFFFF' if i%2==0 else '#FAFAFA',
+                content=ft.Row([
+                    balance_cell(block,125,bold=bool(block)),
+                    balance_cell(label,420),
+                    balance_cell(f'US$ {value:,.2f}',130,bold=False,align=ft.TextAlign.RIGHT),
+                    balance_cell(f'{pct:.1f}%',70,bold=True,align=ft.TextAlign.RIGHT),
+                ],spacing=0)
+            ))
+        # Totales por bloque y comprobación final del balance.
+        bal_controls.extend([
+            ft.Divider(height=1,color='#1F1F1F'),
+            ft.Container(bgcolor='#F2F2F2',content=ft.Row([
+                balance_cell('',125),balance_cell('TOTAL INVENTARIO INICIAL + INGRESOS',420,True),
+                balance_cell(f'US$ {total_available:,.2f}',130,True,ft.TextAlign.RIGHT),balance_cell('100.0%',70,True,ft.TextAlign.RIGHT)
+            ],spacing=0)),
+            ft.Container(bgcolor='#F2F2F2',content=ft.Row([
+                balance_cell('',125),balance_cell('TOTAL SALIDAS + SALDO',420,True),
+                balance_cell(f'US$ {(total_out+total_close):,.2f}',130,True,ft.TextAlign.RIGHT),balance_cell('100.0%',70,True,ft.TextAlign.RIGHT)
+            ],spacing=0)),
+            ft.Container(
+                bgcolor='#0B4A72',border=ft.Border(top=ft.BorderSide(3,'#D32F2F')),
+                content=ft.Row([
+                    balance_cell('BALANCE FINAL',125,True,color=ft.Colors.WHITE),
+                    balance_cell('Inventario inicial + Ingresos - Salidas - Saldo',420,True,color=ft.Colors.WHITE),
+                    balance_cell(f'US$ {balance_final:,.2f}',130,True,ft.TextAlign.RIGHT,ft.Colors.WHITE),
+                    balance_cell('CUADRADO' if abs(balance_final)<0.01 else 'REVISAR',70,True,ft.TextAlign.RIGHT,ft.Colors.WHITE),
+                ],spacing=0)
+            )
+        ])
+
+        section_64=ft.Column([
+            ft.Container(
+                bgcolor='#C00000',padding=ft.Padding.symmetric(horizontal=14,vertical=10),
+                content=ft.Row([
+                    ft.Text('6.4  BALANCE GENERAL',size=17,weight=ft.FontWeight.BOLD,color=ft.Colors.WHITE),
+                    ft.Container(expand=True),
+                    ft.Text('UTILIZACIÓN Y PÉRDIDA DE NEUMÁTICOS OTR',size=12,weight=ft.FontWeight.BOLD,color=ft.Colors.WHITE),
+                ],vertical_alignment=ft.CrossAxisAlignment.CENTER)
+            ),
+            ft.Text('Conciliación económica: Inventario inicial + Ingresos = Salidas + Saldo',size=11,color=TEXT_MUTED),
+            ft.Container(
+                border=ft.Border.all(1,'#D9DEE5'),border_radius=6,
+                content=ft.Column(bal_controls,spacing=0)
+            ),
+            ft.Container(
+                bgcolor='#FFFDEB',border=ft.Border.all(1,'#D9D2A8'),padding=9,
+                content=ft.Text(
+                    'Criterio temporal de apertura: mientras no exista un inventario histórico de apertura, '
+                    'Inventario Apertura Repuestos = US$ 0.00 e Inventario Apertura Operativas se obtiene por diferencia. '
+                    '“Equipos que ingresaron con llantas” se mantiene en US$ 0.00 hasta disponer de un campo que identifique ese origen.',
+                    size=10,color=TEXT_MUTED
+                )
+            ),
+        ],spacing=8)
+
         note=ft.Container(
             bgcolor='#F7FAFC',
             border=ft.Border.all(1,'#DCE4EC'),
@@ -6250,6 +6494,8 @@ def main(page: ft.Page):
                 section_62,
                 ft.Divider(height=20,color='#DCE4EC'),
                 section_63,
+                ft.Divider(height=20,color='#DCE4EC'),
+                section_64,
             ],spacing=12))
         ],scroll=ft.ScrollMode.AUTO,spacing=14)
         page.update()
