@@ -1372,20 +1372,25 @@ def main(page: ft.Page):
         service_widths = [112,72,78,112,92,82,82,100,90,105,100,90,65,118,112,92,82,120,105]
         service_total_width = sum(service_widths)
 
-        def service_cell(value, width, header=False, bold=False):
+        def service_cell(value, width, header=False, bold=False, bgcolor=None):
             return ft.Container(
                 width=width,
-                height=36 if header else 22,
+                height=38 if header else 22,
+                bgcolor=('#173B5E' if header else bgcolor),
                 padding=ft.Padding(left=4, top=0, right=4, bottom=0),
                 alignment=ft.Alignment(0, 0),
                 content=ft.Text(
                     str(value),
                     size=9 if header else 9.5,
+                    color='#FFFFFF' if header else TEXT_MAIN,
                     weight=ft.FontWeight.BOLD if header or bold else None,
                     text_align=ft.TextAlign.CENTER,
                     max_lines=2 if header else 1,
                 ),
-                border=ft.Border(bottom=ft.BorderSide(1, '#D7DEE8')),
+                border=ft.Border(
+                    bottom=ft.BorderSide(1, '#C9D5E2' if header else '#D7DEE8'),
+                    right=ft.BorderSide(1, '#5E7891' if header else '#DCE5ED'),
+                ),
             )
 
         service_header = ft.Row(
@@ -1617,6 +1622,8 @@ def main(page: ft.Page):
             worked_values = []
 
             previous_equipment = None
+            equipment_group_index = -1
+            equipment_group_colors = ['#EAF7EA', '#EAF4FF']  # verde suave / celeste suave
             for r, od in ops:
                 if od['rem'] is not None:
                     rem_values.append(od['rem'])
@@ -1625,9 +1632,13 @@ def main(page: ft.Page):
 
                 equipment_code = r['equipment_code'] or '—'
 
-                # Separador horizontal entre equipos, manteniendo una sola tabla.
-                if previous_equipment is not None and equipment_code != previous_equipment:
-                    service_body.controls.append(ft.Container(height=7, bgcolor=BG))
+                # Cada equipo se identifica con un color suave alternado.
+                # Las cuatro posiciones del mismo equipo conservan el mismo fondo.
+                if equipment_code != previous_equipment:
+                    equipment_group_index += 1
+                    if previous_equipment is not None:
+                        service_body.controls.append(ft.Container(height=7, bgcolor=BG))
+                row_bgcolor = equipment_group_colors[equipment_group_index % len(equipment_group_colors)]
                 previous_equipment = equipment_code
 
                 original_outer = r['new_tread_outer'] if 'new_tread_outer' in r.keys() else None
@@ -1691,7 +1702,7 @@ def main(page: ft.Page):
                     fmt(od['inspection_meter']) or '—',
                 ]
                 service_body.controls.append(ft.Row([
-                    service_cell(v, service_widths[idx], bold=idx in (0,2))
+                    service_cell(v, service_widths[idx], bold=idx in (0,2), bgcolor=row_bgcolor)
                     for idx, v in enumerate(row_values)
                 ], spacing=0))
 
