@@ -3227,6 +3227,12 @@ def main(page: ft.Page):
                 'desc':'Evaluación de presión actual y condición de tapa válvula.',
                 'action':maintenance_pressure_view,
             },
+            '36':{
+                'num':'3.6','icon':ft.Icons.DESCRIPTION_OUTLINED,'accent':'#455A64','soft':'#F1F5F7',
+                'title':'REPORTE FINAL DE\nMANTENIMIENTO',
+                'desc':'Consolidado de actividades y acciones generadas por las evaluaciones 3.1–3.5.',
+                'action':maintenance_final_report_view,
+            },
         }
 
         def maintenance_access_card(key):
@@ -3268,7 +3274,7 @@ def main(page: ft.Page):
                     ],spacing=2),
                 ],spacing=12),
                 ft.Row([maintenance_access_card('31'),maintenance_access_card('32'),maintenance_access_card('33'),maintenance_access_card('34')],spacing=12),
-                ft.Row([maintenance_access_card('35'),empty_slot,ft.Container(width=292,height=260),ft.Container(width=292,height=260)],spacing=12),
+                ft.Row([maintenance_access_card('35'),maintenance_access_card('36'),ft.Container(width=292,height=260),ft.Container(width=292,height=260)],spacing=12),
             ],spacing=16),padding=16),
         ],scroll=ft.ScrollMode.AUTO,spacing=16)
         page.update()
@@ -3536,7 +3542,7 @@ def main(page: ft.Page):
                                   on_click=lambda e: maintenance_four_positions_view()),
                 ft.OutlinedButton('3.5 Nivelación de presión', icon=ft.Icons.SPEED,
                                   on_click=lambda e: maintenance_pressure_view()),
-                ft.OutlinedButton('Reporte final de mantenimiento', icon=ft.Icons.DESCRIPTION_OUTLINED,
+                ft.OutlinedButton('3.6 Reporte final de mantenimiento', icon=ft.Icons.DESCRIPTION_OUTLINED,
                                   on_click=lambda e: maintenance_final_report_view()),
             ], spacing=10, wrap=True),
             ft.Row([
@@ -3750,7 +3756,7 @@ def main(page: ft.Page):
                                   on_click=lambda e: maintenance_four_positions_view()),
                 ft.OutlinedButton('3.5 Nivelación de presión', icon=ft.Icons.SPEED,
                                   on_click=lambda e: maintenance_pressure_view()),
-                ft.OutlinedButton('Reporte final de mantenimiento', icon=ft.Icons.DESCRIPTION_OUTLINED,
+                ft.OutlinedButton('3.6 Reporte final de mantenimiento', icon=ft.Icons.DESCRIPTION_OUTLINED,
                                   on_click=lambda e: maintenance_final_report_view()),
             ], spacing=10, wrap=True),
             ft.Row([
@@ -4090,7 +4096,7 @@ def main(page: ft.Page):
                                   on_click=lambda e: maintenance_four_positions_view()),
                 ft.OutlinedButton('3.5 Nivelación de presión', icon=ft.Icons.SPEED,
                                   on_click=lambda e: maintenance_pressure_view()),
-                ft.OutlinedButton('Reporte final de mantenimiento', icon=ft.Icons.DESCRIPTION_OUTLINED,
+                ft.OutlinedButton('3.6 Reporte final de mantenimiento', icon=ft.Icons.DESCRIPTION_OUTLINED,
                                   on_click=lambda e: maintenance_final_report_view()),
             ], spacing=10, wrap=True),
             ft.Row([
@@ -4252,7 +4258,7 @@ def main(page: ft.Page):
                     ft.OutlinedButton('3.3 Diferencia RTD mismo eje',on_click=lambda e:maintenance_axles_view()),
                     ft.ElevatedButton('3.4 Diferencia entre ejes por equipo',disabled=True),
                     ft.OutlinedButton('3.5 Nivelación de presión',icon=ft.Icons.SPEED,on_click=lambda e:maintenance_pressure_view()),
-                    ft.OutlinedButton('Reporte final de mantenimiento',icon=ft.Icons.DESCRIPTION_OUTLINED,on_click=lambda e:maintenance_final_report_view())],spacing=10,wrap=True),
+                    ft.OutlinedButton('3.6 Reporte final de mantenimiento',icon=ft.Icons.DESCRIPTION_OUTLINED,on_click=lambda e:maintenance_final_report_view())],spacing=10,wrap=True),
             ft.Row([metric('EQUIPOS EVALUADOS',total,'Equipos con P1–P4'),metric('EN CONDICIÓN NORMAL',counts['NORMAL'],'< 5 mm','#2E9B45','#F1FAF3'),
                     metric('EN PREVENTIVO',counts['PREVENTIVO'],'5 a 7.5 mm','#C98600','#FFF9E8'),metric('EN EMERGENCIA',counts['EMERGENCIA'],'> 7.5 mm','#C81D2A','#FFF1F0'),
                     metric('DIFERENCIA MÁXIMA',f'{worst["diff"]:.1f} mm' if worst else '—',f'Equipo: {worst["equipment_code"]}' if worst else 'Sin datos','#C81D2A')],wrap=True,spacing=10,run_spacing=10),
@@ -4388,7 +4394,7 @@ def main(page: ft.Page):
                 ft.OutlinedButton('3.3 Diferencia RTD mismo eje',on_click=lambda e:maintenance_axles_view()),
                 ft.OutlinedButton('3.4 Diferencia entre ejes por equipo',on_click=lambda e:maintenance_four_positions_view()),
                 ft.ElevatedButton('3.5 Nivelación de presión',disabled=True),
-                ft.OutlinedButton('Reporte final de mantenimiento',icon=ft.Icons.DESCRIPTION_OUTLINED,on_click=lambda e:maintenance_final_report_view()),
+                ft.OutlinedButton('3.6 Reporte final de mantenimiento',icon=ft.Icons.DESCRIPTION_OUTLINED,on_click=lambda e:maintenance_final_report_view()),
             ],spacing=10,wrap=True),
             ft.Row([
                 ft.Container(expand=1,content=card(ft.Column([
@@ -4667,7 +4673,7 @@ def main(page: ft.Page):
                 ft.OutlinedButton('3.3 Diferencia RTD mismo eje',on_click=lambda e:maintenance_axles_view()),
                 ft.OutlinedButton('3.4 Diferencia entre ejes por equipo',on_click=lambda e:maintenance_four_positions_view()),
                 ft.OutlinedButton('3.5 Nivelación de presión',on_click=lambda e:maintenance_pressure_view()),
-                ft.ElevatedButton('Reporte final de mantenimiento',disabled=True),
+                ft.ElevatedButton('3.6 Reporte final de mantenimiento',disabled=True),
                 ft.OutlinedButton('DESCARGAR PDF',icon=ft.Icons.DOWNLOAD_OUTLINED,on_click=download_pdf),
             ],spacing=10,wrap=True),
             card(ft.Column([
