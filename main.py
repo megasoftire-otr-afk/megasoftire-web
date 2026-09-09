@@ -3194,6 +3194,85 @@ def main(page: ft.Page):
         ],scroll=ft.ScrollMode.AUTO,spacing=16)
         page.update()
 
+    def maintenance_menu_view():
+        """3. Programa de mantenimiento - menú visual de accesos."""
+        maintenance_meta={
+            '31':{
+                'num':'3.1','icon':ft.Icons.CHECK_CIRCLE_OUTLINE,'accent':'#1565C0','soft':'#EEF5FF',
+                'title':'EVALUACIÓN DE\nREMANENTE',
+                'desc':'Condición general según profundidad remanente RTD.',
+                'action':maintenance_view,
+            },
+            '32':{
+                'num':'3.2','icon':ft.Icons.COMPARE_ARROWS_OUTLINED,'accent':'#138A3D','soft':'#EEFAF2',
+                'title':'DIFERENCIA RTD\nENTRE HOMBROS',
+                'desc':'Comparación de cocada exterior e interior por neumático.',
+                'action':maintenance_shoulders_view,
+            },
+            '33':{
+                'num':'3.3','icon':ft.Icons.SWAP_HORIZ_OUTLINED,'accent':'#EF6C00','soft':'#FFF5EA',
+                'title':'DIFERENCIA RTD\nMISMO EJE',
+                'desc':'Evaluación Tire Mismatch entre posiciones del mismo eje.',
+                'action':maintenance_axles_view,
+            },
+            '34':{
+                'num':'3.4','icon':ft.Icons.ALIGN_HORIZONTAL_CENTER_OUTLINED,'accent':'#7B1FA2','soft':'#F8EEFC',
+                'title':'DIFERENCIA ENTRE EJES\nPOR EQUIPO',
+                'desc':'Comparación del RTD entre las cuatro posiciones del equipo.',
+                'action':maintenance_four_positions_view,
+            },
+            '35':{
+                'num':'3.5','icon':ft.Icons.SPEED_OUTLINED,'accent':'#C62828','soft':'#FFF0F0',
+                'title':'NIVELACIÓN DE\nPRESIÓN',
+                'desc':'Evaluación de presión actual y condición de tapa válvula.',
+                'action':maintenance_pressure_view,
+            },
+        }
+
+        def maintenance_access_card(key):
+            m=maintenance_meta[key]
+            return ft.Container(
+                width=292,height=260,bgcolor=m['soft'],
+                border=ft.Border.all(1,m['accent']+'55'),border_radius=14,padding=18,
+                on_click=lambda e,k=key: maintenance_meta[k]['action'](),ink=True,
+                content=ft.Column([
+                    ft.Row([
+                        ft.Container(bgcolor=m['accent'],border_radius=9,padding=ft.Padding(11,6,11,6),
+                                     content=ft.Text(m['num'],size=16,weight=ft.FontWeight.BOLD,color='#FFFFFF')),
+                        ft.Container(expand=True),
+                        ft.Container(width=54,height=54,border_radius=14,bgcolor='#FFFFFF',alignment=ft.Alignment.CENTER,
+                                     content=ft.Icon(m['icon'],size=31,color=m['accent'])),
+                    ]),
+                    ft.Text(m['title'],size=16,weight=ft.FontWeight.BOLD,color=TEXT_MAIN,text_align=ft.TextAlign.CENTER),
+                    ft.Text(m['desc'],size=11,color=TEXT_MUTED,text_align=ft.TextAlign.CENTER),
+                    ft.Container(height=4),
+                    ft.Container(bgcolor=m['accent'],border_radius=9,padding=10,alignment=ft.Alignment.CENTER,
+                                 content=ft.Row([
+                                     ft.Icon(ft.Icons.BAR_CHART,color='#FFFFFF',size=20),
+                                     ft.Text('VER REPORTE',color='#FFFFFF',weight=ft.FontWeight.BOLD,size=13),
+                                     ft.Icon(ft.Icons.CHEVRON_RIGHT,color='#FFFFFF',size=20),
+                                 ],alignment=ft.MainAxisAlignment.CENTER,spacing=8)),
+                ],spacing=12,horizontal_alignment=ft.CrossAxisAlignment.CENTER)
+            )
+
+        empty_slot=ft.Container(width=292,height=260)
+        content.content=ft.Column([
+            page_title('3. PROGRAMA DE MANTENIMIENTO','Evaluación técnica y acciones preventivas de neumáticos en servicio'),
+            card(ft.Column([
+                ft.Row([
+                    ft.Container(width=48,height=48,border_radius=24,bgcolor='#EAF2FF',alignment=ft.Alignment.CENTER,
+                                 content=ft.Icon(ft.Icons.BUILD_CIRCLE_OUTLINED,color=NAV_ACCENT,size=27)),
+                    ft.Column([
+                        ft.Text('PROGRAMA DE MANTENIMIENTO',size=18,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
+                        ft.Text('Seleccione una evaluación para visualizar el detalle.',size=11,color=TEXT_MUTED),
+                    ],spacing=2),
+                ],spacing=12),
+                ft.Row([maintenance_access_card('31'),maintenance_access_card('32'),maintenance_access_card('33'),maintenance_access_card('34')],spacing=12),
+                ft.Row([maintenance_access_card('35'),empty_slot,ft.Container(width=292,height=260),ft.Container(width=292,height=260)],spacing=12),
+            ],spacing=16),padding=16),
+        ],scroll=ft.ScrollMode.AUTO,spacing=16)
+        page.update()
+
     def maintenance_view():
         """Programa de mantenimiento - Prueba 01: evaluación de remanente (RTD)."""
         rows = query("""
@@ -3447,6 +3526,7 @@ def main(page: ft.Page):
             page_title('3. Programa de mantenimiento · 3.1 Evaluación de Remanente (RTD)',
                        'Evaluación automática de neumáticos en servicio según profundidad remanente'),
             ft.Row([
+                ft.OutlinedButton('VOLVER A PROGRAMA DE MANTENIMIENTO',icon=ft.Icons.ARROW_BACK,on_click=lambda e: maintenance_menu_view()),
                 ft.ElevatedButton('3.1 Evaluación de remanente', icon=ft.Icons.CHECK_CIRCLE_OUTLINE, disabled=True),
                 ft.OutlinedButton('3.2 Diferencia RTD entre hombros', icon=ft.Icons.COMPARE_ARROWS,
                                   on_click=lambda e: maintenance_shoulders_view()),
@@ -3660,6 +3740,7 @@ def main(page: ft.Page):
             page_title('3. Programa de mantenimiento · 3.2 Diferencia de RTD entre hombros',
                        'Evaluación del desgaste entre hombro exterior (EXT) e interior (INT) del mismo neumático'),
             ft.Row([
+                ft.OutlinedButton('VOLVER A PROGRAMA DE MANTENIMIENTO',icon=ft.Icons.ARROW_BACK,on_click=lambda e: maintenance_menu_view()),
                 ft.OutlinedButton('3.1 Evaluación de remanente', icon=ft.Icons.CHECK_CIRCLE_OUTLINE,
                                   on_click=lambda e: maintenance_view()),
                 ft.ElevatedButton('3.2 Diferencia RTD entre hombros', icon=ft.Icons.COMPARE_ARROWS, disabled=True),
@@ -3999,6 +4080,7 @@ def main(page: ft.Page):
             page_title('3. Programa de mantenimiento · 3.3 Diferencia de RTD en el mismo eje',
                        'Comparación del RTD promedio entre P1–P2 y P3–P4 · Vista tipo Power BI'),
             ft.Row([
+                ft.OutlinedButton('VOLVER A PROGRAMA DE MANTENIMIENTO',icon=ft.Icons.ARROW_BACK,on_click=lambda e: maintenance_menu_view()),
                 ft.OutlinedButton('3.1 Evaluación de remanente', icon=ft.Icons.CHECK_CIRCLE_OUTLINE,
                                   on_click=lambda e: maintenance_view()),
                 ft.OutlinedButton('3.2 Diferencia RTD entre hombros', icon=ft.Icons.COMPARE_ARROWS,
@@ -4164,7 +4246,8 @@ def main(page: ft.Page):
 
         content.content=ft.Column([
             page_title('3. Programa de mantenimiento · 3.4 Diferencia entre ejes por equipo','Comparación del RTD promedio entre P1, P2, P3 y P4 · Sin considerar diámetro'),
-            ft.Row([ft.OutlinedButton('3.1 Evaluación de remanente',on_click=lambda e:maintenance_view()),
+            ft.Row([ft.OutlinedButton('VOLVER A PROGRAMA DE MANTENIMIENTO',icon=ft.Icons.ARROW_BACK,on_click=lambda e: maintenance_menu_view()),
+                    ft.OutlinedButton('3.1 Evaluación de remanente',on_click=lambda e:maintenance_view()),
                     ft.OutlinedButton('3.2 Diferencia RTD entre hombros',on_click=lambda e:maintenance_shoulders_view()),
                     ft.OutlinedButton('3.3 Diferencia RTD mismo eje',on_click=lambda e:maintenance_axles_view()),
                     ft.ElevatedButton('3.4 Diferencia entre ejes por equipo',disabled=True),
@@ -4299,7 +4382,8 @@ def main(page: ft.Page):
             page_title('3. Programa de mantenimiento · 3.5 Nivelación de presión',
                        'Comparación de la última presión INSP/INSC contra la presión recomendada'),
             ft.Row([
-                ft.OutlinedButton('3.1 Evaluación de remanente',on_click=lambda e:maintenance_view()),
+                ft.OutlinedButton('VOLVER A PROGRAMA DE MANTENIMIENTO',icon=ft.Icons.ARROW_BACK,on_click=lambda e: maintenance_menu_view()),
+                    ft.OutlinedButton('3.1 Evaluación de remanente',on_click=lambda e:maintenance_view()),
                 ft.OutlinedButton('3.2 Diferencia RTD entre hombros',on_click=lambda e:maintenance_shoulders_view()),
                 ft.OutlinedButton('3.3 Diferencia RTD mismo eje',on_click=lambda e:maintenance_axles_view()),
                 ft.OutlinedButton('3.4 Diferencia entre ejes por equipo',on_click=lambda e:maintenance_four_positions_view()),
@@ -4577,7 +4661,8 @@ def main(page: ft.Page):
             page_title('PROGRAMA DE MANTENIMIENTO DE NEUMÁTICOS',
                        f'Fecha de visualización: {report_date} · Actividades generadas automáticamente a partir de condiciones de emergencia'),
             ft.Row([
-                ft.OutlinedButton('3.1 Evaluación de remanente',on_click=lambda e:maintenance_view()),
+                ft.OutlinedButton('VOLVER A PROGRAMA DE MANTENIMIENTO',icon=ft.Icons.ARROW_BACK,on_click=lambda e: maintenance_menu_view()),
+                    ft.OutlinedButton('3.1 Evaluación de remanente',on_click=lambda e:maintenance_view()),
                 ft.OutlinedButton('3.2 Diferencia RTD entre hombros',on_click=lambda e:maintenance_shoulders_view()),
                 ft.OutlinedButton('3.3 Diferencia RTD mismo eje',on_click=lambda e:maintenance_axles_view()),
                 ft.OutlinedButton('3.4 Diferencia entre ejes por equipo',on_click=lambda e:maintenance_four_positions_view()),
@@ -6655,7 +6740,7 @@ def main(page: ft.Page):
         if idx==0: dashboard()
         elif idx==1: movement_view()
         elif idx==2: service_view()
-        elif idx==3: maintenance_final_report_view()
+        elif idx==3: maintenance_menu_view()
         elif idx==4: standby_view()
         elif idx==5: nfu_view()
         elif idx==6: inventory_consumption_view()
