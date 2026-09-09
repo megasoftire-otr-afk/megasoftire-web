@@ -4708,18 +4708,32 @@ def main(page: ft.Page):
         summary=ft.Text('',size=11,color=TEXT_MUTED)
         metrics=ft.Row([],wrap=True,spacing=12,run_spacing=12)
 
-        columns=['FECHA DE INSTALACIÓN','CÓDIGO','MARCA / DISEÑO','RTD EXT/INT','COSTO $','CONDICIÓN','ESTADO']
-        table=ft.DataTable(
-            columns=[ft.DataColumn(ft.Text(x,size=10,weight=ft.FontWeight.BOLD,color=ft.Colors.WHITE)) for x in columns],
-            rows=[],
-            heading_row_color='#12324A',
-            heading_row_height=44,
-            data_row_min_height=42,
-            data_row_max_height=48,
-            column_spacing=26,
-            border=ft.Border.all(1,'#D9E1E8'),
-            horizontal_lines=ft.BorderSide(1,'#E5E9EF'),
+        columns=[
+            ('FECHA DE INSTALACIÓN',150),('CÓDIGO',90),('MARCA / DISEÑO',190),
+            ('RTD EXT/INT',110),('COSTO $',105),('CONDICIÓN',105),('ESTADO',105)
+        ]
+        rows_box=ft.Column(spacing=0)
+
+        def cost_cell(value,width,header=False):
+            return ft.Container(
+                width=width,
+                padding=ft.Padding(left=8,top=9,right=8,bottom=9),
+                content=ft.Text(
+                    str(value if value not in (None,'') else '—'),
+                    size=10.5,
+                    weight=ft.FontWeight.BOLD if header else ft.FontWeight.NORMAL,
+                    color=ft.Colors.WHITE if header else TEXT_MAIN,
+                    no_wrap=True,
+                )
+            )
+
+        header=ft.Container(
+            content=ft.Row([cost_cell(label,width,True) for label,width in columns],spacing=0),
+            bgcolor='#12324A',
+            border=ft.Border(bottom=ft.BorderSide(1,'#D9E1E8'))
         )
+
+        table=ft.Column([header,rows_box],spacing=0)
 
         def nfmt(v):
             try:
@@ -4754,9 +4768,9 @@ def main(page: ft.Page):
                 params=[q,q,q,q]
             sql += " ORDER BY e.code, CAST(REPLACE(UPPER(COALESCE(t.position,'')),'P','') AS INTEGER), t.code"
             rows=query(sql,tuple(params))
-            table.rows=[]
+            rows_box.controls=[]
             total=original=ree=0.0
-            for r in rows:
+            for idx,r in enumerate(rows):
                 try: cost=float(r['cost_usd'] or 0)
                 except Exception: cost=0.0
                 is_ree='REENC' in str(r['tire_condition'] or '').upper()
@@ -4772,7 +4786,13 @@ def main(page: ft.Page):
                     'REENC.' if is_ree else 'ORIGINAL',
                     r['equipment_code'] or 'SERVICIO'
                 ]
-                table.rows.append(ft.DataRow(cells=[ft.DataCell(ft.Text(str(v),size=10.5,color=TEXT_MAIN)) for v in vals]))
+                rows_box.controls.append(
+                    ft.Container(
+                        content=ft.Row([cost_cell(vals[i],columns[i][1]) for i in range(len(columns))],spacing=0),
+                        bgcolor='#FFFFFF' if idx % 2 == 0 else '#F8FAFC',
+                        border=ft.Border(bottom=ft.BorderSide(1,'#E5E9EF'))
+                    )
+                )
             summary.value=f'{len(rows)} neumático(s) actualmente instalados'
             metrics.controls=[
                 metric('TOTAL LLANTAS',str(len(rows)),ft.Icons.TIRE_REPAIR),
