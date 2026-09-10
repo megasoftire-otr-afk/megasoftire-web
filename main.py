@@ -2031,20 +2031,20 @@ def main(page: ft.Page):
             width=265,
             options=[ft.dropdown.Option(k,f'{k} - {v}') for k,v in EVENTS.items() if k != 'ROT']
         )
-        date=ft.TextField(label='Fecha',value=dt.date.today().strftime('%d/%m/%Y'),width=260,dense=True)
-        equip=ft.Dropdown(label='Equipo',width=155,dense=True,options=[ft.dropdown.Option(str(r['id']),r['code']) for r in query('SELECT id,code FROM equipment WHERE active=1 ORDER BY code')])
-        pos=ft.TextField(label='Pos.',width=95,dense=True)
-        meter=ft.TextField(label='Horómetro',width=260,dense=True)
-        ti=ft.TextField(label='INT',width=125,dense=True)
-        to=ft.TextField(label='EXT',width=125,dense=True)
-        press=ft.TextField(label='Psi',width=125,dense=True)
+        date=ft.TextField(label='Fecha',value=dt.date.today().strftime('%d/%m/%Y'),width=260,dense=True,bgcolor='#FFFFFF')
+        equip=ft.Dropdown(label='Equipo',width=155,dense=True,bgcolor='#FFFFFF',options=[ft.dropdown.Option(str(r['id']),r['code']) for r in query('SELECT id,code FROM equipment WHERE active=1 ORDER BY code')])
+        pos=ft.TextField(label='Pos.',width=95,dense=True,bgcolor='#FFFFFF')
+        meter=ft.TextField(label='Horómetro',width=260,dense=True,bgcolor='#FFFFFF')
+        ti=ft.TextField(label='INT',width=125,dense=True,bgcolor='#FFFFFF')
+        to=ft.TextField(label='EXT',width=125,dense=True,bgcolor='#FFFFFF')
+        press=ft.TextField(label='Psi',width=125,dense=True,bgcolor='#FFFFFF')
         cond=ft.Dropdown(
-            label='Cond.', width=125, value='FRIO', dense=True,
+            label='Cond.', width=125, value='FRIO', dense=True, bgcolor='#FFFFFF',
             options=[ft.dropdown.Option('FRIO','FRIO'), ft.dropdown.Option('CALIENTE','CALIENTE')]
         )
-        reason=ft.TextField(label='Motivo',width=260,dense=True)
-        loc=ft.TextField(label='Lugar',width=260,dense=True)
-        notes=ft.TextField(label='Observaciones',multiline=True,min_lines=1,max_lines=2,width=260,dense=True)
+        reason=ft.TextField(label='Motivo',width=260,dense=True,bgcolor='#FFFFFF')
+        loc=ft.TextField(label='Lugar',width=260,dense=True,bgcolor='#FFFFFF')
+        notes=ft.TextField(label='Observaciones',multiline=True,min_lines=1,max_lines=2,width=260,dense=True,bgcolor='#FFFFFF')
         ref=ft.Text('',size=11,color=TEXT_MUTED)
         pre_tire = session.pop('movement_tire_id', None)
         pre_event = session.pop('movement_event', None)
@@ -2620,9 +2620,9 @@ def main(page: ft.Page):
         ]
 
         event_headers = [
-            ft.Text('Último evento', size=11, weight=ft.FontWeight.BOLD, color='#1B5E20'),
-            ft.Text('Penúltimo evento', size=11, weight=ft.FontWeight.BOLD, color='#0D47A1'),
-            ft.Text('Antepenúltimo evento', size=11, weight=ft.FontWeight.BOLD, color='#9A4D00'),
+            ft.Text('ÚLTIMO EVENTO', size=11, weight=ft.FontWeight.BOLD, color='#1B5E20'),
+            ft.Text('PENÚLTIMO EVENTO', size=11, weight=ft.FontWeight.BOLD, color='#0D47A1'),
+            ft.Text('ANTEPENÚLTIMO EVENTO', size=11, weight=ft.FontWeight.BOLD, color='#9A4D00'),
         ]
         event_header_bg = ['#E8F5E9', '#E3F2FD', '#FFF3E0']
 
@@ -2661,7 +2661,7 @@ def main(page: ft.Page):
         ficha_rows.append(
             ft.Row([
                 ft.Container(
-                    content=ft.Text('Detalle', size=11, weight=ft.FontWeight.BOLD, color='#FFFFFF'),
+                    content=ft.Text('DETALLE', size=11, weight=ft.FontWeight.BOLD, color='#FFFFFF'),
                     width=155, bgcolor=NAV_ACCENT, padding=8,
                     border_radius=ft.BorderRadius(top_left=6, top_right=6, bottom_left=0, bottom_right=0),
                 ),
@@ -2676,7 +2676,7 @@ def main(page: ft.Page):
         )
 
         for label in vertical_labels:
-            new_box = ft.Container(content=inline_controls[label], width=280, visible=False, bgcolor='#F3F8FC', padding=6, border=ft.Border(bottom=ft.BorderSide(1, '#DCE6EF')))
+            new_box = ft.Container(content=inline_controls[label], width=280, visible=False, bgcolor='#FFFFFF', padding=6, border=ft.Border(bottom=ft.BorderSide(1, '#DCE6EF')))
             new_event_cells[label] = new_box
             ficha_rows.append(
                 ft.Row([
@@ -2733,13 +2733,15 @@ def main(page: ft.Page):
 
         ficha_panel = card(
             ft.Column([
-                ft.Text('Consulta del neumático', size=17, weight=ft.FontWeight.BOLD, color=TEXT_MAIN),
                 ft.Row([
                     ft.Container(
                         content=ft.Column([
+                            ft.Text('Consulta del neumático', size=12, weight=ft.FontWeight.W_600, color=TEXT_MUTED),
                             header_tire,
-                        ], spacing=2),
-                        expand=2
+                        ], spacing=1, alignment=ft.MainAxisAlignment.CENTER),
+                        expand=2,
+                        height=74,
+                        alignment=ft.Alignment(-1, 0),
                     ),
                     ft.Container(
                         content=ft.Column([
@@ -2768,8 +2770,8 @@ def main(page: ft.Page):
                         ], spacing=2),
                         expand=1
                     ),
-                ], spacing=18, vertical_alignment=ft.CrossAxisAlignment.START),
-                ft.Divider(height=8),
+                ], spacing=18, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                ft.Divider(height=4),
                 events_area,
             ], spacing=7),
             width=None
@@ -2854,9 +2856,9 @@ def main(page: ft.Page):
                 for label in vertical_labels:
                     event_values[i][label].value = '—'
             set_inline_event_mode(False)
-            event_headers[0].value = 'Último evento'
-            event_headers[1].value = 'Penúltimo evento'
-            event_headers[2].value = 'Antepenúltimo evento'
+            event_headers[0].value = 'ÚLTIMO EVENTO'
+            event_headers[1].value = 'PENÚLTIMO EVENTO'
+            event_headers[2].value = 'ANTEPENÚLTIMO EVENTO'
 
         def load_foxpro_ficha(tid):
             rows = query(
@@ -3053,7 +3055,7 @@ def main(page: ft.Page):
                     prefix = ['Último', 'Penúltimo', 'Antepenúltimo'][col_idx]
                     event_headers[col_idx].value = f"{prefix}: {target['event_code']}"
                 else:
-                    event_headers[col_idx].value = ['Último evento', 'Penúltimo evento', 'Antepenúltimo evento'][col_idx]
+                    event_headers[col_idx].value = ['ÚLTIMO EVENTO', 'PENÚLTIMO EVENTO', 'ANTEPENÚLTIMO EVENTO'][col_idx]
 
         def select_operational_tire(tid):
             if not tid:
