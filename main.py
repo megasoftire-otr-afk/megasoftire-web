@@ -2084,7 +2084,10 @@ def main(page: ft.Page):
             options=[ft.dropdown.Option(key=str(r['id']),text=r['code']) for r in eqs])
         info=ft.Column([],spacing=8)
         table_area=ft.Column([],spacing=10)
-        indicators=ft.Row([],spacing=12,wrap=True)
+        rem_chart_22=ft.Column([],spacing=6)
+        hours_chart_22=ft.Column([],spacing=6)
+        pressure_chart_22=ft.Column([],spacing=6)
+        valve_chart_22=ft.Column([],spacing=6)
 
         def metric(title,value,subtitle,accent='#1565C0'):
             return ft.Container(width=220,height=92,bgcolor=ft.Colors.WHITE,border_radius=12,
@@ -2110,6 +2113,7 @@ def main(page: ft.Page):
                 ft.Column([ft.Text('Ubicación',size=9,color=TEXT_MUTED),ft.Text(eq['location'] or '—',weight=ft.FontWeight.BOLD)],width=145),
             ],wrap=True,spacing=10)]
             data=[]; rems=[]; costs=[]; pressures_ok=0
+            rem_by_pos={}; hours_by_pos={}; pressure_by_pos={}; valve_by_pos={}
             for r in rows:
                 occ=query("""SELECT * FROM occurrences WHERE tire_id=? ORDER BY id DESC LIMIT 1""",(r['id'],))
                 o=occ[0] if occ else None
@@ -2140,6 +2144,20 @@ def main(page: ft.Page):
                 pactual=io['pressure'] if io and io['pressure'] is not None else None
                 prec=r['recommended_pressure']
                 if pactual is not None and prec not in (None,0) and abs(float(pactual)-float(prec))/float(prec)<=0.05: pressures_ok+=1
+                poskey=f"P{r['position']}" if r['position'] else '—'
+                if poskey in ('P1','P2','P3','P4'):
+                    if rem is not None: rem_by_pos[poskey]=rem
+                    remaining_hours=0.0
+                    if worked is not None and newvals and curvals:
+                        original_min=min(newvals); current_min=min(curvals)
+                        wear_mm=max(0.0,float(original_min)-float(current_min))
+                        retirement=r['retirement_tread'] if 'retirement_tread' in r.keys() else None
+                        if wear_mm>0 and retirement is not None:
+                            remaining_hours=max(0.0,float(current_min)-float(retirement))*(float(worked)/wear_mm)
+                    if worked is not None: hours_by_pos[poskey]={'worked':float(worked),'remaining':float(remaining_hours)}
+                    pressure_by_pos[poskey]={'actual':float(pactual) if pactual is not None else None,'recommended':float(prec) if prec is not None else None}
+                    note_text=str(io['notes'] or '').upper() if io and 'notes' in io.keys() else ''
+                    valve_by_pos[poskey]='SI' if ('TAPA' in note_text or 'VALVULA' in note_text or 'VÁLVULA' in note_text) else 'NO'
                 data.append([
                     f"P{r['position']}" if r['position'] else '—',r['code'] or '—',r['serial'] or '—',r['brand'] or '—',
                     r['size'] or '—',r['design'] or '—',f"{worked:.0f}" if worked is not None else '—',
@@ -2160,12 +2178,53 @@ def main(page: ft.Page):
                 body.append(ft.Row([ft.Container(width=widths[i],height=36,bgcolor=bg,padding=6,
                     alignment=ft.Alignment.CENTER_LEFT,content=ft.Text(str(v),size=8.5,color=TEXT_MAIN)) for i,v in enumerate(row)],spacing=0))
             table_area.controls=[ft.Row([ft.Column(body,spacing=1)],scroll=ft.ScrollMode.AUTO)]
-            avgrem=sum(rems)/len(rems) if rems else 0
-            avgcost=sum(costs)/len(costs) if costs else 0
-            indicators.controls=[metric('NEUMÁTICOS EN USO',len(rows),'Posiciones actualmente instaladas'),
-                                 metric('REMANENTE PROMEDIO',f'{avgrem:.1f}%','Promedio del equipo','#138A3D'),
-                                 metric('COSTO PROMEDIO',f'$ {avgcost:.2f}/h','Costo por hora promedio','#7B1FA2'),
-                                 metric('PRESIÓN ±5%',f'{pressures_ok}/{len(rows)}','Neumáticos dentro del rango','#EF6C00')]
+            def bar_chart(values, y_max, suffix='', secondary=None, secondary_label=None):
+                pos_order=['P1','P2','P3','P4']; chart_h=150; bar_w=34
+                ticks=5
+                ylabels=ft.Column([ft.Text(f'{y_max*(ticks-i)/ticks:.0f}{suffix}',size=8,color=TEXT_MUTED) for i in range(ticks+1)],height=chart_h,alignment=ft.MainAxisAlignment.SPACE_BETWEEN,horizontal_alignment=ft.CrossAxisAlignment.END)
+                bars=[]
+                for pos in pos_order:
+                    v=values.get(pos)
+                    h=max(2,chart_h*max(0,min(float(v or 0),y_max))/y_max) if y_max else 2
+                    col=[ft.Container(height=chart_h,alignment=ft.Alignment.BOTTOM_CENTER,content=ft.Container(width=bar_w,height=h,bgcolor=NAV_ACCENT,border_radius=4)),ft.Text(pos,size=9,weight=ft.FontWeight.BOLD)]
+                    bars.append(ft.Column(col,spacing=4,horizontal_alignment=ft.CrossAxisAlignment.CENTER))
+                return ft.Row([ylabels,ft.Row(bars,spacing=28,alignment=ft.MainAxisAlignment.CENTER,vertical_alignment=ft.CrossAxisAlignment.END,expand=True)],spacing=10)
+
+            def stacked_hours_chart(vals):
+                pos_order=['P1','P2','P3','P4']; chart_h=150; bar_w=34
+                totals=[(d.get('worked',0)+d.get('remaining',0)) for d in vals.values() if d]
+                ymax=max(4000, ((int(max(totals or [0]))//1000)+1)*1000)
+                bars=[]
+                for pos in pos_order:
+                    d=vals.get(pos,{}); w=max(0,float(d.get('worked',0))); r=max(0,float(d.get('remaining',0)))
+                    wh=chart_h*w/ymax; rh=chart_h*r/ymax
+                    bars.append(ft.Column([ft.Container(height=chart_h,alignment=ft.Alignment.BOTTOM_CENTER,content=ft.Column([ft.Container(width=bar_w,height=max(2,rh) if r else 0,bgcolor='#F59E0B'),ft.Container(width=bar_w,height=max(2,wh) if w else 0,bgcolor=NAV_ACCENT)],spacing=0,alignment=ft.MainAxisAlignment.END)),ft.Text(pos,size=9,weight=ft.FontWeight.BOLD)],spacing=4,horizontal_alignment=ft.CrossAxisAlignment.CENTER))
+                legend=ft.Row([ft.Row([ft.Container(width=9,height=9,bgcolor=NAV_ACCENT),ft.Text('Horas acumuladas',size=9,color=TEXT_MUTED)],spacing=4),ft.Row([ft.Container(width=9,height=9,bgcolor='#F59E0B'),ft.Text('Horas restantes proyectadas',size=9,color=TEXT_MUTED)],spacing=4)],spacing=14)
+                return ft.Column([legend,ft.Row(bars,spacing=28,alignment=ft.MainAxisAlignment.CENTER)],spacing=8)
+
+            def pressure_chart(vals):
+                pos_order=['P1','P2','P3','P4']; actual={p:(vals.get(p) or {}).get('actual') or 0 for p in pos_order}
+                recs=[(vals.get(p) or {}).get('recommended') for p in pos_order if (vals.get(p) or {}).get('recommended') is not None]
+                ymax=max(120, int(max([v for v in actual.values()] + recs + [100])/10+2)*10)
+                chart_h=150; bar_w=34
+                bars=[]
+                for p in pos_order:
+                    v=float(actual.get(p) or 0); rec=(vals.get(p) or {}).get('recommended')
+                    h=chart_h*v/ymax
+                    bars.append(ft.Column([ft.Container(height=chart_h,alignment=ft.Alignment.BOTTOM_CENTER,content=ft.Container(width=bar_w,height=max(2,h),bgcolor=NAV_ACCENT,border_radius=4)),ft.Text(p,size=9,weight=ft.FontWeight.BOLD),ft.Text(f'{v:.0f} psi',size=8,color=TEXT_MUTED),ft.Text(f'Rec. {rec:.0f}' if rec is not None else 'Rec. —',size=8,color='#C62828')],spacing=2,horizontal_alignment=ft.CrossAxisAlignment.CENTER))
+                return ft.Row(bars,spacing=28,alignment=ft.MainAxisAlignment.CENTER)
+
+            def valve_chart(vals):
+                bars=[]
+                for p in ['P1','P2','P3','P4']:
+                    yes=str(vals.get(p,'NO')).upper()=='SI'
+                    bars.append(ft.Column([ft.Container(height=150,alignment=ft.Alignment.BOTTOM_CENTER,content=ft.Container(width=42,height=100,bgcolor='#16A34A' if yes else '#EF4444',border_radius=4)),ft.Text(p,size=9,weight=ft.FontWeight.BOLD),ft.Text('SÍ' if yes else 'NO',size=9,weight=ft.FontWeight.BOLD,color='#15803D' if yes else '#B91C1C')],spacing=3,horizontal_alignment=ft.CrossAxisAlignment.CENTER))
+                return ft.Row(bars,spacing=28,alignment=ft.MainAxisAlignment.CENTER)
+
+            rem_chart_22.controls=[bar_chart(rem_by_pos,100,'%')]
+            hours_chart_22.controls=[stacked_hours_chart(hours_by_pos)]
+            pressure_chart_22.controls=[pressure_chart(pressure_by_pos)]
+            valve_chart_22.controls=[valve_chart(valve_by_pos)]
             page.update()
         selector.on_change=refresh
         content.content=ft.Column([
@@ -2177,7 +2236,14 @@ def main(page: ft.Page):
                 ft.Text('DATOS DEL EQUIPO',size=14,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),info,
             ],spacing=12),padding=16),
             card(ft.Column([ft.Text('NEUMÁTICOS DEL EQUIPO',size=15,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),table_area],spacing=10),padding=14),
-            indicators,
+            ft.Row([
+                ft.Container(expand=1,content=card(ft.Column([ft.Text('REMANENTE POR POSICIÓN (%)',size=14,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),ft.Text('Eje X: P1, P2, P3, P4 · Eje Y: % remanente',size=9,color=TEXT_MUTED),rem_chart_22],spacing=8),padding=14)),
+                ft.Container(expand=1,content=card(ft.Column([ft.Text('HORAS ACUMULADAS + HORAS RESTANTES POR POSICIÓN (h)',size=14,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),ft.Text('Azul: horas acumuladas · Naranja: horas restantes proyectadas',size=9,color=TEXT_MUTED),hours_chart_22],spacing=8),padding=14)),
+            ],spacing=12,vertical_alignment=ft.CrossAxisAlignment.START),
+            ft.Row([
+                ft.Container(expand=1,content=card(ft.Column([ft.Text('PRESIÓN ACTUAL VS. PRESIÓN RECOMENDADA (PSI)',size=14,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),ft.Text('Eje X: P1, P2, P3, P4 · Eje Y: nivel de PSI',size=9,color=TEXT_MUTED),pressure_chart_22],spacing=8),padding=14)),
+                ft.Container(expand=1,content=card(ft.Column([ft.Text('ESTADO DE TAPA VÁLVULA',size=14,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),ft.Text('Por posición: SÍ / NO',size=9,color=TEXT_MUTED),valve_chart_22],spacing=8),padding=14)),
+            ],spacing=12,vertical_alignment=ft.CrossAxisAlignment.START),
         ],scroll=ft.ScrollMode.AUTO,spacing=14)
         refresh()
         page.update()
