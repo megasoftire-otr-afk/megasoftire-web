@@ -940,7 +940,7 @@ def main(page: ft.Page):
         def access_card(num, icon, accent, soft, title, desc, action):
             return ft.Container(
                 width=292, height=260, bgcolor=soft,
-                border=ft.border.all(1, accent + '55'), border_radius=14, padding=18,
+                border=ft.Border.all(1, accent + '55'), border_radius=14, padding=18,
                 on_click=lambda e: action(), ink=True,
                 content=ft.Column([
                     ft.Row([
@@ -2089,7 +2089,7 @@ def main(page: ft.Page):
 
         def metric(title,value,subtitle,accent='#1565C0'):
             return ft.Container(width=220,height=92,bgcolor=ft.Colors.WHITE,border_radius=12,
-                border=ft.border.all(1,'#D8E1EB'),padding=12,
+                border=ft.Border.all(1,'#D8E1EB'),padding=12,
                 content=ft.Column([ft.Text(title,size=10,color=TEXT_MUTED,weight=ft.FontWeight.BOLD),
                                    ft.Text(str(value),size=22,color=accent,weight=ft.FontWeight.BOLD),
                                    ft.Text(subtitle,size=9,color=TEXT_MUTED)],spacing=2))
