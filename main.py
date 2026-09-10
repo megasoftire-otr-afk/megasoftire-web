@@ -2613,18 +2613,20 @@ def main(page: ft.Page):
             'Motivo',
             'Observaciones',
         ]
-        # Las tres columnas históricas son independientes de la ficha maestra.
+        # Cuatro columnas históricas. Se muestran en orden inverso: el evento
+        # más reciente a la izquierda y el EVENTO 01 (instalación inicial) a la derecha.
         event_values = [
             {label: ft.Text('—', size=13, color=TEXT_MAIN) for label in vertical_labels}
-            for _ in range(3)
+            for _ in range(4)
         ]
 
         event_headers = [
-            ft.Text('ÚLTIMO EVENTO', size=11, weight=ft.FontWeight.BOLD, color='#1B5E20'),
-            ft.Text('PENÚLTIMO EVENTO', size=11, weight=ft.FontWeight.BOLD, color='#0D47A1'),
-            ft.Text('ANTEPENÚLTIMO EVENTO', size=11, weight=ft.FontWeight.BOLD, color='#9A4D00'),
+            ft.Text('EVENTO 04', size=11, weight=ft.FontWeight.BOLD, color='#5E35B1'),
+            ft.Text('EVENTO 03', size=11, weight=ft.FontWeight.BOLD, color='#9A4D00'),
+            ft.Text('EVENTO 02', size=11, weight=ft.FontWeight.BOLD, color='#0D47A1'),
+            ft.Text('EVENTO 01', size=11, weight=ft.FontWeight.BOLD, color='#1B5E20'),
         ]
-        event_header_bg = ['#E8F5E9', '#E3F2FD', '#FFF3E0']
+        event_header_bg = ['#EFE7FF', '#FFF3E0', '#E3F2FD', '#E8F5E9']
         # Ancho uniforme de las columnas históricas. Aproximadamente 70%
         # del ancho que tenían originalmente cuando ocupaban el espacio disponible.
         HIST_EVENT_WIDTH = 175
@@ -2660,7 +2662,7 @@ def main(page: ft.Page):
             'Observaciones': notes,
         }
 
-        # Cabecera: NUEVO EVENTO + tres columnas históricas.
+        # Cabecera: NUEVO EVENTO + cuatro columnas históricas.
         ficha_rows.append(
             ft.Row([
                 ft.Container(
@@ -2674,7 +2676,7 @@ def main(page: ft.Page):
                         content=event_headers[i], width=HIST_EVENT_WIDTH, bgcolor=event_header_bg[i], padding=8,
                         alignment=ft.Alignment(0, 0),
                         border=ft.Border(left=ft.BorderSide(1, '#B7C8D9'))
-                    ) for i in range(3)
+                    ) for i in range(4)
                 ],
             ], spacing=0)
         )
@@ -2699,7 +2701,7 @@ def main(page: ft.Page):
                                 bottom=ft.BorderSide(1, '#E4EBF2')
                             )
                         )
-                        for i in range(3)
+                        for i in range(4)
                     ],
                 ], spacing=0)
             )
@@ -2718,6 +2720,7 @@ def main(page: ft.Page):
                     width=155, bgcolor='#EAF2F8', padding=6
                 ),
                 inline_action_box,
+                ft.Container(width=HIST_EVENT_WIDTH, border=ft.Border(left=ft.BorderSide(1, '#B7C8D9'))),
                 ft.Container(width=HIST_EVENT_WIDTH, border=ft.Border(left=ft.BorderSide(1, '#B7C8D9'))),
                 ft.Container(width=HIST_EVENT_WIDTH, border=ft.Border(left=ft.BorderSide(1, '#B7C8D9'))),
                 ft.Container(width=HIST_EVENT_WIDTH, border=ft.Border(left=ft.BorderSide(1, '#B7C8D9'))),
@@ -2961,10 +2964,11 @@ def main(page: ft.Page):
 
 
             # --------------------------------------------------------------
-            # Visualización de los tres últimos eventos en paralelo.
-            # Mantiene el mismo orden vertical de la ficha aprobada.
+            # Visualización de los cuatro últimos eventos en paralelo.
+            # Se muestran de izquierda a derecha en orden inverso. EVENTO 01
+            # corresponde al primer evento registrado (normalmente INST).
             # --------------------------------------------------------------
-            last_three = list(reversed(occ[-3:]))
+            last_four = list(reversed(occ[-4:]))
 
             def fill_event_column(col_idx, target):
                 values = event_values[col_idx]
@@ -3052,14 +3056,25 @@ def main(page: ft.Page):
                 values['Motivo'].value = fmt(target['reason']) if 'reason' in target.keys() and target['reason'] else '—'
                 values['Observaciones'].value = fmt(target['notes']) if 'notes' in target.keys() and target['notes'] else '—'
 
-            for col_idx in range(3):
-                target = last_three[col_idx] if col_idx < len(last_three) else None
+            for col_idx in range(4):
+                target = last_four[col_idx] if col_idx < len(last_four) else None
                 fill_event_column(col_idx, target)
                 if target:
-                    prefix = ['ÚLTIMO EVENTO', 'PENÚLTIMO EVENTO', 'ANTEPENÚLTIMO EVENTO'][col_idx]
-                    event_headers[col_idx].value = f"{prefix}: {target['event_code']}"
+                    # EVENTO 01 es el primer evento del historial; por eso usamos
+                    # su ordinal real y mostramos el tipo entre paréntesis.
+                    target_index = next(
+                        (i for i, item in enumerate(occ) if item['id'] == target['id']),
+                        None
+                    )
+                    event_number = (target_index + 1) if target_index is not None else None
+                    if event_number is not None:
+                        event_headers[col_idx].value = f"EVENTO {event_number:02d}\n({target['event_code']})"
+                    else:
+                        event_headers[col_idx].value = f"EVENTO --\n({target['event_code']})"
                 else:
-                    event_headers[col_idx].value = ['ÚLTIMO EVENTO', 'PENÚLTIMO EVENTO', 'ANTEPENÚLTIMO EVENTO'][col_idx]
+                    # Mantiene la secuencia visual 04 / 03 / 02 / 01 cuando aún
+                    # no existe información suficiente para llenar las cuatro columnas.
+                    event_headers[col_idx].value = f"EVENTO {4-col_idx:02d}"
 
         def select_operational_tire(tid):
             if not tid:
