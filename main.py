@@ -2031,20 +2031,20 @@ def main(page: ft.Page):
             width=265,
             options=[ft.dropdown.Option(k,f'{k} - {v}') for k,v in EVENTS.items() if k != 'ROT']
         )
-        date=ft.TextField(label='Fecha',value=dt.date.today().strftime('%d/%m/%Y'),width=135,dense=True)
-        equip=ft.Dropdown(label='Equipo',width=125,dense=True,options=[ft.dropdown.Option(str(r['id']),r['code']) for r in query('SELECT id,code FROM equipment WHERE active=1 ORDER BY code')])
-        pos=ft.TextField(label='Pos.',width=70,dense=True)
-        meter=ft.TextField(label='Horómetro',width=135,dense=True)
-        ti=ft.TextField(label='INT',width=72,dense=True)
-        to=ft.TextField(label='EXT',width=72,dense=True)
-        press=ft.TextField(label='Psi',width=72,dense=True)
+        date=ft.TextField(label='Fecha',value=dt.date.today().strftime('%d/%m/%Y'),width=260,dense=True)
+        equip=ft.Dropdown(label='Equipo',width=155,dense=True,options=[ft.dropdown.Option(str(r['id']),r['code']) for r in query('SELECT id,code FROM equipment WHERE active=1 ORDER BY code')])
+        pos=ft.TextField(label='Pos.',width=95,dense=True)
+        meter=ft.TextField(label='Horómetro',width=260,dense=True)
+        ti=ft.TextField(label='INT',width=125,dense=True)
+        to=ft.TextField(label='EXT',width=125,dense=True)
+        press=ft.TextField(label='Psi',width=125,dense=True)
         cond=ft.Dropdown(
-            label='Cond.', width=105, value='FRIO', dense=True,
+            label='Cond.', width=125, value='FRIO', dense=True,
             options=[ft.dropdown.Option('FRIO','FRIO'), ft.dropdown.Option('CALIENTE','CALIENTE')]
         )
-        reason=ft.TextField(label='Motivo',width=180,dense=True)
-        loc=ft.TextField(label='Lugar',width=180,dense=True)
-        notes=ft.TextField(label='Observaciones',multiline=True,min_lines=1,max_lines=2,width=180,dense=True)
+        reason=ft.TextField(label='Motivo',width=260,dense=True)
+        loc=ft.TextField(label='Lugar',width=260,dense=True)
+        notes=ft.TextField(label='Observaciones',multiline=True,min_lines=1,max_lines=2,width=260,dense=True)
         ref=ft.Text('',size=11,color=TEXT_MUTED)
         pre_tire = session.pop('movement_tire_id', None)
         pre_event = session.pop('movement_event', None)
@@ -2628,7 +2628,7 @@ def main(page: ft.Page):
 
         # Primera columna editable que aparece al seleccionar un evento.
         new_event_header = ft.Text('NUEVO EVENTO', size=11, weight=ft.FontWeight.BOLD, color='#1565C0')
-        new_event_header_box = ft.Container(content=new_event_header, expand=True, visible=False)
+        new_event_header_box = ft.Container(content=new_event_header, width=280, visible=False, bgcolor='#DDF3E4', padding=8)
         new_event_cells = {}
         new_event_text = {
             'Nro. Eventos': ft.Text('NUEVO', size=12, weight=ft.FontWeight.BOLD, color='#1565C0'),
@@ -2676,7 +2676,7 @@ def main(page: ft.Page):
         )
 
         for label in vertical_labels:
-            new_box = ft.Container(content=inline_controls[label], expand=True, visible=False)
+            new_box = ft.Container(content=inline_controls[label], width=280, visible=False, bgcolor='#F3F8FC', padding=6, border=ft.Border(bottom=ft.BorderSide(1, '#DCE6EF')))
             new_event_cells[label] = new_box
             ficha_rows.append(
                 ft.Row([
@@ -2701,9 +2701,11 @@ def main(page: ft.Page):
             )
 
         inline_action_box = ft.Container(
-            content=ft.Row([], spacing=6),
-            expand=True,
-            visible=False
+            content=ft.Row([], spacing=8),
+            width=280,
+            visible=False,
+            bgcolor='#F3F8FC',
+            padding=6
         )
         ficha_rows.append(
             ft.Row([
