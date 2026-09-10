@@ -5929,50 +5929,48 @@ def main(page: ft.Page):
         page.update()
 
     def nfu_view():
-        """5. NFU / Bajas - menú visual con el mismo estándar de los módulos 3, 6 y 9."""
-        def access_card():
-            accent='#C62828'; soft='#FFF0F0'
+        """5. Neumáticos de Baja - menú de reportes con el estándar visual de MegaSoftire."""
+        meta={
+            '5.1':(ft.Icons.SUMMARIZE_OUTLINED,'#1565C0','#EEF5FF','REPORTE\nGENERAL','Consolidado de todos los neumáticos dados de baja.','general'),
+            '5.2':(ft.Icons.TRENDING_DOWN_OUTLINED,'#138A3D','#EEFAF2','REPORTE POR\nDESGASTE REGULAR','Neumáticos retirados por desgaste regular.','regular'),
+            '5.3':(ft.Icons.WARNING_AMBER_OUTLINED,'#EF6C00','#FFF5EA','REPORTE POR\nCORTES Y FALLAS','Todas las variantes de cortes y fallas registradas.','cortes_fallas'),
+            '5.4':(ft.Icons.PRECISION_MANUFACTURING_OUTLINED,'#7B1FA2','#F8EEFC','REPORTE POR\nRETIRO DE EQUIPO','Neumáticos retirados por salida del equipo.','retiro_equipo'),
+            '5.5':(ft.Icons.RECYCLING_OUTLINED,'#00838F','#ECFAFB','RETIRO PARA\nREENCAUCHE','Neumáticos retirados con destino a reencauche.','reencauche'),
+        }
+        def access_card(key):
+            icon,accent,soft,title,desc,mode=meta[key]
             return ft.Container(
-                width=292,height=260,bgcolor=soft,
-                border=ft.Border.all(1,accent+'55'),border_radius=14,padding=18,
-                on_click=lambda e: nfu_detail_view(),ink=True,
+                width=292,height=260,bgcolor=soft,border=ft.Border.all(1,accent+'55'),border_radius=14,padding=18,
+                on_click=lambda e,m=mode:nfu_detail_view(m),ink=True,
                 content=ft.Column([
                     ft.Row([
-                        ft.Container(bgcolor=accent,border_radius=9,padding=ft.Padding(11,6,11,6),
-                                     content=ft.Text('5.1',size=16,weight=ft.FontWeight.BOLD,color='#FFFFFF')),
+                        ft.Container(bgcolor=accent,border_radius=9,padding=ft.Padding(11,6,11,6),content=ft.Text(key,size=16,weight=ft.FontWeight.BOLD,color='#FFFFFF')),
                         ft.Container(expand=True),
-                        ft.Container(width=54,height=54,border_radius=14,bgcolor='#FFFFFF',alignment=ft.Alignment.CENTER,
-                                     content=ft.Icon(ft.Icons.DELETE_FOREVER_OUTLINED,size=31,color=accent)),
+                        ft.Container(width=54,height=54,border_radius=14,bgcolor='#FFFFFF',alignment=ft.Alignment.CENTER,content=ft.Icon(icon,size=31,color=accent)),
                     ]),
-                    ft.Text('NEUMÁTICOS\nNFU / BAJAS',size=16,weight=ft.FontWeight.BOLD,color=TEXT_MAIN,text_align=ft.TextAlign.CENTER),
-                    ft.Text('Control técnico e histórico de neumáticos retirados definitivamente de operación.',size=11,color=TEXT_MUTED,text_align=ft.TextAlign.CENTER),
+                    ft.Text(title,size=16,weight=ft.FontWeight.BOLD,color=TEXT_MAIN,text_align=ft.TextAlign.CENTER),
+                    ft.Text(desc,size=11,color=TEXT_MUTED,text_align=ft.TextAlign.CENTER),
                     ft.Container(height=4),
-                    ft.Container(bgcolor=accent,border_radius=9,padding=10,alignment=ft.Alignment.CENTER,
-                                 content=ft.Row([
-                                     ft.Icon(ft.Icons.BAR_CHART,color='#FFFFFF',size=20),
-                                     ft.Text('VER REPORTE',color='#FFFFFF',weight=ft.FontWeight.BOLD,size=13),
-                                     ft.Icon(ft.Icons.CHEVRON_RIGHT,color='#FFFFFF',size=20),
-                                 ],alignment=ft.MainAxisAlignment.CENTER,spacing=8)),
+                    ft.Container(bgcolor=accent,border_radius=9,padding=10,alignment=ft.Alignment.CENTER,content=ft.Row([
+                        ft.Icon(ft.Icons.BAR_CHART,color='#FFFFFF',size=20),ft.Text('VER REPORTE',color='#FFFFFF',weight=ft.FontWeight.BOLD,size=13),ft.Icon(ft.Icons.CHEVRON_RIGHT,color='#FFFFFF',size=20),
+                    ],alignment=ft.MainAxisAlignment.CENTER,spacing=8)),
                 ],spacing=12,horizontal_alignment=ft.CrossAxisAlignment.CENTER)
             )
         content.content=ft.Column([
-            page_title('5. NEUMÁTICOS DE BAJA','Control de neumáticos fuera de servicio'),
+            page_title('5. NEUMÁTICOS DE BAJA','Control y análisis de neumáticos fuera de servicio'),
             card(ft.Column([
                 ft.Row([
-                    ft.Container(width=48,height=48,border_radius=24,bgcolor='#EAF2FF',alignment=ft.Alignment.CENTER,
-                                 content=ft.Icon(ft.Icons.DELETE_FOREVER_OUTLINED,color=NAV_ACCENT,size=27)),
-                    ft.Column([
-                        ft.Text('NFU / BAJAS',size=18,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
-                        ft.Text('Seleccione el reporte para visualizar el detalle.',size=11,color=TEXT_MUTED),
-                    ],spacing=2),
+                    ft.Container(width=48,height=48,border_radius=24,bgcolor='#EAF2FF',alignment=ft.Alignment.CENTER,content=ft.Icon(ft.Icons.DELETE_FOREVER_OUTLINED,color=NAV_ACCENT,size=27)),
+                    ft.Column([ft.Text('NEUMÁTICOS DE BAJA',size=18,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),ft.Text('Seleccione un reporte para visualizar el detalle.',size=11,color=TEXT_MUTED)],spacing=2),
                 ],spacing=12),
-                ft.Row([access_card(),ft.Container(width=292,height=260),ft.Container(width=292,height=260),ft.Container(width=292,height=260)],spacing=12),
+                ft.Row([access_card('5.1'),access_card('5.2'),access_card('5.3'),access_card('5.4')],spacing=12),
+                ft.Row([access_card('5.5'),ft.Container(width=292,height=260),ft.Container(width=292,height=260),ft.Container(width=292,height=260)],spacing=12),
             ],spacing=16),padding=16),
         ],scroll=ft.ScrollMode.AUTO,spacing=16)
         page.update()
 
-    def nfu_detail_view():
-        """Módulo 5.1 · NFU / BAJA: cuadro independiente de neumáticos dados de baja."""
+    def nfu_detail_view(report_type='general'):
+        """Módulo 5 · reportes de neumáticos dados de baja, filtrados por concepto de retiro."""
         search=ft.TextField(
             label='Buscar código / serie / marca / medida / equipo',
             prefix_icon=ft.Icons.SEARCH,
@@ -6081,6 +6079,31 @@ def main(page: ft.Page):
             sql += ' ORDER BY t.code'
             tires=query(sql,tuple(params))
 
+            # Clasificación de los reportes 5.1 a 5.5 según el motivo del último evento BAJA.
+            def baja_reason_text(tire_id):
+                rr=query("SELECT reason FROM occurrences WHERE tire_id=? AND event_code='BAJA' ORDER BY id DESC LIMIT 1",(tire_id,))
+                return str(rr[0]['reason'] or '').strip().upper() if rr else ''
+
+            def belongs_to_report(tire_id):
+                if report_type=='general':
+                    return True
+                reason=baja_reason_text(tire_id)
+                if report_type=='regular':
+                    return reason in ('DR','GAST') or 'DESGASTE REGULAR' in reason or 'DESGASTE TOTAL' in reason
+                if report_type=='reencauche':
+                    return 'REENCAUCH' in reason or reason in ('RBR','RRE','REENC')
+                if report_type=='retiro_equipo':
+                    return ('RETIRO' in reason and 'EQUIPO' in reason) or reason in ('RE','REQ','RDE')
+                if report_type=='cortes_fallas':
+                    # Todas las variantes de cortes y fallas, excluyendo las otras categorías de retiro.
+                    is_regular=(reason in ('DR','GAST') or 'DESGASTE REGULAR' in reason or 'DESGASTE TOTAL' in reason)
+                    is_reenc=('REENCAUCH' in reason or reason in ('RBR','RRE','REENC'))
+                    is_retiro=(('RETIRO' in reason and 'EQUIPO' in reason) or reason in ('RE','REQ','RDE'))
+                    return bool(reason) and not (is_regular or is_reenc or is_retiro)
+                return True
+
+            tires=[r for r in tires if belongs_to_report(r['id'])]
+
             rows_box.controls=[]
             year_now=(dt.datetime.utcnow()-dt.timedelta(hours=5)).year
             bajas_year=0
@@ -6164,8 +6187,17 @@ def main(page: ft.Page):
 
         search.on_change=refresh
         refresh()
+        report_titles={
+            'general':('5.1 REPORTE GENERAL','Consolidado de todos los neumáticos dados de baja'),
+            'regular':('5.2 REPORTE POR DESGASTE REGULAR','Neumáticos retirados por desgaste regular'),
+            'cortes_fallas':('5.3 REPORTE POR CORTES Y FALLAS','Todas las variantes de cortes y fallas registradas'),
+            'retiro_equipo':('5.4 REPORTE POR RETIRO DE EQUIPO','Neumáticos retirados por salida o retiro del equipo'),
+            'reencauche':('5.5 REPORTE POR RETIRO PARA REENCAUCHE','Neumáticos retirados con destino a reencauche'),
+        }
+        rt,rs=report_titles.get(report_type,report_titles['general'])
         content.content=ft.Column([
-            page_title('10. NFU / BAJA','Neumáticos Fuera de Uso · registro histórico de bajas'),
+            page_title(rt,rs),
+            ft.TextButton('← VOLVER A NEUMÁTICOS DE BAJA',on_click=lambda e:nfu_view()),
             ft.Row([search,ft.Container(expand=True),summary],vertical_alignment=ft.CrossAxisAlignment.CENTER),
             kpis,
             card(ft.Column([
