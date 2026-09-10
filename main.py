@@ -2115,9 +2115,22 @@ def main(page: ft.Page):
                 o=occ[0] if occ else None
                 insp=query("""SELECT * FROM occurrences WHERE tire_id=? AND event_code IN ('INSP','INSC') ORDER BY id DESC LIMIT 1""",(r['id'],))
                 io=insp[0] if insp else None
+                # Horas acumuladas: usar exactamente el mismo criterio de 2.1.
+                # Se toma el horómetro del último evento INST del neumático en el
+                # equipo actual y se resta del horómetro actual guardado en tires.
+                inst=query("""SELECT meter FROM occurrences
+                              WHERE tire_id=? AND event_code='INST'
+                                AND (? IS NULL OR equipment_id=?)
+                              ORDER BY event_date DESC,id DESC LIMIT 1""",
+                           (r['id'],eid,eid))
+                inst_meter=inst[0]['meter'] if inst else None
+                current_meter=r['current_meter']
                 worked=None
-                if r['current_meter'] is not None and r['installation_meter'] is not None:
-                    worked=max(0,float(r['current_meter'])-float(r['installation_meter']))
+                if current_meter is not None and inst_meter is not None:
+                    try:
+                        worked=max(0.0,float(current_meter)-float(inst_meter))
+                    except Exception:
+                        worked=None
                 newvals=[x for x in (r['new_tread_outer'],r['new_tread_inner'],r['new_tread']) if isinstance(x,(int,float))]
                 curvals=[x for x in (r['tread_outer'],r['tread_inner']) if isinstance(x,(int,float))]
                 rem=(min(curvals)/min(newvals)*100) if curvals and newvals and min(newvals)>0 else None
