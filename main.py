@@ -935,7 +935,61 @@ def main(page: ft.Page):
         page.update()
 
 
-    def service_view():
+    def service_menu_view():
+        """Portada del Módulo 2 con el mismo patrón visual de tarjetas de los módulos 3-8."""
+        def access_card(num, icon, accent, soft, title, desc, action):
+            return ft.Container(
+                width=292, height=260, bgcolor=soft,
+                border=ft.border.all(1, accent + '55'), border_radius=14, padding=18,
+                on_click=lambda e: action(), ink=True,
+                content=ft.Column([
+                    ft.Row([
+                        ft.Container(width=42, height=42, bgcolor=accent, border_radius=10,
+                                     alignment=ft.alignment.center,
+                                     content=ft.Text(num, color=ft.Colors.WHITE, size=12, weight=ft.FontWeight.BOLD)),
+                        ft.Container(expand=True),
+                        ft.Container(width=54, height=54, bgcolor=ft.Colors.WHITE, border_radius=12,
+                                     alignment=ft.alignment.center,
+                                     content=ft.Icon(icon, color=accent, size=29)),
+                    ]),
+                    ft.Container(height=5),
+                    ft.Text(title, size=16, weight=ft.FontWeight.BOLD, color=TEXT_MAIN,
+                            text_align=ft.TextAlign.CENTER),
+                    ft.Text(desc, size=11, color=TEXT_MUTED, text_align=ft.TextAlign.CENTER),
+                    ft.Container(expand=True),
+                    ft.Container(height=38, bgcolor=accent, border_radius=9, alignment=ft.alignment.center,
+                                 content=ft.Row([
+                                     ft.Icon(ft.Icons.BAR_CHART, color=ft.Colors.WHITE, size=17),
+                                     ft.Text('VER REPORTE', color=ft.Colors.WHITE, size=11, weight=ft.FontWeight.BOLD),
+                                     ft.Icon(ft.Icons.CHEVRON_RIGHT, color=ft.Colors.WHITE, size=17),
+                                 ], alignment=ft.MainAxisAlignment.CENTER, spacing=6)),
+                ], spacing=10)
+            )
+
+        content.content=ft.Column([
+            page_title('2. NEUMÁTICOS EN SERVICIO','Consulta técnica de neumáticos actualmente instalados'),
+            card(ft.Column([
+                ft.Row([
+                    ft.Container(width=48,height=48,bgcolor='#EAF2FF',border_radius=24,
+                                 alignment=ft.alignment.center,
+                                 content=ft.Icon(ft.Icons.DIRECTIONS_CAR,color=NAV_ACCENT,size=26)),
+                    ft.Column([
+                        ft.Text('NEUMÁTICOS EN SERVICIO',size=17,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
+                        ft.Text('Seleccione un reporte para visualizar el detalle.',size=11,color=TEXT_MUTED),
+                    ],spacing=2)
+                ],spacing=12),
+                ft.Row([
+                    access_card('2.1',ft.Icons.ASSESSMENT_OUTLINED,'#1565C0','#EEF5FF',
+                                'REPORTE GENERAL','Vista general actual de todos los neumáticos instalados.',service_general_view),
+                    access_card('2.2',ft.Icons.FACT_CHECK_OUTLINED,'#138A3D','#EEFAF2',
+                                'REPORTE POR EQUIPO','Información técnica detallada de un solo equipo y sus posiciones.',service_equipment_report_view),
+                    ft.Container(width=292,height=260), ft.Container(width=292,height=260),
+                ],spacing=14,wrap=True)
+            ],spacing=18),padding=18),
+        ],scroll=ft.ScrollMode.AUTO,spacing=16)
+        page.update()
+
+    def service_general_view():
         """Consulta operativa de neumáticos actualmente instalados."""
         eq_rows = query("""
             SELECT DISTINCT e.id,e.code,e.brand,e.model,e.location,e.vehicle_type,e.tire_size
@@ -2021,6 +2075,99 @@ def main(page: ft.Page):
                 ),
                 service_table_view
             ]))        ], scroll=ft.ScrollMode.AUTO, spacing=16)
+        page.update()
+
+    def service_equipment_report_view():
+        """2.2 Reporte por equipo: ficha y detalle P1-P4 del equipo seleccionado."""
+        eqs=query("""SELECT id,code,brand,model,location,vehicle_type,motor_type,tire_size
+                     FROM equipment WHERE active=1 ORDER BY code""")
+        selector=ft.Dropdown(label='Seleccione el equipo',width=250,
+            options=[ft.dropdown.Option(key=str(r['id']),text=r['code']) for r in eqs])
+        info=ft.Column([],spacing=8)
+        table_area=ft.Column([],spacing=10)
+        indicators=ft.Row([],spacing=12,wrap=True)
+
+        def metric(title,value,subtitle,accent='#1565C0'):
+            return ft.Container(width=220,height=92,bgcolor=ft.Colors.WHITE,border_radius=12,
+                border=ft.border.all(1,'#D8E1EB'),padding=12,
+                content=ft.Column([ft.Text(title,size=10,color=TEXT_MUTED,weight=ft.FontWeight.BOLD),
+                                   ft.Text(str(value),size=22,color=accent,weight=ft.FontWeight.BOLD),
+                                   ft.Text(subtitle,size=9,color=TEXT_MUTED)],spacing=2))
+
+        def refresh(e=None):
+            if not selector.value:
+                info.controls=[ft.Text('Seleccione un equipo para generar el reporte.',color=TEXT_MUTED)]
+                table_area.controls=[]; indicators.controls=[]; page.update(); return
+            eid=int(selector.value)
+            eq=query('SELECT * FROM equipment WHERE id=?',(eid,))[0]
+            rows=query("""SELECT t.* FROM tires t WHERE t.equipment_id=? AND t.status='SERVICIO'
+                          ORDER BY CAST(COALESCE(NULLIF(t.position,''),'999') AS INTEGER),t.code""",(eid,))
+            info.controls=[ft.Row([
+                ft.Column([ft.Text('Código',size=9,color=TEXT_MUTED),ft.Text(eq['code'] or '—',weight=ft.FontWeight.BOLD)],width=125),
+                ft.Column([ft.Text('Marca',size=9,color=TEXT_MUTED),ft.Text(eq['brand'] or '—',weight=ft.FontWeight.BOLD)],width=145),
+                ft.Column([ft.Text('Modelo',size=9,color=TEXT_MUTED),ft.Text(eq['model'] or '—',weight=ft.FontWeight.BOLD)],width=145),
+                ft.Column([ft.Text('Tipo',size=9,color=TEXT_MUTED),ft.Text(eq['vehicle_type'] or '—',weight=ft.FontWeight.BOLD)],width=125),
+                ft.Column([ft.Text('Motor',size=9,color=TEXT_MUTED),ft.Text(eq['motor_type'] or '—',weight=ft.FontWeight.BOLD)],width=125),
+                ft.Column([ft.Text('Ubicación',size=9,color=TEXT_MUTED),ft.Text(eq['location'] or '—',weight=ft.FontWeight.BOLD)],width=145),
+            ],wrap=True,spacing=10)]
+            data=[]; rems=[]; costs=[]; pressures_ok=0
+            for r in rows:
+                occ=query("""SELECT * FROM occurrences WHERE tire_id=? ORDER BY id DESC LIMIT 1""",(r['id'],))
+                o=occ[0] if occ else None
+                insp=query("""SELECT * FROM occurrences WHERE tire_id=? AND event_code IN ('INSP','INSC') ORDER BY id DESC LIMIT 1""",(r['id'],))
+                io=insp[0] if insp else None
+                worked=None
+                if r['current_meter'] is not None and r['installation_meter'] is not None:
+                    worked=max(0,float(r['current_meter'])-float(r['installation_meter']))
+                newvals=[x for x in (r['new_tread_outer'],r['new_tread_inner'],r['new_tread']) if isinstance(x,(int,float))]
+                curvals=[x for x in (r['tread_outer'],r['tread_inner']) if isinstance(x,(int,float))]
+                rem=(min(curvals)/min(newvals)*100) if curvals and newvals and min(newvals)>0 else None
+                if rem is not None: rems.append(rem)
+                cph=(float(r['cost_usd'])/worked) if r['cost_usd'] is not None and worked and worked>0 else None
+                if cph is not None: costs.append(cph)
+                pactual=io['pressure'] if io and io['pressure'] is not None else None
+                prec=r['recommended_pressure']
+                if pactual is not None and prec not in (None,0) and abs(float(pactual)-float(prec))/float(prec)<=0.05: pressures_ok+=1
+                data.append([
+                    f"P{r['position']}" if r['position'] else '—',r['code'] or '—',r['serial'] or '—',r['brand'] or '—',
+                    r['size'] or '—',r['design'] or '—',f"{worked:.0f}" if worked is not None else '—',
+                    f"$ {cph:.2f}/h" if cph is not None else '—',
+                    f"{min(newvals):.0f}" if newvals else '—',
+                    f"{r['tread_outer'] or 0:g}/{r['tread_inner'] or 0:g}" if curvals else '—',
+                    f"{rem:.1f}%" if rem is not None else '—',f"{pactual:g}" if pactual is not None else '—',
+                    f"{prec:g}" if prec is not None else '—',r['tire_condition'] or '—',
+                    (o['event_code'] if o else '—'),format_date(io['event_date']) if io else '—'
+                ])
+            headers=['POS.','CÓDIGO','SERIE','MARCA','MEDIDA','DISEÑO','HRS ACUM.','COSTO X HORA','COCADA ORIG.','COCADA EXT/INT','% REM.','PSI ACT.','PSI REC.','CONDICIÓN','ÚLT. EVENTO','FECHA ÚLT. INSP.']
+            widths=[55,75,105,90,80,85,80,95,85,100,70,65,65,90,85,100]
+            head=ft.Row([ft.Container(width=widths[i],height=44,bgcolor=NAV_BG,padding=6,alignment=ft.alignment.center,
+                                     content=ft.Text(h,size=8,color=ft.Colors.WHITE,weight=ft.FontWeight.BOLD,text_align=ft.TextAlign.CENTER)) for i,h in enumerate(headers)],spacing=0)
+            body=[head]
+            for ri,row in enumerate(data):
+                bg='#F7FAFD' if ri%2==0 else '#FFFFFF'
+                body.append(ft.Row([ft.Container(width=widths[i],height=36,bgcolor=bg,padding=6,
+                    alignment=ft.alignment.center_left,content=ft.Text(str(v),size=8.5,color=TEXT_MAIN)) for i,v in enumerate(row)],spacing=0))
+            table_area.controls=[ft.Row([ft.Column(body,spacing=1)],scroll=ft.ScrollMode.AUTO)]
+            avgrem=sum(rems)/len(rems) if rems else 0
+            avgcost=sum(costs)/len(costs) if costs else 0
+            indicators.controls=[metric('NEUMÁTICOS EN USO',len(rows),'Posiciones actualmente instaladas'),
+                                 metric('REMANENTE PROMEDIO',f'{avgrem:.1f}%','Promedio del equipo','#138A3D'),
+                                 metric('COSTO PROMEDIO',f'$ {avgcost:.2f}/h','Costo por hora promedio','#7B1FA2'),
+                                 metric('PRESIÓN ±5%',f'{pressures_ok}/{len(rows)}','Neumáticos dentro del rango','#EF6C00')]
+            page.update()
+        selector.on_change=refresh
+        content.content=ft.Column([
+            page_title('2.2 REPORTE POR EQUIPO','Información detallada de un solo equipo'),
+            ft.Row([ft.OutlinedButton('VOLVER A NEUMÁTICOS EN SERVICIO',icon=ft.Icons.ARROW_BACK,on_click=lambda e:service_menu_view())]),
+            card(ft.Column([
+                ft.Row([selector,ft.FilledButton('GENERAR REPORTE',icon=ft.Icons.SEARCH,on_click=refresh)],spacing=12),
+                ft.Divider(height=1,color='#D8E1EB'),
+                ft.Text('DATOS DEL EQUIPO',size=14,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),info,
+            ],spacing=12),padding=16),
+            card(ft.Column([ft.Text('NEUMÁTICOS DEL EQUIPO',size=15,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),table_area],spacing=10),padding=14),
+            indicators,
+        ],scroll=ft.ScrollMode.AUTO,spacing=14)
+        refresh()
         page.update()
 
     def movement_view():
@@ -6963,7 +7110,7 @@ def main(page: ft.Page):
             page.on_keyboard_event = None
         if idx==0: dashboard()
         elif idx==1: movement_view()
-        elif idx==2: service_view()
+        elif idx==2: service_menu_view()
         elif idx==3: maintenance_menu_view()
         elif idx==4: standby_view()
         elif idx==5: nfu_view()
