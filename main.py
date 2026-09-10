@@ -2099,7 +2099,7 @@ def main(page: ft.Page):
         def refresh(e=None):
             if not selector.value:
                 info.controls=[ft.Text('Seleccione un equipo para generar el reporte.',color=TEXT_MUTED)]
-                table_area.controls=[]; indicators.controls=[]; page.update(); return
+                table_area.controls=[]; rem_chart_22.controls=[]; hours_chart_22.controls=[]; pressure_chart_22.controls=[]; valve_chart_22.controls=[]; page.update(); return
             eid=int(selector.value)
             eq=query('SELECT * FROM equipment WHERE id=?',(eid,))[0]
             rows=query("""SELECT t.* FROM tires t WHERE t.equipment_id=? AND t.status='SERVICIO'
