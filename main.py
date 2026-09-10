@@ -24,7 +24,7 @@ MODULES = [
     ('Administración', ft.Icons.ADMIN_PANEL_SETTINGS_OUTLINED),
 ]
 
-BG = '#F4F7FB'
+BG = '#E9EEF4'
 NAV_BG = '#102A43'
 NAV_ACCENT = '#1E5AA8'
 CARD_BG = '#FFFFFF'
