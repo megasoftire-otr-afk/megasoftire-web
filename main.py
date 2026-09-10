@@ -2620,10 +2620,11 @@ def main(page: ft.Page):
         ]
 
         event_headers = [
-            ft.Text('Último evento', size=11, weight=ft.FontWeight.BOLD, color=TEXT_MUTED),
-            ft.Text('Penúltimo evento', size=11, weight=ft.FontWeight.BOLD, color=TEXT_MUTED),
-            ft.Text('Antepenúltimo evento', size=11, weight=ft.FontWeight.BOLD, color=TEXT_MUTED),
+            ft.Text('Último evento', size=11, weight=ft.FontWeight.BOLD, color='#1B5E20'),
+            ft.Text('Penúltimo evento', size=11, weight=ft.FontWeight.BOLD, color='#0D47A1'),
+            ft.Text('Antepenúltimo evento', size=11, weight=ft.FontWeight.BOLD, color='#9A4D00'),
         ]
+        event_header_bg = ['#E8F5E9', '#E3F2FD', '#FFF3E0']
 
         # Primera columna editable que aparece al seleccionar un evento.
         new_event_header = ft.Text('NUEVO EVENTO', size=11, weight=ft.FontWeight.BOLD, color='#1565C0')
@@ -2659,10 +2660,19 @@ def main(page: ft.Page):
         # Cabecera: NUEVO EVENTO + tres columnas históricas.
         ficha_rows.append(
             ft.Row([
-                ft.Container(width=155),
+                ft.Container(
+                    content=ft.Text('Detalle', size=11, weight=ft.FontWeight.BOLD, color='#FFFFFF'),
+                    width=155, bgcolor=NAV_ACCENT, padding=8,
+                    border_radius=ft.BorderRadius(top_left=6, top_right=6, bottom_left=0, bottom_right=0),
+                ),
                 new_event_header_box,
-                *[ft.Container(content=event_headers[i], expand=True) for i in range(3)],
-            ], spacing=8)
+                *[
+                    ft.Container(
+                        content=event_headers[i], expand=True, bgcolor=event_header_bg[i], padding=8,
+                        border=ft.Border(left=ft.BorderSide(1, '#B7C8D9'))
+                    ) for i in range(3)
+                ],
+            ], spacing=0)
         )
 
         for label in vertical_labels:
@@ -2671,15 +2681,23 @@ def main(page: ft.Page):
             ficha_rows.append(
                 ft.Row([
                     ft.Container(
-                        content=ft.Text(label, size=11, weight=ft.FontWeight.W_600, color=TEXT_MUTED),
-                        width=155
+                        content=ft.Text(label, size=11, weight=ft.FontWeight.W_600, color='#35556F'),
+                        width=155, bgcolor='#EAF2F8', padding=6,
+                        border=ft.Border(bottom=ft.BorderSide(1, '#DCE6EF'))
                     ),
                     new_box,
                     *[
-                        ft.Container(content=event_values[i][label], expand=True)
+                        ft.Container(
+                            content=event_values[i][label], expand=True, padding=6,
+                            bgcolor='#FFFFFF' if vertical_labels.index(label) % 2 == 0 else '#F7FAFD',
+                            border=ft.Border(
+                                left=ft.BorderSide(1, '#B7C8D9'),
+                                bottom=ft.BorderSide(1, '#E4EBF2')
+                            )
+                        )
                         for i in range(3)
                     ],
-                ], spacing=8)
+                ], spacing=0)
             )
 
         inline_action_box = ft.Container(
@@ -2689,10 +2707,26 @@ def main(page: ft.Page):
         )
         ficha_rows.append(
             ft.Row([
-                ft.Container(content=ft.Text('Acción', size=11, weight=ft.FontWeight.W_600, color=TEXT_MUTED), width=155),
+                ft.Container(
+                    content=ft.Text('Acción', size=11, weight=ft.FontWeight.W_600, color='#35556F'),
+                    width=155, bgcolor='#EAF2F8', padding=6
+                ),
                 inline_action_box,
-                ft.Container(expand=True), ft.Container(expand=True), ft.Container(expand=True),
-            ], spacing=8)
+                ft.Container(expand=True, border=ft.Border(left=ft.BorderSide(1, '#B7C8D9'))),
+                ft.Container(expand=True, border=ft.Border(left=ft.BorderSide(1, '#B7C8D9'))),
+                ft.Container(expand=True, border=ft.Border(left=ft.BorderSide(1, '#B7C8D9'))),
+            ], spacing=0)
+        )
+
+        events_area = ft.Container(
+            content=ft.Column(ficha_rows, spacing=0),
+            bgcolor='#EDF4FA',
+            padding=8,
+            border_radius=8,
+            border=ft.Border(
+                left=ft.BorderSide(1, '#D3E0EC'), right=ft.BorderSide(1, '#D3E0EC'),
+                top=ft.BorderSide(1, '#D3E0EC'), bottom=ft.BorderSide(1, '#D3E0EC')
+            )
         )
 
         ficha_panel = card(
@@ -2734,7 +2768,7 @@ def main(page: ft.Page):
                     ),
                 ], spacing=18, vertical_alignment=ft.CrossAxisAlignment.START),
                 ft.Divider(height=8),
-                *ficha_rows,
+                events_area,
             ], spacing=7),
             width=None
         )
