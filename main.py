@@ -2079,8 +2079,7 @@ def main(page: ft.Page):
 
     def service_equipment_report_view():
         """2.2 Reporte por equipo: ficha y detalle P1-P4 del equipo seleccionado."""
-        eqs=query("""SELECT id,code,brand,model,location,vehicle_type,motor_type,tire_size
-                     FROM equipment WHERE active=1 ORDER BY code""")
+        eqs=query("SELECT id,code FROM equipment WHERE active=1 ORDER BY code")
         selector=ft.Dropdown(label='Seleccione el equipo',width=250,
             options=[ft.dropdown.Option(key=str(r['id']),text=r['code']) for r in eqs])
         info=ft.Column([],spacing=8)
@@ -2107,7 +2106,7 @@ def main(page: ft.Page):
                 ft.Column([ft.Text('Marca',size=9,color=TEXT_MUTED),ft.Text(eq['brand'] or '—',weight=ft.FontWeight.BOLD)],width=145),
                 ft.Column([ft.Text('Modelo',size=9,color=TEXT_MUTED),ft.Text(eq['model'] or '—',weight=ft.FontWeight.BOLD)],width=145),
                 ft.Column([ft.Text('Tipo',size=9,color=TEXT_MUTED),ft.Text(eq['vehicle_type'] or '—',weight=ft.FontWeight.BOLD)],width=125),
-                ft.Column([ft.Text('Motor',size=9,color=TEXT_MUTED),ft.Text(eq['motor_type'] or '—',weight=ft.FontWeight.BOLD)],width=125),
+                ft.Column([ft.Text('Motor',size=9,color=TEXT_MUTED),ft.Text((eq['motor_type'] if 'motor_type' in eq.keys() else None) or '—',weight=ft.FontWeight.BOLD)],width=125),
                 ft.Column([ft.Text('Ubicación',size=9,color=TEXT_MUTED),ft.Text(eq['location'] or '—',weight=ft.FontWeight.BOLD)],width=145),
             ],wrap=True,spacing=10)]
             data=[]; rems=[]; costs=[]; pressures_ok=0
