@@ -945,11 +945,11 @@ def main(page: ft.Page):
                 content=ft.Column([
                     ft.Row([
                         ft.Container(width=42, height=42, bgcolor=accent, border_radius=10,
-                                     alignment=ft.alignment.center,
+                                     alignment=ft.Alignment.CENTER,
                                      content=ft.Text(num, color=ft.Colors.WHITE, size=12, weight=ft.FontWeight.BOLD)),
                         ft.Container(expand=True),
                         ft.Container(width=54, height=54, bgcolor=ft.Colors.WHITE, border_radius=12,
-                                     alignment=ft.alignment.center,
+                                     alignment=ft.Alignment.CENTER,
                                      content=ft.Icon(icon, color=accent, size=29)),
                     ]),
                     ft.Container(height=5),
@@ -957,7 +957,7 @@ def main(page: ft.Page):
                             text_align=ft.TextAlign.CENTER),
                     ft.Text(desc, size=11, color=TEXT_MUTED, text_align=ft.TextAlign.CENTER),
                     ft.Container(expand=True),
-                    ft.Container(height=38, bgcolor=accent, border_radius=9, alignment=ft.alignment.center,
+                    ft.Container(height=38, bgcolor=accent, border_radius=9, alignment=ft.Alignment.CENTER,
                                  content=ft.Row([
                                      ft.Icon(ft.Icons.BAR_CHART, color=ft.Colors.WHITE, size=17),
                                      ft.Text('VER REPORTE', color=ft.Colors.WHITE, size=11, weight=ft.FontWeight.BOLD),
@@ -971,7 +971,7 @@ def main(page: ft.Page):
             card(ft.Column([
                 ft.Row([
                     ft.Container(width=48,height=48,bgcolor='#EAF2FF',border_radius=24,
-                                 alignment=ft.alignment.center,
+                                 alignment=ft.Alignment.CENTER,
                                  content=ft.Icon(ft.Icons.DIRECTIONS_CAR,color=NAV_ACCENT,size=26)),
                     ft.Column([
                         ft.Text('NEUMÁTICOS EN SERVICIO',size=17,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
@@ -2140,13 +2140,13 @@ def main(page: ft.Page):
                 ])
             headers=['POS.','CÓDIGO','SERIE','MARCA','MEDIDA','DISEÑO','HRS ACUM.','COSTO X HORA','COCADA ORIG.','COCADA EXT/INT','% REM.','PSI ACT.','PSI REC.','CONDICIÓN','ÚLT. EVENTO','FECHA ÚLT. INSP.']
             widths=[55,75,105,90,80,85,80,95,85,100,70,65,65,90,85,100]
-            head=ft.Row([ft.Container(width=widths[i],height=44,bgcolor=NAV_BG,padding=6,alignment=ft.alignment.center,
+            head=ft.Row([ft.Container(width=widths[i],height=44,bgcolor=NAV_BG,padding=6,alignment=ft.Alignment.CENTER,
                                      content=ft.Text(h,size=8,color=ft.Colors.WHITE,weight=ft.FontWeight.BOLD,text_align=ft.TextAlign.CENTER)) for i,h in enumerate(headers)],spacing=0)
             body=[head]
             for ri,row in enumerate(data):
                 bg='#F7FAFD' if ri%2==0 else '#FFFFFF'
                 body.append(ft.Row([ft.Container(width=widths[i],height=36,bgcolor=bg,padding=6,
-                    alignment=ft.alignment.center_left,content=ft.Text(str(v),size=8.5,color=TEXT_MAIN)) for i,v in enumerate(row)],spacing=0))
+                    alignment=ft.Alignment.CENTER_LEFT,content=ft.Text(str(v),size=8.5,color=TEXT_MAIN)) for i,v in enumerate(row)],spacing=0))
             table_area.controls=[ft.Row([ft.Column(body,spacing=1)],scroll=ft.ScrollMode.AUTO)]
             avgrem=sum(rems)/len(rems) if rems else 0
             avgcost=sum(costs)/len(costs) if costs else 0
