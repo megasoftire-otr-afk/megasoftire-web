@@ -2625,6 +2625,9 @@ def main(page: ft.Page):
             ft.Text('ANTEPENÚLTIMO EVENTO', size=11, weight=ft.FontWeight.BOLD, color='#9A4D00'),
         ]
         event_header_bg = ['#E8F5E9', '#E3F2FD', '#FFF3E0']
+        # Ancho uniforme de las columnas históricas. Aproximadamente 70%
+        # del ancho que tenían originalmente cuando ocupaban el espacio disponible.
+        HIST_EVENT_WIDTH = 175
 
         # Primera columna editable que aparece al seleccionar un evento.
         new_event_header = ft.Text('NUEVO EVENTO', size=11, weight=ft.FontWeight.BOLD, color='#1565C0')
@@ -2668,7 +2671,8 @@ def main(page: ft.Page):
                 new_event_header_box,
                 *[
                     ft.Container(
-                        content=event_headers[i], expand=True, bgcolor=event_header_bg[i], padding=8,
+                        content=event_headers[i], width=HIST_EVENT_WIDTH, bgcolor=event_header_bg[i], padding=8,
+                        alignment=ft.Alignment(0, 0),
                         border=ft.Border(left=ft.BorderSide(1, '#B7C8D9'))
                     ) for i in range(3)
                 ],
@@ -2688,7 +2692,7 @@ def main(page: ft.Page):
                     new_box,
                     *[
                         ft.Container(
-                            content=event_values[i][label], expand=True, padding=6,
+                            content=event_values[i][label], width=HIST_EVENT_WIDTH, padding=6,
                             bgcolor='#FFFFFF' if vertical_labels.index(label) % 2 == 0 else '#F7FAFD',
                             border=ft.Border(
                                 left=ft.BorderSide(1, '#B7C8D9'),
@@ -2714,9 +2718,9 @@ def main(page: ft.Page):
                     width=155, bgcolor='#EAF2F8', padding=6
                 ),
                 inline_action_box,
-                ft.Container(expand=True, border=ft.Border(left=ft.BorderSide(1, '#B7C8D9'))),
-                ft.Container(expand=True, border=ft.Border(left=ft.BorderSide(1, '#B7C8D9'))),
-                ft.Container(expand=True, border=ft.Border(left=ft.BorderSide(1, '#B7C8D9'))),
+                ft.Container(width=HIST_EVENT_WIDTH, border=ft.Border(left=ft.BorderSide(1, '#B7C8D9'))),
+                ft.Container(width=HIST_EVENT_WIDTH, border=ft.Border(left=ft.BorderSide(1, '#B7C8D9'))),
+                ft.Container(width=HIST_EVENT_WIDTH, border=ft.Border(left=ft.BorderSide(1, '#B7C8D9'))),
             ], spacing=0)
         )
 
@@ -3052,7 +3056,7 @@ def main(page: ft.Page):
                 target = last_three[col_idx] if col_idx < len(last_three) else None
                 fill_event_column(col_idx, target)
                 if target:
-                    prefix = ['Último', 'Penúltimo', 'Antepenúltimo'][col_idx]
+                    prefix = ['ÚLTIMO EVENTO', 'PENÚLTIMO EVENTO', 'ANTEPENÚLTIMO EVENTO'][col_idx]
                     event_headers[col_idx].value = f"{prefix}: {target['event_code']}"
                 else:
                     event_headers[col_idx].value = ['ÚLTIMO EVENTO', 'PENÚLTIMO EVENTO', 'ANTEPENÚLTIMO EVENTO'][col_idx]
