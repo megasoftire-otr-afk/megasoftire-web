@@ -1422,7 +1422,7 @@ def main(page: ft.Page):
             'HORAS\nPROYECTADAS',
             'HORAS DE RODADO +\nPROYECCIÓN',
         ]
-        service_widths = [92,68,78,112,92,92,102,82,72,72,92,150,108,120,98,76,112,210]
+        service_widths = [78,58,70,96,78,80,88,72,62,62,80,132,98,106,86,68,100,190]
         service_total_width = sum(service_widths)
 
         def service_cell(value, width, header=False, bold=False, bgcolor=None, content=None):
@@ -1455,7 +1455,7 @@ def main(page: ft.Page):
             graph = ft.Row([
                 ft.Stack([
                     ft.Container(width=track_w, height=13, bgcolor='#E5E7EB', border_radius=2),
-                    ft.Container(width=fill_w, height=13, bgcolor='#111111', border_radius=2),
+                    ft.Container(width=fill_w, height=13, bgcolor='#22A06B', border_radius=2),
                 ], width=track_w, height=13),
                 ft.Text(f'{p:.0f}%', width=34, size=10, weight=ft.FontWeight.BOLD,
                         text_align=ft.TextAlign.RIGHT, color=TEXT_MAIN),
@@ -1493,14 +1493,22 @@ def main(page: ft.Page):
             [service_cell(label, width, header=True) for label, width in zip(service_columns, service_widths)],
             spacing=0,
         )
-        # Tabla completa verticalmente: todas las filas forman parte del scroll general de la página.
-        service_body = ft.Column([], spacing=0)
-        service_table_view = ft.Row([
-            ft.Container(
-                width=service_total_width,
-                content=ft.Column([service_header, service_body], spacing=0),
-            )
-        ], scroll=ft.ScrollMode.ALWAYS, spacing=0)
+        # Tabla técnica con viewport fijo: la barra horizontal queda visible desde
+        # el momento en que se abre 2.1, sin necesidad de llegar al final de las filas.
+        service_body = ft.Column([], spacing=0, scroll=ft.ScrollMode.ALWAYS)
+        service_table_inner = ft.Column([
+            service_header,
+            ft.Container(height=360, content=service_body),
+        ], spacing=0, width=service_total_width)
+        service_table_view = ft.Container(
+            height=420,
+            content=ft.Row(
+                [service_table_inner],
+                scroll=ft.ScrollMode.ALWAYS,
+                spacing=0,
+                vertical_alignment=ft.CrossAxisAlignment.START,
+            ),
+        )
         # Historial operativo retirado de este módulo; los datos históricos se conservan en la base.
 
 
@@ -1519,6 +1527,7 @@ def main(page: ft.Page):
             return '' if v is None else f'{v:.1f}%'
 
         visible_tire_ids = []
+        export_rows_state = {'rows': []}
 
         def selected_tire_id():
             try:
@@ -1714,12 +1723,13 @@ def main(page: ft.Page):
 
             ops = [(r, tire_operational_data(r)) for r in rows]
             service_body.controls = []
+            export_rows_state['rows'] = []
             rem_values = []
             worked_values = []
 
             previous_equipment = None
             equipment_group_index = -1
-            equipment_group_colors = ['#EAF7EA', '#EAF4FF']  # verde suave / celeste suave
+            equipment_group_colors = ['#F4F7FA', '#EAF1F7']  # azul/gris suave
             for r, od in ops:
                 if od['rem'] is not None:
                     rem_values.append(od['rem'])
@@ -1733,7 +1743,7 @@ def main(page: ft.Page):
                 if equipment_code != previous_equipment:
                     equipment_group_index += 1
                     if previous_equipment is not None:
-                        service_body.controls.append(ft.Container(height=7, bgcolor=BG))
+                        service_body.controls.append(ft.Container(height=7, bgcolor='#DCE6EF'))
                 row_bgcolor = equipment_group_colors[equipment_group_index % len(equipment_group_colors)]
                 previous_equipment = equipment_code
 
@@ -1805,6 +1815,26 @@ def main(page: ft.Page):
                     else:
                         row_cells.append(service_cell(v, service_widths[idx], bold=idx in (0,2), bgcolor=row_bgcolor))
                 service_body.controls.append(ft.Row(row_cells, spacing=0))
+                export_rows_state['rows'].append({
+                    'EQUIPO': equipment_code,
+                    'POSICIÓN': f"P{r['position']}" if r['position'] not in (None, '') else '—',
+                    'CÓDIGO': r['code'] or '—',
+                    'SERIE': r['serial'] or '—',
+                    'MARCA': r['brand'] or '—',
+                    'MEDIDA': r['size'] or r['equipment_tire_size'] or '—',
+                    'DISEÑO': r['design'] or '—',
+                    'RTD INICIAL': original_min,
+                    'RTD EXT': rtd_ext,
+                    'RTD INT': rtd_int,
+                    'DIFERENCIA RTD': rtd_diff,
+                    'VIDA ÚTIL (%)': rem_pct,
+                    'FECHA DE INSPECCIÓN': format_date(od['inspection_date']) or '—',
+                    'HORÓMETRO DE INSPECCIÓN': od['inspection_meter'],
+                    'HORAS DE RODADO': od['worked'],
+                    'Hs/mm': hs_mm,
+                    'HORAS PROYECTADAS': projected_hours,
+                    'HORAS DE RODADO + PROYECCIÓN': (float(od['worked'] or 0) + float(projected_hours or 0)) if (od['worked'] is not None or projected_hours is not None) else None,
+                })
 
             total_service = len(rows)
             eq_count = len({r['equipment_id'] for r in rows if r['equipment_id'] is not None})
@@ -1957,6 +1987,107 @@ def main(page: ft.Page):
 
             summary.value = f"{len(rows)} neumático(s) mostrado(s)"
             page.update()
+
+        def build_excel_bytes():
+            '''Genera un XLSX real con los registros visibles del 2.1.'''
+            import io, zipfile, html
+            headers=[h.replace('\n',' ') for h in service_columns]
+            keys=['EQUIPO','POSICIÓN','CÓDIGO','SERIE','MARCA','MEDIDA','DISEÑO','RTD INICIAL','RTD EXT','RTD INT','DIFERENCIA RTD','VIDA ÚTIL (%)','FECHA DE INSPECCIÓN','HORÓMETRO DE INSPECCIÓN','HORAS DE RODADO','Hs/mm','HORAS PROYECTADAS','HORAS DE RODADO + PROYECCIÓN']
+            rows=export_rows_state['rows']
+            def xlcol(n):
+                out=''
+                while n:
+                    n,r=divmod(n-1,26); out=chr(65+r)+out
+                return out
+            def esc(v): return html.escape(str('' if v is None else v),quote=False)
+            def cell(ref,v,style):
+                if isinstance(v,(int,float)) and not isinstance(v,bool):
+                    return f'<c r="{ref}" s="{style}"><v>{v}</v></c>'
+                return f'<c r="{ref}" s="{style}" t="inlineStr"><is><t>{esc(v)}</t></is></c>'
+            xml_rows=['<row r="1" ht="34" customHeight="1">']
+            for i,h in enumerate(headers,1): xml_rows.append(cell(f'{xlcol(i)}1',h,1))
+            xml_rows.append('</row>')
+            for ri,row in enumerate(rows,2):
+                xml_rows.append(f'<row r="{ri}" ht="22" customHeight="1">')
+                for ci,key in enumerate(keys,1):
+                    style=2 if ri%2==0 else 3
+                    if key=='VIDA ÚTIL (%)': style=4 if ri%2==0 else 5
+                    xml_rows.append(cell(f'{xlcol(ci)}{ri}',row.get(key) if row.get(key) is not None else '—',style))
+                xml_rows.append('</row>')
+            widths=[12,10,12,16,13,13,14,12,10,10,14,15,17,18,15,12,17,24]
+            cols=''.join(f'<col min="{i}" max="{i}" width="{w}" customWidth="1"/>' for i,w in enumerate(widths,1))
+            last=xlcol(len(headers)); lastrow=max(1,len(rows)+1)
+            sheet='<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews><cols>'+cols+'</cols><sheetData>'+''.join(xml_rows)+'</sheetData><autoFilter ref="A1:'+last+str(lastrow)+'"/></worksheet>'
+            styles='''<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="3"><font><sz val="10"/><name val="Calibri"/></font><font><b/><color rgb="FFFFFFFF"/><sz val="10"/><name val="Calibri"/></font><font><b/><color rgb="FF137A4B"/><sz val="10"/><name val="Calibri"/></font></fonts><fills count="5"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF173B5E"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFF4F7FA"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFEAF1F7"/></patternFill></fill></fills><borders count="2"><border/><border><left style="thin"><color rgb="FFD7E0E8"/></left><right style="thin"><color rgb="FFD7E0E8"/></right><top style="thin"><color rgb="FFD7E0E8"/></top><bottom style="thin"><color rgb="FFD7E0E8"/></bottom></border></borders><cellXfs count="6"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/><xf numFmtId="0" fontId="1" fillId="2" borderId="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf><xf numFmtId="0" fontId="0" fillId="3" borderId="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf><xf numFmtId="0" fontId="0" fillId="4" borderId="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf><xf numFmtId="0" fontId="2" fillId="3" borderId="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf><xf numFmtId="0" fontId="2" fillId="4" borderId="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf></cellXfs></styleSheet>'''
+            ct='''<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>'''
+            rel='''<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>'''
+            wb='''<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Reporte 2.1" sheetId="1" r:id="rId1"/></sheets></workbook>'''
+            wbr='''<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>'''
+            bio=io.BytesIO()
+            with zipfile.ZipFile(bio,'w',zipfile.ZIP_DEFLATED) as z:
+                z.writestr('[Content_Types].xml',ct); z.writestr('_rels/.rels',rel); z.writestr('xl/workbook.xml',wb); z.writestr('xl/_rels/workbook.xml.rels',wbr); z.writestr('xl/styles.xml',styles); z.writestr('xl/worksheets/sheet1.xml',sheet)
+            return bio.getvalue()
+
+        def build_service_pdf_bytes():
+            '''PDF A3 apaisado con las 18 columnas visibles.'''
+            headers=[h.replace('\n',' ') for h in service_columns]
+            keys=['EQUIPO','POSICIÓN','CÓDIGO','SERIE','MARCA','MEDIDA','DISEÑO','RTD INICIAL','RTD EXT','RTD INT','DIFERENCIA RTD','VIDA ÚTIL (%)','FECHA DE INSPECCIÓN','HORÓMETRO DE INSPECCIÓN','HORAS DE RODADO','Hs/mm','HORAS PROYECTADAS','HORAS DE RODADO + PROYECCIÓN']
+            rows=export_rows_state['rows']; pw,ph=1191,842; margin=24; usable=pw-2*margin
+            weights=[6,5,6,8,7,7,7,6,5,5,7,8,8,9,7,6,8,11]; sc=usable/sum(weights); widths=[w*sc for w in weights]
+            def esc(v):
+                raw=str('—' if v is None else v).replace('–','-').replace('—','-').encode('cp1252','replace').decode('latin-1')
+                return raw.replace('\\','\\\\').replace('(','\\(').replace(')','\\)')
+            def val(v,k):
+                if v is None:return '—'
+                if isinstance(v,(int,float)):
+                    if k=='VIDA ÚTIL (%)':return f'{v:.0f}%'
+                    if k in ('DIFERENCIA RTD','Hs/mm'):return f'{v:.2f}'
+                    return f'{v:,.0f}'
+                return str(v)
+            pages=[]; cmds=[]; y=ph-margin
+            def text(x,yy,t,size=5.6,bold=False,color='0.10 0.16 0.22'):
+                cmds.append(f'BT {"/F2" if bold else "/F1"} {size} Tf {color} rg {x:.1f} {yy:.1f} Td ({esc(t)}) Tj ET')
+            def box(x,yy,w,h,fill):
+                cmds.append(f'{fill} rg {x:.1f} {yy:.1f} {w:.1f} {h:.1f} re f'); cmds.append(f'0.78 0.83 0.88 RG .35 w {x:.1f} {yy:.1f} {w:.1f} {h:.1f} re S')
+            def header():
+                nonlocal y
+                text(margin,ph-26,'MEGASOFTIRE - 2.1 REPORTE GENERAL DE NEUMÁTICOS EN SERVICIO',12,True,'0.09 0.23 0.37'); y=ph-48; h=31; x=margin
+                for hd,w in zip(headers,widths):
+                    box(x,y-h,w,h,'0.09 0.23 0.37'); short=hd if len(hd)<=max(6,int(w/4.5)) else hd[:max(4,int(w/4.5)-1)]+'...'; text(x+2,y-18,short,5.2,True,'1 1 1'); x+=w
+                y-=h
+            def newpage():
+                nonlocal cmds,y
+                if cmds: pages.append('\n'.join(cmds))
+                cmds=[]; header()
+            newpage()
+            for ri,row in enumerate(rows):
+                h=20
+                if y-h<margin+10:newpage()
+                x=margin; fill='0.96 0.97 0.98' if ri%2==0 else '0.92 0.95 0.97'
+                for k,w in zip(keys,widths):
+                    box(x,y-h,w,h,fill); t=val(row.get(k),k); mc=max(3,int(w/4.7)); t=t if len(t)<=mc else t[:max(1,mc-1)]+'...'; text(x+2,y-13,t,5.4,k in ('EQUIPO','CÓDIGO','VIDA ÚTIL (%)'),'0.05 0.42 0.24' if k=='VIDA ÚTIL (%)' else '0.10 0.16 0.22'); x+=w
+                y-=h
+            if cmds:pages.append('\n'.join(cmds))
+            objs=[b'<< /Type /Catalog /Pages 2 0 R >>',b'',b'<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>',b'<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>']; pids=[]
+            for st in pages:
+                bs=st.encode('latin-1','replace'); cid=len(objs)+1; objs.append(b'<< /Length '+str(len(bs)).encode()+b' >>\nstream\n'+bs+b'\nendstream'); pid=len(objs)+1; pids.append(pid); objs.append(f'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {pw} {ph}] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents {cid} 0 R >>'.encode())
+            objs[1]=f'<< /Type /Pages /Kids [{" ".join(f"{p} 0 R" for p in pids)}] /Count {len(pids)} >>'.encode(); out=bytearray(b'%PDF-1.4\n%\xe2\xe3\xcf\xd3\n'); offs=[0]
+            for i,o in enumerate(objs,1):offs.append(len(out));out.extend(f'{i} 0 obj\n'.encode());out.extend(o);out.extend(b'\nendobj\n')
+            xr=len(out);out.extend(f'xref\n0 {len(objs)+1}\n'.encode());out.extend(b'0000000000 65535 f \n')
+            for off in offs[1:]:out.extend(f'{off:010d} 00000 n \n'.encode())
+            out.extend(f'trailer\n<< /Size {len(objs)+1} /Root 1 0 R >>\nstartxref\n{xr}\n%%EOF'.encode());return bytes(out)
+
+        async def download_service_excel(e):
+            try:
+                if not export_rows_state['rows']: return snack('No hay datos visibles para exportar.',True)
+                name='MegaSoftire_2.1_Reporte_General.xlsx'; await ft.FilePicker().save_file(file_name=name,file_type=ft.FilePickerFileType.CUSTOM,allowed_extensions=['xlsx'],src_bytes=build_excel_bytes()); snack(f'Excel preparado: {name}')
+            except Exception as ex: snack(f'No se pudo descargar Excel: {ex}',True)
+
+        async def download_service_pdf(e):
+            try:
+                if not export_rows_state['rows']: return snack('No hay datos visibles para exportar.',True)
+                name='MegaSoftire_2.1_Reporte_General.pdf'; await ft.FilePicker().save_file(file_name=name,file_type=ft.FilePickerFileType.CUSTOM,allowed_extensions=['pdf'],src_bytes=build_service_pdf_bytes()); snack(f'PDF preparado: {name}')
+            except Exception as ex: snack(f'No se pudo descargar PDF: {ex}',True)
 
         def resolve_equipment_from_event(e):
             candidates = []
@@ -2113,8 +2244,10 @@ def main(page: ft.Page):
                 ft.Row([
                     ft.Text('Detalle técnico de neumáticos instalados', size=17, weight=ft.FontWeight.BOLD, color=TEXT_MAIN),
                     ft.Container(expand=True),
-                    summary
-                ]),
+                    summary,
+                    ft.IconButton(icon=ft.Icons.TABLE_VIEW_OUTLINED,icon_color='#168A55',tooltip='Descargar Excel',on_click=download_service_excel),
+                    ft.IconButton(icon=ft.Icons.PICTURE_AS_PDF_OUTLINED,icon_color='#C0392B',tooltip='Descargar PDF',on_click=download_service_pdf),
+                ], spacing=4),
                 ft.Text(
                     'Una fila por neumático instalado. Cada equipo muestra P1, P2, P3 y P4 en orden, con separación antes del siguiente equipo.',
                     size=10, color=TEXT_MUTED
