@@ -1403,49 +1403,91 @@ def main(page: ft.Page):
         # El contenedor horizontal usa ScrollMode.ALWAYS para mantener disponible
         # la barra horizontal durante todo el recorrido de la tabla.
         service_columns = [
-            'CÓDIGO DE\nEQUIPO',
+            'EQUIPO',
             'POSICIÓN',
             'CÓDIGO',
             'SERIE',
             'MARCA',
-            'MODELO',
-            'CONDICIÓN',
-            'HORAS\nACUMULADAS',
-            'COSTO X\nHRS',
-            'COCADA\nORIGINAL',
-            'COCADA\nEXT/INT',
-            '%\nREMANENTE',
+            'MEDIDA',
+            'DISEÑO',
+            'RTD\nINICIAL',
+            'RTD\nEXT',
+            'RTD\nINT',
+            'DIFERENCIA\nRTD',
+            'VIDA ÚTIL\n(%)',
+            'FECHA DE\nINSPECCIÓN',
+            'HORÓMETRO DE\nINSPECCIÓN',
+            'HORAS DE\nRODADO',
             'Hs/mm',
-            'PROYECCIÓN DE\nVIDA (h)',
-            'PRESIÓN\nRECOMENDADA',
-            'PRESIÓN\nACTUAL',
-            'TAPA\nVÁLVULA',
-            'FECHA ÚLTIMA\nINSPECCIÓN',
-            'ÚLTIMO\nHORÓMETRO',
+            'HORAS\nPROYECTADAS',
+            'HORAS DE RODADO +\nPROYECCIÓN',
         ]
-        service_widths = [112,72,78,112,92,82,82,100,90,105,100,90,65,118,112,92,82,120,105]
+        service_widths = [92,68,78,112,92,92,102,82,72,72,92,150,108,120,98,76,112,210]
         service_total_width = sum(service_widths)
 
-        def service_cell(value, width, header=False, bold=False, bgcolor=None):
+        def service_cell(value, width, header=False, bold=False, bgcolor=None, content=None):
             return ft.Container(
                 width=width,
-                height=38 if header else 22,
+                height=44 if header else 34,
                 bgcolor=('#173B5E' if header else bgcolor),
                 padding=ft.Padding(left=4, top=0, right=4, bottom=0),
                 alignment=ft.Alignment(0, 0),
-                content=ft.Text(
+                content=(content if content is not None else ft.Text(
                     str(value),
-                    size=9 if header else 9.5,
+                    size=8.7 if header else 9.5,
                     color='#FFFFFF' if header else TEXT_MAIN,
                     weight=ft.FontWeight.BOLD if header or bold else None,
                     text_align=ft.TextAlign.CENTER,
                     max_lines=2 if header else 1,
-                ),
+                )),
                 border=ft.Border(
                     bottom=ft.BorderSide(1, '#C9D5E2' if header else '#D7DEE8'),
                     right=ft.BorderSide(1, '#5E7891' if header else '#DCE5ED'),
                 ),
             )
+
+        def life_graph_cell(percent, width, bgcolor):
+            if percent is None:
+                return service_cell('—', width, bgcolor=bgcolor)
+            p = max(0.0, min(100.0, float(percent)))
+            track_w = max(42.0, width - 48.0)
+            fill_w = max(2.0, track_w * p / 100.0)
+            graph = ft.Row([
+                ft.Stack([
+                    ft.Container(width=track_w, height=13, bgcolor='#E5E7EB', border_radius=2),
+                    ft.Container(width=fill_w, height=13, bgcolor='#111111', border_radius=2),
+                ], width=track_w, height=13),
+                ft.Text(f'{p:.0f}%', width=34, size=10, weight=ft.FontWeight.BOLD,
+                        text_align=ft.TextAlign.RIGHT, color=TEXT_MAIN),
+            ], spacing=5, alignment=ft.MainAxisAlignment.CENTER,
+               vertical_alignment=ft.CrossAxisAlignment.CENTER)
+            return service_cell('', width, bgcolor=bgcolor, content=graph)
+
+        def hours_projection_graph_cell(worked, projected, width, bgcolor):
+            if worked is None and projected is None:
+                return service_cell('—', width, bgcolor=bgcolor)
+            w = max(0.0, float(worked or 0.0))
+            p = max(0.0, float(projected or 0.0))
+            total = w + p
+            track_w = max(80.0, width - 18.0)
+            blue_w = (track_w * w / total) if total > 0 else 0.0
+            orange_w = max(0.0, track_w - blue_w) if total > 0 else 0.0
+            graph = ft.Column([
+                ft.Stack([
+                    ft.Container(width=track_w, height=15, bgcolor='#E5E7EB', border_radius=2),
+                    ft.Row([
+                        ft.Container(width=max(2.0, blue_w) if w > 0 else 0, height=15,
+                                     bgcolor=NAV_ACCENT,
+                                     border_radius=ft.BorderRadius.only(top_left=2,bottom_left=2)),
+                        ft.Container(width=max(2.0, orange_w) if p > 0 else 0, height=15,
+                                     bgcolor='#F47C20',
+                                     border_radius=ft.BorderRadius.only(top_right=2,bottom_right=2)),
+                    ], spacing=0),
+                ], width=track_w, height=15),
+                ft.Text(f'{w:,.0f} + {p:,.0f} = {total:,.0f} h', size=8.2, color=TEXT_MUTED,
+                        text_align=ft.TextAlign.CENTER),
+            ], spacing=1, horizontal_alignment=ft.CrossAxisAlignment.CENTER)
+            return service_cell('', width, bgcolor=bgcolor, content=graph)
 
         service_header = ft.Row(
             [service_cell(label, width, header=True) for label, width in zip(service_columns, service_widths)],
@@ -1719,20 +1761,19 @@ def main(page: ft.Page):
                 if r['cost_usd'] is not None and od['worked'] is not None and float(od['worked']) > 0:
                     cost_hour = float(r['cost_usd']) / float(od['worked'])
 
-                # Proyección de vida total (h), usando el mismo criterio conservador
-                # del Hs/mm: la MENOR lectura entre RTD EXT e INT.
-                #
-                # Hs/mm = horas acumuladas / (cocada original - RTD mínimo actual)
-                # Horas restantes = (RTD mínimo actual - profundidad de retiro) * Hs/mm
-                # Proyección total = horas acumuladas + horas restantes
-                projected_life = None
+                # Proyección restante (h), usando el criterio conservador aprobado:
+                # RTD actual = MENOR lectura entre RTD EXT e INT.
+                # Hs/mm = horas de rodado / desgaste consumido.
+                # Horas proyectadas = (RTD actual - RTD de retiro) x Hs/mm.
+                projected_hours = None
                 retirement_tread = r['retirement_tread'] if 'retirement_tread' in r.keys() else None
-                if (hs_mm is not None and od['worked'] is not None and
-                        current_min is not None and retirement_tread is not None):
+                if (hs_mm is not None and current_min is not None and retirement_tread is not None):
                     remaining_mm = max(0.0, float(current_min) - float(retirement_tread))
-                    projected_life = float(od['worked']) + (remaining_mm * float(hs_mm))
+                    projected_hours = remaining_mm * float(hs_mm)
 
-                condition_value = r['tire_condition'] if 'tire_condition' in r.keys() else ''
+                rtd_ext = r['tread_outer'] if isinstance(r['tread_outer'], (int, float)) else None
+                rtd_int = r['tread_inner'] if isinstance(r['tread_inner'], (int, float)) else None
+                rtd_diff = abs(float(rtd_ext) - float(rtd_int)) if rtd_ext is not None and rtd_int is not None else None
 
                 row_values = [
                     equipment_code,
@@ -1740,25 +1781,30 @@ def main(page: ft.Page):
                     r['code'] or '—',
                     r['serial'] or '—',
                     r['brand'] or '—',
+                    r['size'] or r['equipment_tire_size'] or '—',
                     r['design'] or '—',
-                    condition_value or '—',
-                    fmt(od['worked']) or '—',
-                    f"$ {cost_hour:.2f}/h" if cost_hour is not None else '—',
                     fmt(original_min) if original_min is not None else '—',
-                    f"{fmt(r['tread_outer'])}/{fmt(r['tread_inner'])}" if current_vals else '—',
-                    f"{rem_pct:.1f}%" if rem_pct is not None else '—',
-                    f"{hs_mm:.2f}" if hs_mm is not None else '—',
-                    f"{projected_life:,.0f}" if projected_life is not None else '—',
-                    fmt(r['recommended_pressure']) or '—',
-                    fmt(od['last_pressure']) or '—',
-                    od['valve_cap'],
+                    fmt(rtd_ext) if rtd_ext is not None else '—',
+                    fmt(rtd_int) if rtd_int is not None else '—',
+                    f"{rtd_diff:.1f}" if rtd_diff is not None else '—',
+                    None,  # gráfico Vida útil
                     format_date(od['inspection_date']) or '—',
                     fmt(od['inspection_meter']) or '—',
+                    fmt(od['worked']) or '—',
+                    f"{hs_mm:.2f}" if hs_mm is not None else '—',
+                    f"{projected_hours:,.0f}" if projected_hours is not None else '—',
+                    None,  # gráfico Horas de rodado + proyección
                 ]
-                service_body.controls.append(ft.Row([
-                    service_cell(v, service_widths[idx], bold=idx in (0,2), bgcolor=row_bgcolor)
-                    for idx, v in enumerate(row_values)
-                ], spacing=0))
+
+                row_cells = []
+                for idx, v in enumerate(row_values):
+                    if idx == 11:
+                        row_cells.append(life_graph_cell(rem_pct, service_widths[idx], row_bgcolor))
+                    elif idx == 17:
+                        row_cells.append(hours_projection_graph_cell(od['worked'], projected_hours, service_widths[idx], row_bgcolor))
+                    else:
+                        row_cells.append(service_cell(v, service_widths[idx], bold=idx in (0,2), bgcolor=row_bgcolor))
+                service_body.controls.append(ft.Row(row_cells, spacing=0))
 
             total_service = len(rows)
             eq_count = len({r['equipment_id'] for r in rows if r['equipment_id'] is not None})
@@ -2099,7 +2145,7 @@ def main(page: ft.Page):
         def refresh(e=None):
             if not selector.value:
                 info.controls=[ft.Text('Seleccione un equipo para generar el reporte.',color=TEXT_MUTED)]
-                table_area.controls=[]; rem_chart_22.controls=[]; hours_chart_22.controls=[]; pressure_chart_22.controls=[]; valve_chart_22.controls=[]; page.update(); return
+                table_area.controls=[]; indicators.controls=[]; page.update(); return
             eid=int(selector.value)
             eq=query('SELECT * FROM equipment WHERE id=?',(eid,))[0]
             rows=query("""SELECT t.* FROM tires t WHERE t.equipment_id=? AND t.status='SERVICIO'
@@ -5929,48 +5975,50 @@ def main(page: ft.Page):
         page.update()
 
     def nfu_view():
-        """5. Neumáticos de Baja - menú de reportes con el estándar visual de MegaSoftire."""
-        meta={
-            '5.1':(ft.Icons.SUMMARIZE_OUTLINED,'#1565C0','#EEF5FF','REPORTE\nGENERAL','Consolidado de todos los neumáticos dados de baja.','general'),
-            '5.2':(ft.Icons.TRENDING_DOWN_OUTLINED,'#138A3D','#EEFAF2','REPORTE POR\nDESGASTE REGULAR','Neumáticos retirados por desgaste regular.','regular'),
-            '5.3':(ft.Icons.WARNING_AMBER_OUTLINED,'#EF6C00','#FFF5EA','REPORTE POR\nCORTES Y FALLAS','Todas las variantes de cortes y fallas registradas.','cortes_fallas'),
-            '5.4':(ft.Icons.PRECISION_MANUFACTURING_OUTLINED,'#7B1FA2','#F8EEFC','REPORTE POR\nRETIRO DE EQUIPO','Neumáticos retirados por salida del equipo.','retiro_equipo'),
-            '5.5':(ft.Icons.RECYCLING_OUTLINED,'#00838F','#ECFAFB','RETIRO PARA\nREENCAUCHE','Neumáticos retirados con destino a reencauche.','reencauche'),
-        }
-        def access_card(key):
-            icon,accent,soft,title,desc,mode=meta[key]
+        """5. NFU / Bajas - menú visual con el mismo estándar de los módulos 3, 6 y 9."""
+        def access_card():
+            accent='#C62828'; soft='#FFF0F0'
             return ft.Container(
-                width=292,height=260,bgcolor=soft,border=ft.Border.all(1,accent+'55'),border_radius=14,padding=18,
-                on_click=lambda e,m=mode:nfu_detail_view(m),ink=True,
+                width=292,height=260,bgcolor=soft,
+                border=ft.Border.all(1,accent+'55'),border_radius=14,padding=18,
+                on_click=lambda e: nfu_detail_view(),ink=True,
                 content=ft.Column([
                     ft.Row([
-                        ft.Container(bgcolor=accent,border_radius=9,padding=ft.Padding(11,6,11,6),content=ft.Text(key,size=16,weight=ft.FontWeight.BOLD,color='#FFFFFF')),
+                        ft.Container(bgcolor=accent,border_radius=9,padding=ft.Padding(11,6,11,6),
+                                     content=ft.Text('5.1',size=16,weight=ft.FontWeight.BOLD,color='#FFFFFF')),
                         ft.Container(expand=True),
-                        ft.Container(width=54,height=54,border_radius=14,bgcolor='#FFFFFF',alignment=ft.Alignment.CENTER,content=ft.Icon(icon,size=31,color=accent)),
+                        ft.Container(width=54,height=54,border_radius=14,bgcolor='#FFFFFF',alignment=ft.Alignment.CENTER,
+                                     content=ft.Icon(ft.Icons.DELETE_FOREVER_OUTLINED,size=31,color=accent)),
                     ]),
-                    ft.Text(title,size=16,weight=ft.FontWeight.BOLD,color=TEXT_MAIN,text_align=ft.TextAlign.CENTER),
-                    ft.Text(desc,size=11,color=TEXT_MUTED,text_align=ft.TextAlign.CENTER),
+                    ft.Text('NEUMÁTICOS\nNFU / BAJAS',size=16,weight=ft.FontWeight.BOLD,color=TEXT_MAIN,text_align=ft.TextAlign.CENTER),
+                    ft.Text('Control técnico e histórico de neumáticos retirados definitivamente de operación.',size=11,color=TEXT_MUTED,text_align=ft.TextAlign.CENTER),
                     ft.Container(height=4),
-                    ft.Container(bgcolor=accent,border_radius=9,padding=10,alignment=ft.Alignment.CENTER,content=ft.Row([
-                        ft.Icon(ft.Icons.BAR_CHART,color='#FFFFFF',size=20),ft.Text('VER REPORTE',color='#FFFFFF',weight=ft.FontWeight.BOLD,size=13),ft.Icon(ft.Icons.CHEVRON_RIGHT,color='#FFFFFF',size=20),
-                    ],alignment=ft.MainAxisAlignment.CENTER,spacing=8)),
+                    ft.Container(bgcolor=accent,border_radius=9,padding=10,alignment=ft.Alignment.CENTER,
+                                 content=ft.Row([
+                                     ft.Icon(ft.Icons.BAR_CHART,color='#FFFFFF',size=20),
+                                     ft.Text('VER REPORTE',color='#FFFFFF',weight=ft.FontWeight.BOLD,size=13),
+                                     ft.Icon(ft.Icons.CHEVRON_RIGHT,color='#FFFFFF',size=20),
+                                 ],alignment=ft.MainAxisAlignment.CENTER,spacing=8)),
                 ],spacing=12,horizontal_alignment=ft.CrossAxisAlignment.CENTER)
             )
         content.content=ft.Column([
-            page_title('5. NEUMÁTICOS DE BAJA','Control y análisis de neumáticos fuera de servicio'),
+            page_title('5. NEUMÁTICOS DE BAJA','Control de neumáticos fuera de servicio'),
             card(ft.Column([
                 ft.Row([
-                    ft.Container(width=48,height=48,border_radius=24,bgcolor='#EAF2FF',alignment=ft.Alignment.CENTER,content=ft.Icon(ft.Icons.DELETE_FOREVER_OUTLINED,color=NAV_ACCENT,size=27)),
-                    ft.Column([ft.Text('NEUMÁTICOS DE BAJA',size=18,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),ft.Text('Seleccione un reporte para visualizar el detalle.',size=11,color=TEXT_MUTED)],spacing=2),
+                    ft.Container(width=48,height=48,border_radius=24,bgcolor='#EAF2FF',alignment=ft.Alignment.CENTER,
+                                 content=ft.Icon(ft.Icons.DELETE_FOREVER_OUTLINED,color=NAV_ACCENT,size=27)),
+                    ft.Column([
+                        ft.Text('NFU / BAJAS',size=18,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
+                        ft.Text('Seleccione el reporte para visualizar el detalle.',size=11,color=TEXT_MUTED),
+                    ],spacing=2),
                 ],spacing=12),
-                ft.Row([access_card('5.1'),access_card('5.2'),access_card('5.3'),access_card('5.4')],spacing=12),
-                ft.Row([access_card('5.5'),ft.Container(width=292,height=260),ft.Container(width=292,height=260),ft.Container(width=292,height=260)],spacing=12),
+                ft.Row([access_card(),ft.Container(width=292,height=260),ft.Container(width=292,height=260),ft.Container(width=292,height=260)],spacing=12),
             ],spacing=16),padding=16),
         ],scroll=ft.ScrollMode.AUTO,spacing=16)
         page.update()
 
-    def nfu_detail_view(report_type='general'):
-        """Módulo 5 · reportes de neumáticos dados de baja, filtrados por concepto de retiro."""
+    def nfu_detail_view():
+        """Módulo 5.1 · NFU / BAJA: cuadro independiente de neumáticos dados de baja."""
         search=ft.TextField(
             label='Buscar código / serie / marca / medida / equipo',
             prefix_icon=ft.Icons.SEARCH,
@@ -6079,31 +6127,6 @@ def main(page: ft.Page):
             sql += ' ORDER BY t.code'
             tires=query(sql,tuple(params))
 
-            # Clasificación de los reportes 5.1 a 5.5 según el motivo del último evento BAJA.
-            def baja_reason_text(tire_id):
-                rr=query("SELECT reason FROM occurrences WHERE tire_id=? AND event_code='BAJA' ORDER BY id DESC LIMIT 1",(tire_id,))
-                return str(rr[0]['reason'] or '').strip().upper() if rr else ''
-
-            def belongs_to_report(tire_id):
-                if report_type=='general':
-                    return True
-                reason=baja_reason_text(tire_id)
-                if report_type=='regular':
-                    return reason in ('DR','GAST') or 'DESGASTE REGULAR' in reason or 'DESGASTE TOTAL' in reason
-                if report_type=='reencauche':
-                    return 'REENCAUCH' in reason or reason in ('RBR','RRE','REENC')
-                if report_type=='retiro_equipo':
-                    return ('RETIRO' in reason and 'EQUIPO' in reason) or reason in ('RE','REQ','RDE')
-                if report_type=='cortes_fallas':
-                    # Todas las variantes de cortes y fallas, excluyendo las otras categorías de retiro.
-                    is_regular=(reason in ('DR','GAST') or 'DESGASTE REGULAR' in reason or 'DESGASTE TOTAL' in reason)
-                    is_reenc=('REENCAUCH' in reason or reason in ('RBR','RRE','REENC'))
-                    is_retiro=(('RETIRO' in reason and 'EQUIPO' in reason) or reason in ('RE','REQ','RDE'))
-                    return bool(reason) and not (is_regular or is_reenc or is_retiro)
-                return True
-
-            tires=[r for r in tires if belongs_to_report(r['id'])]
-
             rows_box.controls=[]
             year_now=(dt.datetime.utcnow()-dt.timedelta(hours=5)).year
             bajas_year=0
@@ -6187,17 +6210,8 @@ def main(page: ft.Page):
 
         search.on_change=refresh
         refresh()
-        report_titles={
-            'general':('5.1 REPORTE GENERAL','Consolidado de todos los neumáticos dados de baja'),
-            'regular':('5.2 REPORTE POR DESGASTE REGULAR','Neumáticos retirados por desgaste regular'),
-            'cortes_fallas':('5.3 REPORTE POR CORTES Y FALLAS','Todas las variantes de cortes y fallas registradas'),
-            'retiro_equipo':('5.4 REPORTE POR RETIRO DE EQUIPO','Neumáticos retirados por salida o retiro del equipo'),
-            'reencauche':('5.5 REPORTE POR RETIRO PARA REENCAUCHE','Neumáticos retirados con destino a reencauche'),
-        }
-        rt,rs=report_titles.get(report_type,report_titles['general'])
         content.content=ft.Column([
-            page_title(rt,rs),
-            ft.TextButton('← VOLVER A NEUMÁTICOS DE BAJA',on_click=lambda e:nfu_view()),
+            page_title('10. NFU / BAJA','Neumáticos Fuera de Uso · registro histórico de bajas'),
             ft.Row([search,ft.Container(expand=True),summary],vertical_alignment=ft.CrossAxisAlignment.CENTER),
             kpis,
             card(ft.Column([
