@@ -41,6 +41,32 @@ EVENT_LABELS = {
     'BAJA': 'Desechar / baja',
 }
 
+BAJA_REASONS = {
+    'GAST': 'Desgaste regular',
+    'CORL': 'Corte lateral',
+    'CORB': 'Corte en banda',
+    'SEPA': 'Separación banda',
+    'PSIB': 'Baja presión',
+    'RTEQ': 'Retiro de equipo',
+    'EXPL': 'Exposición de lona / alambre',
+    'REEN': 'Reencauche',
+    'DIB': 'Daño irregular',
+    'CGH': 'Corte / golpe hombro',
+    'DTB': 'Daño talón',
+    'IRB': 'Irregularidad banda',
+    'IBR': 'Impacto banda rodamiento',
+}
+
+REPA_REASONS = {
+    'ARO': 'Aro',
+    'PERF': 'Perforación',
+    'CORB': 'Corte banda',
+    'CORL': 'Corte lateral',
+    'VALV': 'Válvula',
+    'ORIN': 'O-ring',
+    'OTRO': 'Otro',
+}
+
 
 class LoginBody(BaseModel):
     username: str
@@ -159,7 +185,7 @@ def _duration_minutes(start: Optional[str], end: Optional[str]) -> Optional[int]
 
 @app.get('/api/mobile/health')
 def mobile_health():
-    return {'ok': True, 'service': 'MegaSoftire Web', 'api': 'mobile-write-v0.6'}
+    return {'ok': True, 'service': 'MegaSoftire Web', 'api': 'mobile-write-v0.8'}
 
 
 @app.post('/api/mobile/login')
@@ -205,6 +231,39 @@ def mobile_equipment_tires(equipment_id: int, user=Depends(_auth_user)):
     return [dict(r) for r in rows]
 
 
+@app.get('/api/mobile/tires/catalog')
+def mobile_tires_catalog(user=Depends(_auth_user)):
+    rows = query(
+        '''SELECT t.id,t.code,t.serial,t.brand,t.size,t.design,t.status,
+                  t.equipment_id,t.position,t.current_meter,t.tread_inner,t.tread_outer,
+                  e.code AS equipment_code
+           FROM tires t
+           LEFT JOIN equipment e ON e.id=t.equipment_id
+           ORDER BY t.code'''
+    )
+    return [dict(r) for r in rows]
+
+
+@app.get('/api/mobile/tires/search')
+def mobile_tires_search(q: str = '', user=Depends(_auth_user)):
+    text = (q or '').strip()
+    if not text:
+        return []
+    term = f'%{text}%'
+    rows = query(
+        '''SELECT t.id,t.code,t.serial,t.brand,t.size,t.design,t.status,
+                  t.equipment_id,t.position,t.current_meter,t.tread_inner,t.tread_outer,
+                  e.code AS equipment_code
+           FROM tires t
+           LEFT JOIN equipment e ON e.id=t.equipment_id
+           WHERE t.code LIKE ? OR COALESCE(t.serial,'') LIKE ?
+           ORDER BY CASE WHEN UPPER(t.code)=UPPER(?) THEN 0 ELSE 1 END,t.code
+           LIMIT 50''',
+        (term, term, text),
+    )
+    return [dict(r) for r in rows]
+
+
 @app.get('/api/mobile/tire/{tire_id}')
 def mobile_tire(tire_id: int, user=Depends(_auth_user)):
     tire = _tire(tire_id)
@@ -222,9 +281,17 @@ def mobile_tire(tire_id: int, user=Depends(_auth_user)):
         last_event['event_date'] = _to_iso_date(last_event.get('event_date'))
     tire['last_event'] = last_event
     installed = tire.get('equipment_id') is not None and str(tire.get('position') or '').strip() != ''
-    tire['event_access'] = {
-        code: (False if code == 'ROT' else (code != 'INST' if installed else code == 'INST'))
-        for code in EVENT_LABELS
+    status_norm = str(tire.get('status') or '').strip().upper().replace('_','-')
+    if installed and status_norm == 'SERVICIO':
+        allowed = {'INSP','INSC','INVE','DINS','BAJA'}
+    elif status_norm in ('STAND-BY','STAND BY','STANDBY'):
+        allowed = {'INST','INVE','REPA','BAJA'}
+    else:
+        allowed = set()
+    tire['event_access'] = {code: code in allowed for code in EVENT_LABELS}
+    tire['reason_catalogs'] = {
+        'BAJA': [{'code': k, 'label': v} for k,v in BAJA_REASONS.items()],
+        'REPA': [{'code': k, 'label': v} for k,v in REPA_REASONS.items()],
     }
     return tire
 
@@ -260,11 +327,29 @@ def mobile_save_movement(body: MovementBody, user=Depends(_auth_user)):
     t = _tire(body.tire_id)
     installed = t.get('equipment_id') is not None and str(t.get('position') or '').strip() != ''
 
-    # Same operational access rule as the current Web module 1.1.
-    if installed and code == 'INST':
-        raise HTTPException(status_code=409, detail='INST está bloqueado: el neumático ya está instalado.')
-    if not installed and code != 'INST':
-        raise HTTPException(status_code=409, detail='El neumático no está instalado. Solo INST está habilitado.')
+    # Misma matriz operacional aprobada en Web v05.
+    status_norm = str(t.get('status') or '').strip().upper().replace('_','-')
+    if installed and status_norm == 'SERVICIO':
+        allowed_events = {'INSP','INSC','INVE','DINS','BAJA'}
+    elif status_norm in ('STAND-BY','STAND BY','STANDBY'):
+        allowed_events = {'INST','INVE','REPA','BAJA'}
+    else:
+        allowed_events = set()
+    if code not in allowed_events:
+        if code == 'REPA' and installed:
+            raise HTTPException(status_code=409, detail='REPA no está permitido para neumáticos instalados. Primero debe pasar a STAND-BY.')
+        raise HTTPException(status_code=409, detail=f'El evento {code} no está permitido para el estado actual del neumático.')
+
+    if code in ('REPA','BAJA'):
+        reason = (body.reason or '').strip().upper()
+        valid = REPA_REASONS if code == 'REPA' else BAJA_REASONS
+        if not reason:
+            raise HTTPException(status_code=400, detail=f'Seleccione un motivo para {code}.')
+        if reason not in valid:
+            raise HTTPException(status_code=400, detail=f'El motivo seleccionado no es válido para {code}.')
+        body.reason = reason
+    else:
+        body.reason = None
 
     if code in ('INSP', 'INSC'):
         if t.get('status') != 'SERVICIO' or not installed:
@@ -320,6 +405,13 @@ def mobile_save_movement(body: MovementBody, user=Depends(_auth_user)):
             raise HTTPException(status_code=409, detail=f'Cocada {label} inválida: no puede superar la profundidad nueva ({float(max_new):g} mm).')
         if code != 'INVE' and previous is not None and float(value) > float(previous):
             raise HTTPException(status_code=409, detail=f'Cocada {label} inválida: {float(value):g} mm es mayor que la última cocada válida {float(previous):g} mm.')
+
+    # BAJA/DINS: el RTD debe conservar exactamente el último valor válido.
+    # La regla general anterior bloquea aumentos; esta regla bloquea reducciones.
+    if code in ('BAJA','DINS'):
+        for value, label, previous in checks:
+            if previous is not None and (value is None or float(value) < float(previous)):
+                raise HTTPException(status_code=409, detail=f'Remanente {label} inválido: no puede ser menor que el existente ({float(previous):g} mm).')
 
     if code == 'INSC':
         duplicate = query(
