@@ -2608,12 +2608,12 @@ def main(page: ft.Page):
             ti.disabled=False
             to.disabled=False
 
-            # MOTIVO: se utiliza únicamente para el evento BAJA.
-            # En INST, INSP, INSC, ROT, INVE, DINS y REPA permanece bloqueado.
-            reason.disabled = ec != 'BAJA'
-            if ec != 'BAJA':
-                # Evita que un motivo escrito en BAJA quede arrastrado si el usuario
-                # cambia luego a otro tipo de evento antes de guardar.
+            # MOTIVO: se utiliza únicamente en REPA y BAJA.
+            # En INST, INSP, INSC, ROT, INVE y DINS permanece bloqueado.
+            reason.disabled = ec not in ('REPA','BAJA')
+            if ec not in ('REPA','BAJA'):
+                # Evita arrastrar un motivo si el usuario cambia a un evento
+                # donde el campo Motivo no corresponde.
                 reason.value = ''
 
             # INSP/INSC, BAJA y DINS conservan el equipo y la posición actuales.
@@ -2706,6 +2706,22 @@ def main(page: ft.Page):
             r=current_tire()
             if not r:
                 return False
+
+            # Reglas fundamentales por estado del neumático:
+            # SERVICIO/instalado -> INSP, INSC, INVE, DINS y BAJA. REPA no aplica.
+            # STAND-BY -> INST, INVE, REPA y BAJA.
+            # ROT continúa bloqueado hasta definir su funcionalidad.
+            status_norm=str(r['status'] or '').strip().upper().replace('_','-')
+            installed = r['equipment_id'] is not None and str(r['position'] or '').strip() != ''
+            if installed and status_norm == 'SERVICIO':
+                allowed_events={'INSP','INSC','INVE','DINS','BAJA'}
+            elif status_norm in ('STAND-BY','STAND BY','STANDBY'):
+                allowed_events={'INST','INVE','REPA','BAJA'}
+            else:
+                allowed_events=set()
+            if event.value not in allowed_events:
+                return False
+
             tid=int(tire.value)
             lim=historical_limits(tid)
 
@@ -2837,6 +2853,20 @@ def main(page: ft.Page):
             if not r:
                 return snack('No se encontró el neumático seleccionado.',True)
 
+            # Protección de guardado: aplicar la misma matriz de eventos que los botones.
+            status_norm=str(r['status'] or '').strip().upper().replace('_','-')
+            installed = r['equipment_id'] is not None and str(r['position'] or '').strip() != ''
+            if installed and status_norm == 'SERVICIO':
+                allowed_events={'INSP','INSC','INVE','DINS','BAJA'}
+            elif status_norm in ('STAND-BY','STAND BY','STANDBY'):
+                allowed_events={'INST','INVE','REPA','BAJA'}
+            else:
+                allowed_events=set()
+            if ec not in allowed_events:
+                if ec == 'REPA' and installed:
+                    return snack('REPA no está permitido para neumáticos instalados. Primero debe pasar a STAND-BY.', True)
+                return snack(f'El evento {ec} no está permitido para el estado actual del neumático.', True)
+
             lim=historical_limits(tid)
             new_meter=num(meter.value)
             max_meter=lim['max_meter'] if lim else None
@@ -2938,9 +2968,9 @@ def main(page: ft.Page):
             condition=(cond.value or 'FRIO').strip().upper().replace('Í','I')
             condition='CALIENTE' if condition.startswith('CAL') else 'FRIO'
 
-            # Por seguridad, solo BAJA puede grabar un motivo.
-            # Aunque otro evento intentara llegar aquí con un valor residual, se descarta.
-            reason_for_db=(reason.value or '').strip() if ec=='BAJA' else ''
+            # Por seguridad, únicamente REPA y BAJA pueden grabar Motivo.
+            # En cualquier otro evento se descarta un valor residual.
+            reason_for_db=(reason.value or '').strip() if ec in ('REPA','BAJA') else ''
 
             execute(
                 '''INSERT INTO occurrences(
@@ -3616,9 +3646,11 @@ def main(page: ft.Page):
         event_buttons_local = {}
 
         def update_event_button_states(tid=None):
-            # Regla operativa:
-            # - Registrado pero sin instalar: solo INST habilitado.
-            # - Instalado en un equipo: INST bloqueado y eventos operativos habilitados.
+            # Matriz operativa fundamental por estado:
+            # - SERVICIO + instalado: INSP, INSC, INVE, DINS y BAJA.
+            #   REPA queda bloqueado mientras el neumático esté instalado.
+            # - STAND-BY: únicamente INST, INVE, REPA y BAJA.
+            # - BAJA / REPARACIÓN / otros estados: todos bloqueados.
             # - ROT permanece bloqueado hasta definir su funcionalidad.
             if not tid:
                 for code, btn in event_buttons_local.items():
@@ -3638,14 +3670,17 @@ def main(page: ft.Page):
 
             r = rows[0]
             installed = r['equipment_id'] is not None and str(r['position'] or '').strip() != ''
+            status_norm = str(r['status'] or '').strip().upper().replace('_','-')
+
+            if installed and status_norm == 'SERVICIO':
+                allowed = {'INSP','INSC','INVE','DINS','BAJA'}
+            elif status_norm in ('STAND-BY','STAND BY','STANDBY'):
+                allowed = {'INST','INVE','REPA','BAJA'}
+            else:
+                allowed = set()
 
             for code, btn in event_buttons_local.items():
-                if code == 'ROT':
-                    btn.disabled = True
-                elif installed:
-                    btn.disabled = (code == 'INST')
-                else:
-                    btn.disabled = (code != 'INST')
+                btn.disabled = code not in allowed
 
         def open_event_form(ec):
             if not tire.value:
