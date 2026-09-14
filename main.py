@@ -7410,6 +7410,11 @@ def main(page: ft.Page):
         ],scroll=ft.ScrollMode.AUTO,spacing=16)
         page.update()
 
+    def download_sqlite_backup(e=None):
+        base_url = os.environ.get('MEGASOFTIRE_PUBLIC_URL', 'https://megasoftire-web.onrender.com').rstrip('/')
+        backup_key = os.environ.get('MEGASOFTIRE_BACKUP_KEY', 'MegaSoftireBackup2026')
+        page.launch_url(f'{base_url}/api/admin/sqlite-backup?key={backup_key}')
+
     def administration_view():
         """8. Administración - menú visual para equipos y neumáticos."""
         admin_meta={
@@ -7424,6 +7429,12 @@ def main(page: ft.Page):
                 'title':'NEUMÁTICOS',
                 'desc':'Registro maestro de neumáticos: datos técnicos, costos y parámetros de control.',
                 'action':lambda: tires_view(),
+            },
+            '83':{
+                'num':'8.3','icon':ft.Icons.DOWNLOAD,'accent':'#8A5A00','soft':'#FFF8E8',
+                'title':'RESPALDO SQLITE',
+                'desc':'Descargar una copia de seguridad de la base de datos activa de MegaSoftire.',
+                'action':download_sqlite_backup,
             },
         }
 
@@ -7447,8 +7458,8 @@ def main(page: ft.Page):
                     ft.Container(
                         bgcolor=m['accent'],border_radius=9,padding=10,alignment=ft.Alignment.CENTER,
                         content=ft.Row([
-                            ft.Icon(ft.Icons.LOGIN,color='#FFFFFF',size=20),
-                            ft.Text('INGRESAR',color='#FFFFFF',weight=ft.FontWeight.BOLD,size=13),
+                            ft.Icon(ft.Icons.DOWNLOAD if key=='83' else ft.Icons.LOGIN,color='#FFFFFF',size=20),
+                            ft.Text('DESCARGAR' if key=='83' else 'INGRESAR',color='#FFFFFF',weight=ft.FontWeight.BOLD,size=13),
                             ft.Icon(ft.Icons.CHEVRON_RIGHT,color='#FFFFFF',size=20),
                         ],alignment=ft.MainAxisAlignment.CENTER,spacing=8)
                     ),
@@ -7467,8 +7478,8 @@ def main(page: ft.Page):
                     ],spacing=2),
                 ],spacing=12),
                 ft.Row([
-                    admin_access_card('81'),admin_access_card('82'),
-                    ft.Container(width=292,height=260),ft.Container(width=292,height=260)
+                    admin_access_card('81'),admin_access_card('82'),admin_access_card('83'),
+                    ft.Container(width=292,height=260)
                 ],spacing=12),
             ],spacing=16),padding=16),
         ],scroll=ft.ScrollMode.AUTO,spacing=16)

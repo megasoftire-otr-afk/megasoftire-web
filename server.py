@@ -1,15 +1,18 @@
 import os
 import secrets
 import datetime as dt
+import sqlite3
+import tempfile
+from pathlib import Path
 from typing import Optional
 
 import flet.fastapi as flet_fastapi
-from fastapi import Depends, Header, HTTPException
+from fastapi import Depends, Header, HTTPException, Query, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 import main as megasoft_main
-from database import init_db, query, execute, authenticate
+from database import init_db, query, execute, authenticate, DB_PATH
 
 init_db()
 
@@ -181,6 +184,50 @@ def _duration_minutes(start: Optional[str], end: Optional[str]) -> Optional[int]
     if db < da:
         db += dt.timedelta(days=1)
     return int((db - da).total_seconds() // 60)
+
+
+BACKUP_KEY = os.environ.get('MEGASOFTIRE_BACKUP_KEY', 'MegaSoftireBackup2026')
+
+
+@app.get('/api/admin/sqlite-backup')
+def sqlite_backup(key: str = Query(default='')):
+    """Descarga una copia consistente de la base SQLite activa.
+
+    Protección simple mediante MEGASOFTIRE_BACKUP_KEY. Esta ruta puede retirarse
+    después de descargar el respaldo.
+    """
+    if not key or not secrets.compare_digest(str(key), str(BACKUP_KEY)):
+        raise HTTPException(status_code=403, detail='Clave de respaldo inválida.')
+
+    db_path = Path(DB_PATH)
+    if not db_path.exists():
+        raise HTTPException(status_code=404, detail=f'Base SQLite no encontrada: {db_path}')
+
+    fd, tmp_name = tempfile.mkstemp(prefix='megasoftire_backup_', suffix='.db')
+    os.close(fd)
+    try:
+        src = sqlite3.connect(str(db_path))
+        dst = sqlite3.connect(tmp_name)
+        try:
+            src.backup(dst)
+        finally:
+            dst.close()
+            src.close()
+
+        data = Path(tmp_name).read_bytes()
+    finally:
+        try:
+            os.remove(tmp_name)
+        except OSError:
+            pass
+
+    stamp = dt.datetime.now().strftime('%Y-%m-%d_%H%M%S')
+    filename = f'megasoftire_backup_{stamp}.db'
+    return Response(
+        content=data,
+        media_type='application/vnd.sqlite3',
+        headers={'Content-Disposition': f'attachment; filename="{filename}"'},
+    )
 
 
 @app.get('/api/mobile/health')
