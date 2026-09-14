@@ -7410,11 +7410,6 @@ def main(page: ft.Page):
         ],scroll=ft.ScrollMode.AUTO,spacing=16)
         page.update()
 
-    def sqlite_backup_url():
-        base_url = os.environ.get('MEGASOFTIRE_PUBLIC_URL', 'https://megasoftire-web.onrender.com').rstrip('/')
-        backup_key = os.environ.get('MEGASOFTIRE_BACKUP_KEY', 'MegaSoftireBackup2026')
-        return f'{base_url}/api/admin/sqlite-backup?key={backup_key}'
-
     def administration_view():
         """8. Administración - menú visual para equipos y neumáticos."""
         admin_meta={
@@ -7430,21 +7425,15 @@ def main(page: ft.Page):
                 'desc':'Registro maestro de neumáticos: datos técnicos, costos y parámetros de control.',
                 'action':lambda: tires_view(),
             },
-            '83':{
-                'num':'8.3','icon':ft.Icons.DOWNLOAD,'accent':'#8A5A00','soft':'#FFF8E8',
-                'title':'RESPALDO SQLITE',
-                'desc':'Descargar una copia de seguridad de la base de datos activa de MegaSoftire.',
-                'action':None,
-            },
         }
 
         def admin_access_card(key):
             m=admin_meta[key]
-            card_click = None if key=='83' else (lambda e,k=key: admin_meta[k]['action']())
+            card_click = lambda e,k=key: admin_meta[k]['action']()
             return ft.Container(
                 width=292,height=260,bgcolor=m['soft'],
                 border=ft.Border.all(1,m['accent']+'55'),border_radius=14,padding=18,
-                on_click=card_click,ink=(key!='83'),
+                on_click=card_click,ink=True,
                 content=ft.Column([
                     ft.Row([
                         ft.Container(bgcolor=m['accent'],border_radius=9,padding=ft.Padding(11,6,11,6),
@@ -7456,29 +7445,13 @@ def main(page: ft.Page):
                     ft.Text(m['title'],size=16,weight=ft.FontWeight.BOLD,color=TEXT_MAIN,text_align=ft.TextAlign.CENTER),
                     ft.Text(m['desc'],size=11,color=TEXT_MUTED,text_align=ft.TextAlign.CENTER),
                     ft.Container(height=4),
-                    (
-                        ft.TextButton(
-                            content=ft.Row([
-                                ft.Icon(ft.Icons.DOWNLOAD,color='#FFFFFF',size=20),
-                                ft.Text('DESCARGAR',color='#FFFFFF',weight=ft.FontWeight.BOLD,size=13),
-                                ft.Icon(ft.Icons.CHEVRON_RIGHT,color='#FFFFFF',size=20),
-                            ],alignment=ft.MainAxisAlignment.CENTER,spacing=8),
-                            url=sqlite_backup_url(),
-                            style=ft.ButtonStyle(
-                                bgcolor=m['accent'],
-                                shape=ft.RoundedRectangleBorder(radius=9),
-                                padding=10,
-                            ),
-                        )
-                        if key=='83' else
-                        ft.Container(
-                            bgcolor=m['accent'],border_radius=9,padding=10,alignment=ft.Alignment.CENTER,
-                            content=ft.Row([
-                                ft.Icon(ft.Icons.LOGIN,color='#FFFFFF',size=20),
-                                ft.Text('INGRESAR',color='#FFFFFF',weight=ft.FontWeight.BOLD,size=13),
-                                ft.Icon(ft.Icons.CHEVRON_RIGHT,color='#FFFFFF',size=20),
-                            ],alignment=ft.MainAxisAlignment.CENTER,spacing=8)
-                        )
+                    ft.Container(
+                        bgcolor=m['accent'],border_radius=9,padding=10,alignment=ft.Alignment.CENTER,
+                        content=ft.Row([
+                            ft.Icon(ft.Icons.LOGIN,color='#FFFFFF',size=20),
+                            ft.Text('INGRESAR',color='#FFFFFF',weight=ft.FontWeight.BOLD,size=13),
+                            ft.Icon(ft.Icons.CHEVRON_RIGHT,color='#FFFFFF',size=20),
+                        ],alignment=ft.MainAxisAlignment.CENTER,spacing=8)
                     ),
                 ],spacing=12,horizontal_alignment=ft.CrossAxisAlignment.CENTER)
             )
@@ -7495,8 +7468,8 @@ def main(page: ft.Page):
                     ],spacing=2),
                 ],spacing=12),
                 ft.Row([
-                    admin_access_card('81'),admin_access_card('82'),admin_access_card('83'),
-                    ft.Container(width=292,height=260)
+                    admin_access_card('81'),admin_access_card('82'),
+                    ft.Container(width=292,height=260),ft.Container(width=292,height=260)
                 ],spacing=12),
             ],spacing=16),padding=16),
         ],scroll=ft.ScrollMode.AUTO,spacing=16)
