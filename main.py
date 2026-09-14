@@ -2608,9 +2608,9 @@ def main(page: ft.Page):
             ti.disabled=False
             to.disabled=False
 
-            # INSP/INSC y BAJA conservan el equipo y la posición actuales.
-            # En BAJA estos campos son solo referencia y no pueden modificarse.
-            locked=ec in ('INSP','INSC','BAJA')
+            # INSP/INSC, BAJA y DINS conservan el equipo y la posición actuales.
+            # En BAJA y DINS estos campos son solo referencia y no pueden modificarse.
+            locked=ec in ('INSP','INSC','BAJA','DINS')
             equip.disabled=locked
             pos.disabled=locked
             if locked and r:
@@ -2738,10 +2738,10 @@ def main(page: ft.Page):
             if event.value == 'INST' and (not equip.value or not (pos.value or '').strip()):
                 return False
 
-            # BAJA: el remanente no puede ser menor al último valor existente.
-            # Como la regla general tampoco permite aumentarlo, en BAJA el RTD
+            # BAJA/DINS: el remanente no puede ser menor al último valor existente.
+            # Como la regla general tampoco permite aumentarlo, en BAJA y DINS el RTD
             # queda necesariamente igual al último RTD válido registrado.
-            if event.value == 'BAJA':
+            if event.value in ('BAJA','DINS'):
                 if lim and lim['min_ti'] is not None:
                     if new_ti is None or float(new_ti) < float(lim['min_ti']):
                         return False
@@ -2866,10 +2866,10 @@ def main(page: ft.Page):
                         True
                     )
 
-            # Regla específica BAJA: no se permite reducir el remanente respecto
+            # Regla específica BAJA/DINS: no se permite reducir el remanente respecto
             # del último RTD válido. El botón Guardar ya queda deshabilitado por
             # form_is_valid(); esta validación adicional evita cualquier bypass.
-            if ec == 'BAJA':
+            if ec in ('BAJA','DINS'):
                 if lim and lim['min_ti'] is not None:
                     if new_ti is None or float(new_ti) < float(lim['min_ti']):
                         return snack(
@@ -2911,8 +2911,8 @@ def main(page: ft.Page):
                 event_pos=str(r['position'])
                 equip.value=str(eid)
                 pos.value=event_pos
-            elif ec == 'BAJA':
-                # BAJA conserva obligatoriamente el equipo y la posición actuales.
+            elif ec in ('BAJA','DINS'):
+                # BAJA y DINS conservan obligatoriamente el equipo y la posición actuales.
                 eid=int(r['equipment_id']) if r['equipment_id'] is not None else None
                 event_pos=str(r['position'] or '')
                 equip.value=str(eid) if eid is not None else None
