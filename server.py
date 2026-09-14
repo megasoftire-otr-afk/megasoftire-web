@@ -7,8 +7,9 @@ from pathlib import Path
 from typing import Optional
 
 import flet.fastapi as flet_fastapi
-from fastapi import Depends, Header, HTTPException, Query, Response
+from fastapi import Depends, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 import main as megasoft_main
@@ -223,10 +224,15 @@ def sqlite_backup(key: str = Query(default='')):
 
     stamp = dt.datetime.now().strftime('%Y-%m-%d_%H%M%S')
     filename = f'megasoftire_backup_{stamp}.db'
-    return Response(
-        content=data,
-        media_type='application/vnd.sqlite3',
-        headers={'Content-Disposition': f'attachment; filename="{filename}"'},
+    import io
+    return StreamingResponse(
+        io.BytesIO(data),
+        media_type='application/octet-stream',
+        headers={
+            'Content-Disposition': f'attachment; filename="{filename}"',
+            'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
+            'Pragma': 'no-cache',
+        },
     )
 
 

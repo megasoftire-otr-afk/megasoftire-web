@@ -7410,10 +7410,10 @@ def main(page: ft.Page):
         ],scroll=ft.ScrollMode.AUTO,spacing=16)
         page.update()
 
-    def download_sqlite_backup(e=None):
+    def sqlite_backup_url():
         base_url = os.environ.get('MEGASOFTIRE_PUBLIC_URL', 'https://megasoftire-web.onrender.com').rstrip('/')
         backup_key = os.environ.get('MEGASOFTIRE_BACKUP_KEY', 'MegaSoftireBackup2026')
-        page.launch_url(f'{base_url}/api/admin/sqlite-backup?key={backup_key}')
+        return f'{base_url}/api/admin/sqlite-backup?key={backup_key}'
 
     def administration_view():
         """8. Administración - menú visual para equipos y neumáticos."""
@@ -7434,16 +7434,17 @@ def main(page: ft.Page):
                 'num':'8.3','icon':ft.Icons.DOWNLOAD,'accent':'#8A5A00','soft':'#FFF8E8',
                 'title':'RESPALDO SQLITE',
                 'desc':'Descargar una copia de seguridad de la base de datos activa de MegaSoftire.',
-                'action':download_sqlite_backup,
+                'action':None,
             },
         }
 
         def admin_access_card(key):
             m=admin_meta[key]
+            card_click = None if key=='83' else (lambda e,k=key: admin_meta[k]['action']())
             return ft.Container(
                 width=292,height=260,bgcolor=m['soft'],
                 border=ft.Border.all(1,m['accent']+'55'),border_radius=14,padding=18,
-                on_click=lambda e,k=key: admin_meta[k]['action'](),ink=True,
+                on_click=card_click,ink=(key!='83'),
                 content=ft.Column([
                     ft.Row([
                         ft.Container(bgcolor=m['accent'],border_radius=9,padding=ft.Padding(11,6,11,6),
@@ -7455,13 +7456,29 @@ def main(page: ft.Page):
                     ft.Text(m['title'],size=16,weight=ft.FontWeight.BOLD,color=TEXT_MAIN,text_align=ft.TextAlign.CENTER),
                     ft.Text(m['desc'],size=11,color=TEXT_MUTED,text_align=ft.TextAlign.CENTER),
                     ft.Container(height=4),
-                    ft.Container(
-                        bgcolor=m['accent'],border_radius=9,padding=10,alignment=ft.Alignment.CENTER,
-                        content=ft.Row([
-                            ft.Icon(ft.Icons.DOWNLOAD if key=='83' else ft.Icons.LOGIN,color='#FFFFFF',size=20),
-                            ft.Text('DESCARGAR' if key=='83' else 'INGRESAR',color='#FFFFFF',weight=ft.FontWeight.BOLD,size=13),
-                            ft.Icon(ft.Icons.CHEVRON_RIGHT,color='#FFFFFF',size=20),
-                        ],alignment=ft.MainAxisAlignment.CENTER,spacing=8)
+                    (
+                        ft.TextButton(
+                            content=ft.Row([
+                                ft.Icon(ft.Icons.DOWNLOAD,color='#FFFFFF',size=20),
+                                ft.Text('DESCARGAR',color='#FFFFFF',weight=ft.FontWeight.BOLD,size=13),
+                                ft.Icon(ft.Icons.CHEVRON_RIGHT,color='#FFFFFF',size=20),
+                            ],alignment=ft.MainAxisAlignment.CENTER,spacing=8),
+                            url=sqlite_backup_url(),
+                            style=ft.ButtonStyle(
+                                bgcolor=m['accent'],
+                                shape=ft.RoundedRectangleBorder(radius=9),
+                                padding=10,
+                            ),
+                        )
+                        if key=='83' else
+                        ft.Container(
+                            bgcolor=m['accent'],border_radius=9,padding=10,alignment=ft.Alignment.CENTER,
+                            content=ft.Row([
+                                ft.Icon(ft.Icons.LOGIN,color='#FFFFFF',size=20),
+                                ft.Text('INGRESAR',color='#FFFFFF',weight=ft.FontWeight.BOLD,size=13),
+                                ft.Icon(ft.Icons.CHEVRON_RIGHT,color='#FFFFFF',size=20),
+                            ],alignment=ft.MainAxisAlignment.CENTER,spacing=8)
+                        )
                     ),
                 ],spacing=12,horizontal_alignment=ft.CrossAxisAlignment.CENTER)
             )
