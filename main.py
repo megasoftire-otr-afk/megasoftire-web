@@ -2608,7 +2608,9 @@ def main(page: ft.Page):
             ti.disabled=False
             to.disabled=False
 
-            locked=ec in ('INSP','INSC')
+            # INSP/INSC y BAJA conservan el equipo y la posición actuales.
+            # En BAJA estos campos son solo referencia y no pueden modificarse.
+            locked=ec in ('INSP','INSC','BAJA')
             equip.disabled=locked
             pos.disabled=locked
             if locked and r:
@@ -2735,6 +2737,17 @@ def main(page: ft.Page):
                     return False
             if event.value == 'INST' and (not equip.value or not (pos.value or '').strip()):
                 return False
+
+            # BAJA: el remanente no puede ser menor al último valor existente.
+            # Como la regla general tampoco permite aumentarlo, en BAJA el RTD
+            # queda necesariamente igual al último RTD válido registrado.
+            if event.value == 'BAJA':
+                if lim and lim['min_ti'] is not None:
+                    if new_ti is None or float(new_ti) < float(lim['min_ti']):
+                        return False
+                if lim and lim['min_to'] is not None:
+                    if new_to is None or float(new_to) < float(lim['min_to']):
+                        return False
             return True
 
         def update_save_state(e=None):
@@ -2853,6 +2866,23 @@ def main(page: ft.Page):
                         True
                     )
 
+            # Regla específica BAJA: no se permite reducir el remanente respecto
+            # del último RTD válido. El botón Guardar ya queda deshabilitado por
+            # form_is_valid(); esta validación adicional evita cualquier bypass.
+            if ec == 'BAJA':
+                if lim and lim['min_ti'] is not None:
+                    if new_ti is None or float(new_ti) < float(lim['min_ti']):
+                        return snack(
+                            f'Remanente interior inválido: {fmt(new_ti)} mm no puede ser menor que el existente {fmt(lim["min_ti"])} mm.',
+                            True
+                        )
+                if lim and lim['min_to'] is not None:
+                    if new_to is None or float(new_to) < float(lim['min_to']):
+                        return snack(
+                            f'Remanente exterior inválido: {fmt(new_to)} mm no puede ser menor que el existente {fmt(lim["min_to"])} mm.',
+                            True
+                        )
+
             raw_date=(date.value or '').strip()
             event_date=raw_date
             date_ok=False
@@ -2880,6 +2910,12 @@ def main(page: ft.Page):
                 eid=int(r['equipment_id'])
                 event_pos=str(r['position'])
                 equip.value=str(eid)
+                pos.value=event_pos
+            elif ec == 'BAJA':
+                # BAJA conserva obligatoriamente el equipo y la posición actuales.
+                eid=int(r['equipment_id']) if r['equipment_id'] is not None else None
+                event_pos=str(r['position'] or '')
+                equip.value=str(eid) if eid is not None else None
                 pos.value=event_pos
             else:
                 eid=int(equip.value) if equip.value else None
