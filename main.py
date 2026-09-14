@@ -2608,6 +2608,14 @@ def main(page: ft.Page):
             ti.disabled=False
             to.disabled=False
 
+            # MOTIVO: se utiliza únicamente para el evento BAJA.
+            # En INST, INSP, INSC, ROT, INVE, DINS y REPA permanece bloqueado.
+            reason.disabled = ec != 'BAJA'
+            if ec != 'BAJA':
+                # Evita que un motivo escrito en BAJA quede arrastrado si el usuario
+                # cambia luego a otro tipo de evento antes de guardar.
+                reason.value = ''
+
             # INSP/INSC, BAJA y DINS conservan el equipo y la posición actuales.
             # En BAJA y DINS estos campos son solo referencia y no pueden modificarse.
             locked=ec in ('INSP','INSC','BAJA','DINS')
@@ -2930,13 +2938,17 @@ def main(page: ft.Page):
             condition=(cond.value or 'FRIO').strip().upper().replace('Í','I')
             condition='CALIENTE' if condition.startswith('CAL') else 'FRIO'
 
+            # Por seguridad, solo BAJA puede grabar un motivo.
+            # Aunque otro evento intentara llegar aquí con un valor residual, se descarta.
+            reason_for_db=(reason.value or '').strip() if ec=='BAJA' else ''
+
             execute(
                 '''INSERT INTO occurrences(
                        tire_id,event_code,event_date,equipment_id,position,meter,
                        tread_inner,tread_outer,pressure,pressure_condition,reason,location,notes
                    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)''',
                 (tid,ec,event_date,eid,event_pos,new_meter,new_ti,new_to,
-                 num(press.value),condition,reason.value,loc.value,notes.value)
+                 num(press.value),condition,reason_for_db,loc.value,notes.value)
             )
 
             if ec=='INST':
