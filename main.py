@@ -2446,7 +2446,31 @@ def main(page: ft.Page):
             label='Cond.', width=125, value='FRIO', dense=True, bgcolor='#FFFFFF',
             options=[ft.dropdown.Option('FRIO','FRIO'), ft.dropdown.Option('CALIENTE','CALIENTE')]
         )
-        reason=ft.TextField(label='Motivo',width=260,dense=True,bgcolor='#FFFFFF')
+        BAJA_REASONS = [
+            ('GAST','Desgaste regular'),
+            ('CORL','Corte lateral'),
+            ('CORB','Corte en banda'),
+            ('SEPA','Separación banda'),
+            ('PSIB','Baja presión'),
+            ('RTEQ','Retiro de equipo'),
+            ('EXPL','Exposición de lona / alambre'),
+            ('REEN','Reencauche'),
+            ('DIB','Daño irregular'),
+            ('CGH','Corte / golpe hombro'),
+            ('DTB','Daño talón'),
+            ('IRB','Irregularidad banda'),
+            ('IBR','Impacto banda rodamiento'),
+        ]
+        REPA_REASONS = [
+            ('ARO','Aro'),
+            ('PERF','Perforación'),
+            ('CORB','Corte banda'),
+            ('CORL','Corte lateral'),
+            ('VALV','Válvula'),
+            ('ORIN','O-ring'),
+            ('OTRO','Otro'),
+        ]
+        reason=ft.Dropdown(label='Motivo',width=260,dense=True,bgcolor='#FFFFFF',options=[])
         loc=ft.TextField(label='Lugar',width=260,dense=True,bgcolor='#FFFFFF')
         notes=ft.TextField(label='Observaciones',multiline=True,min_lines=1,max_lines=2,width=260,dense=True,bgcolor='#FFFFFF')
         ref=ft.Text('',size=11,color=TEXT_MUTED)
@@ -2480,7 +2504,7 @@ def main(page: ft.Page):
             except Exception:
                 pass
 
-        for ctrl in [date,pos,meter,ti,to,press,reason,loc,notes]:
+        for ctrl in [date,pos,meter,ti,to,press,loc,notes]:
             ctrl.on_focus=select_all_on_focus
 
         def current_tire():
@@ -2611,10 +2635,19 @@ def main(page: ft.Page):
             # MOTIVO: se utiliza únicamente en REPA y BAJA.
             # En INST, INSP, INSC, ROT, INVE y DINS permanece bloqueado.
             reason.disabled = ec not in ('REPA','BAJA')
-            if ec not in ('REPA','BAJA'):
+            if ec == 'BAJA':
+                reason.options=[ft.dropdown.Option(k, f'{k} - {v}') for k,v in BAJA_REASONS]
+                if reason.value not in {k for k,_ in BAJA_REASONS}:
+                    reason.value=None
+            elif ec == 'REPA':
+                reason.options=[ft.dropdown.Option(k, f'{k} - {v}') for k,v in REPA_REASONS]
+                if reason.value not in {k for k,_ in REPA_REASONS}:
+                    reason.value=None
+            else:
                 # Evita arrastrar un motivo si el usuario cambia a un evento
                 # donde el campo Motivo no corresponde.
-                reason.value = ''
+                reason.options=[]
+                reason.value=None
 
             # INSP/INSC, BAJA y DINS conservan el equipo y la posición actuales.
             # En BAJA y DINS estos campos son solo referencia y no pueden modificarse.
@@ -2720,6 +2753,9 @@ def main(page: ft.Page):
             else:
                 allowed_events=set()
             if event.value not in allowed_events:
+                return False
+            # REPA y BAJA requieren seleccionar un motivo del catálogo correspondiente.
+            if event.value in ('REPA','BAJA') and not (reason.value or '').strip():
                 return False
 
             tid=int(tire.value)
@@ -2866,6 +2902,11 @@ def main(page: ft.Page):
                 if ec == 'REPA' and installed:
                     return snack('REPA no está permitido para neumáticos instalados. Primero debe pasar a STAND-BY.', True)
                 return snack(f'El evento {ec} no está permitido para el estado actual del neumático.', True)
+            if ec in ('REPA','BAJA') and not (reason.value or '').strip():
+                return snack(f'Seleccione un motivo para {ec}.', True)
+            valid_reason_codes = ({k for k,_ in REPA_REASONS} if ec == 'REPA' else {k for k,_ in BAJA_REASONS}) if ec in ('REPA','BAJA') else set()
+            if ec in ('REPA','BAJA') and reason.value not in valid_reason_codes:
+                return snack(f'El motivo seleccionado no es válido para {ec}.', True)
 
             lim=historical_limits(tid)
             new_meter=num(meter.value)
