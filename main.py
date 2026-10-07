@@ -4,6 +4,7 @@ import os
 import hashlib
 import base64
 import textwrap
+import io
 import flet as ft
 from database import init_db, query, execute, authenticate
 
@@ -30,6 +31,77 @@ NAV_ACCENT = '#1E5AA8'
 CARD_BG = '#FFFFFF'
 TEXT_MAIN = '#1B263B'
 TEXT_MUTED = '#66788A'
+
+# ============================================================
+# ETAPA 1 - IDENTIFICACIÓN DE UNIDAD DE RENDIMIENTO
+# El EQUIPO define si la operación se controla por HORAS o KM.
+# No modifica todavía fórmulas, KPI ni reportes.
+# ============================================================
+PERFORMANCE_HOURS = 'HORAS'
+PERFORMANCE_KILOMETERS = 'KILÓMETROS'
+
+
+def normalize_performance_type(value):
+    raw = str(value or '').strip().upper()
+    if raw in ('HORA', 'HORAS', 'HR', 'H'):
+        return PERFORMANCE_HOURS
+    if raw in ('KM', 'KMS', 'KILOMETRO', 'KILOMETROS', 'KILÓMETRO', 'KILÓMETROS'):
+        return PERFORMANCE_KILOMETERS
+    return None
+
+
+def get_equipment_performance_type(equipment_id, operation_id=None):
+    """Obtiene HORAS/KILÓMETROS del equipo sin romper la aplicación si aún
+    no existe el dato en PostgreSQL."""
+    if equipment_id in (None, '', 0, '0'):
+        return None
+    try:
+        if operation_id is None:
+            rows = query(
+                'SELECT performance_type FROM equipment WHERE id=?',
+                (int(equipment_id),)
+            )
+        else:
+            rows = query(
+                'SELECT performance_type FROM equipment '
+                'WHERE id=? AND operation_id=?',
+                (int(equipment_id), int(operation_id))
+            )
+        if not rows:
+            return None
+        return normalize_performance_type(rows[0]['performance_type'])
+    except Exception:
+        return None
+
+
+def performance_measure_label(performance_type):
+    if performance_type == PERFORMANCE_HOURS:
+        return 'Horómetro'
+    if performance_type == PERFORMANCE_KILOMETERS:
+        return 'Odómetro'
+    return 'Medidor'
+
+
+def performance_unit_label(performance_type):
+    if performance_type == PERFORMANCE_HOURS:
+        return 'HORAS'
+    if performance_type == PERFORMANCE_KILOMETERS:
+        return 'KILÓMETROS'
+    return 'NO DEFINIDO'
+
+def performance_fields_state(performance_type):
+    """Retorna qué medidor debe utilizar el equipo."""
+    if performance_type == PERFORMANCE_HOURS:
+        return 'HOROMETRO'
+    if performance_type == PERFORMANCE_KILOMETERS:
+        return 'ODOMETRO'
+    return None
+
+
+# V05 MULTITALLER - capa de integración sobre la Web original aprobada.
+# Esta versión se usa SOLO en megasoftire-multitaller-prueba.
+ACTIVE_OPERATION_ID = 1  # operación inicial; la selección de sesión se gestiona en main()
+
 
 
 MASTER_TIRE_UPDATES_20260902 = [
@@ -76,6 +148,72 @@ NFU_BAJAS_20260908 = [('1308', '10241Y10617', '2025-10-02', 3850.0, 'GY', '18.00
 
 def main(page: ft.Page):
     init_db()
+
+    # V05: estructura multitaller sin alterar el diseño original.
+    execute('''CREATE TABLE IF NOT EXISTS operations(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        code TEXT NOT NULL UNIQUE,
+        name TEXT NOT NULL,
+        client TEXT,
+        location TEXT,
+        active INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    )''')
+    for _table in ('users','equipment','tires','occurrences'):
+        _cols = {r['name'] for r in query(f'PRAGMA table_info({_table})')}
+        if 'operation_id' not in _cols:
+            execute(f'ALTER TABLE {_table} ADD COLUMN operation_id INTEGER')
+    # VXX: Tapa Válvula es un dato propio de cada evento. Se agrega de forma
+    # retrocompatible y se inicializa desde Observaciones para no perder la lógica histórica.
+    _occ_cols = {r['name'] for r in query("PRAGMA table_info(occurrences)")}
+    if 'valve_cap' not in _occ_cols:
+        execute('ALTER TABLE occurrences ADD COLUMN valve_cap TEXT')
+    # Migración histórica: solo completa valores vacíos. Nunca sobreescribe
+    # una selección SI/NO que el usuario ya haya registrado explícitamente.
+    # Se hace en Python para evitar que el adaptador de base de datos
+    # interprete los caracteres '%' del LIKE como marcadores de formato.
+    _occ_rows = query("SELECT id, notes, valve_cap FROM occurrences")
+    for _occ in _occ_rows:
+        _current_cap = str(_occ['valve_cap'] or '').strip().upper()
+        if _current_cap:
+            continue
+        _note = str(_occ['notes'] or '').upper()
+        _new_cap = 'SI' if ('TAPA' in _note or 'VALVULA' in _note or 'VÁLVULA' in _note) else 'NO'
+        execute("UPDATE occurrences SET valve_cap=? WHERE id=?", (_new_cap, _occ['id']))
+    execute("INSERT OR IGNORE INTO operations(id,code,name,client,location,active) VALUES(1,'CL','CERRO LINDO','NEXA RESOURCES PERU S.A.A.','Cerro Lindo',1)")
+    for _table in ('users','equipment','tires','occurrences'):
+        execute(f'UPDATE {_table} SET operation_id=1 WHERE operation_id IS NULL')
+
+    # V06: operación activa por sesión. Solo el Administrador General puede cambiarla.
+    # REGLA MAESTRA MULTITALLER:
+    #   - Cada registro nuevo/consultado/modificado debe pertenecer a la operación activa.
+    #   - Un usuario de operación queda SIEMPRE amarrado al operation_id de su usuario.
+    #   - El Administrador General puede cambiar la operación desde el Panel principal.
+    #   - La carga masiva Excel NO decide el taller: hereda el operation_id activo.
+    operation_state = {'id': 1}
+
+    def _is_general_admin():
+        role = str((session.get('user') or {}).get('role') or '').upper()
+        return role in ('ADMIN', 'ADMINISTRADOR GENERAL', 'SUPERADMIN')
+
+    def active_operation_id():
+        user = session.get('user') or {}
+        if user and not _is_general_admin():
+            try:
+                assigned = int(user.get('operation_id') or 0)
+            except (TypeError, ValueError):
+                assigned = 0
+            if assigned:
+                return assigned
+        return int(operation_state.get('id') or 1)
+
+    def active_operation_row():
+        op_id = active_operation_id()
+        rows = query('SELECT id,code,name,client,location FROM operations WHERE id=? AND active=1', (op_id,))
+        if rows:
+            return rows[0]
+        # Solo como respaldo de migración: Cerro Lindo es la operación inicial.
+        return {'id':1,'code':'CL','name':'CERRO LINDO','client':'NEXA RESOURCES PERU S.A.A.','location':'Cerro Lindo'}
 
     # Campos maestros necesarios para la consulta operativa y el registro maestro.
     startup_cols = {r['name'] for r in query("PRAGMA table_info(tires)")}
@@ -126,7 +264,7 @@ def main(page: ft.Page):
                     projected_life=?,
                     construction_type=?,
                     tire_condition=?
-                WHERE code=?
+                WHERE code=? AND operation_id=1
                 ''',
                 (
                     serial, entry_date, cost_usd, brand, size, design, tra,
@@ -144,24 +282,43 @@ def main(page: ft.Page):
     if not query('SELECT value FROM app_meta WHERE key=?',(nfu_migration_key,)):
         for rec in NFU_BAJAS_20260908:
             (code,serial,entry_date,cost,brand,size,design,tra,supplier,pressure,new_ext,new_int,retirement,construction,condition,baja_date,equipment_label,position,baja_meter,rtd_ext,rtd_int,reason,location,notes,install_meter)=rec
-            ex=query('SELECT id FROM tires WHERE code=?',(code,))
+            ex=query('SELECT id FROM tires WHERE code=? AND operation_id=1',(code,))
             if ex:
                 tid=int(ex[0]['id'])
-                execute("UPDATE tires SET serial=?,entry_date=?,cost_usd=?,brand=?,size=?,design=?,compound=?,supplier=?,recommended_pressure=?,new_tread=?,new_tread_outer=?,new_tread_inner=?,retirement_tread=?,construction_type=?,tire_condition=?,installation_meter=?,tread_outer=?,tread_inner=?,current_meter=?,status='BAJA',equipment_id=NULL,position=NULL WHERE id=?",(serial,entry_date,cost,brand,size,design,tra,supplier,pressure,max(new_ext,new_int),new_ext,new_int,retirement,construction,condition,install_meter,rtd_ext,rtd_int,baja_meter,tid))
+                execute("UPDATE tires SET serial=?,entry_date=?,cost_usd=?,brand=?,size=?,design=?,compound=?,supplier=?,recommended_pressure=?,new_tread=?,new_tread_outer=?,new_tread_inner=?,retirement_tread=?,construction_type=?,tire_condition=?,installation_meter=?,tread_outer=?,tread_inner=?,current_meter=?,status='BAJA',equipment_id=NULL,position=NULL,operation_id=1 WHERE id=?",(serial,entry_date,cost,brand,size,design,tra,supplier,pressure,max(new_ext,new_int),new_ext,new_int,retirement,construction,condition,install_meter,rtd_ext,rtd_int,baja_meter,tid))
             else:
-                execute("INSERT INTO tires(code,serial,brand,size,design,new_tread,recommended_pressure,tread_inner,tread_outer,status,current_meter,entry_date,cost_usd,compound,supplier,new_tread_outer,new_tread_inner,construction_type,tire_condition,retirement_tread,installation_meter) VALUES(?,?,?,?,?,?,?,?,?,'BAJA',?,?,?,?,?,?,?,?,?,?,?)",(code,serial,brand,size,design,max(new_ext,new_int),pressure,rtd_int,rtd_ext,baja_meter,entry_date,cost,tra,supplier,new_ext,new_int,construction,condition,retirement,install_meter))
-                tid=int(query('SELECT id FROM tires WHERE code=?',(code,))[0]['id'])
+                execute("INSERT INTO tires(code,serial,brand,size,design,new_tread,recommended_pressure,tread_inner,tread_outer,status,current_meter,entry_date,cost_usd,compound,supplier,new_tread_outer,new_tread_inner,construction_type,tire_condition,retirement_tread,installation_meter,operation_id) VALUES(?,?,?,?,?,?,?,?,?,'BAJA',?,?,?,?,?,?,?,?,?,?,?,1)",(code,serial,brand,size,design,max(new_ext,new_int),pressure,rtd_int,rtd_ext,baja_meter,entry_date,cost,tra,supplier,new_ext,new_int,construction,condition,retirement,install_meter))
+                tid=int(query('SELECT id FROM tires WHERE code=? AND operation_id=1',(code,))[0]['id'])
             digits=''.join(ch for ch in str(equipment_label) if ch.isdigit())
             eq=None
             for cand in [equipment_label,f'SC-{digits}',f'SC {digits}',f'CAT-{digits}']:
-                q=query('SELECT id FROM equipment WHERE UPPER(TRIM(code))=UPPER(TRIM(?)) LIMIT 1',(cand,))
+                q=query('SELECT id FROM equipment WHERE UPPER(TRIM(code))=UPPER(TRIM(?)) AND operation_id=1 LIMIT 1',(cand,))
                 if q: eq=int(q[0]['id']); break
-            ob=query("SELECT id FROM occurrences WHERE tire_id=? AND event_code='BAJA' ORDER BY id DESC LIMIT 1",(tid,))
+            ob=query("SELECT id FROM occurrences WHERE tire_id=? AND operation_id=1 AND event_code='BAJA' ORDER BY id DESC LIMIT 1",(tid,))
             if ob:
-                execute('UPDATE occurrences SET event_date=?,equipment_id=?,position=?,meter=?,tread_outer=?,tread_inner=?,reason=?,location=?,notes=? WHERE id=?',(baja_date,eq,position,baja_meter,rtd_ext,rtd_int,reason,location,notes,int(ob[0]['id'])))
+                execute('UPDATE occurrences SET event_date=?,equipment_id=?,position=?,meter=?,tread_outer=?,tread_inner=?,reason=?,location=?,notes=?,operation_id=1 WHERE id=?',(baja_date,eq,position,baja_meter,rtd_ext,rtd_int,reason,location,notes,int(ob[0]['id'])))
             else:
-                execute("INSERT INTO occurrences(tire_id,event_code,event_date,equipment_id,position,meter,tread_inner,tread_outer,pressure,pressure_condition,reason,location,notes) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",(tid,'BAJA',baja_date,eq,position,baja_meter,rtd_int,rtd_ext,None,'FRIO',reason,location,notes))
+                execute("INSERT INTO occurrences(tire_id,event_code,event_date,equipment_id,position,meter,tread_inner,tread_outer,pressure,pressure_condition,reason,location,notes,operation_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,1)",(tid,'BAJA',baja_date,eq,position,baja_meter,rtd_int,rtd_ext,None,'FRIO',reason,location,notes))
         execute('INSERT OR REPLACE INTO app_meta(key,value) VALUES(?,?)',(nfu_migration_key,'9 NFU/BAJA - 08/09/2026'))
+
+    # V19 · reparación de pertenencia histórica de CERRO LINDO.
+    # Las 9 NFU/BAJA son parte del inventario original NEXA/Cerro Lindo.
+    # Versiones previas podían haberlas creado después del UPDATE inicial de operation_id.
+    _nfu_codes = tuple(str(r[0]) for r in NFU_BAJAS_20260908)
+    if _nfu_codes:
+        _marks = ','.join('?' for _ in _nfu_codes)
+        execute(f"UPDATE tires SET operation_id=1 WHERE code IN ({_marks}) AND operation_id IS NULL", _nfu_codes)
+        _nfu_ids = query(f"SELECT id FROM tires WHERE code IN ({_marks}) AND operation_id=1", _nfu_codes)
+        if _nfu_ids:
+            _ids = tuple(int(r['id']) for r in _nfu_ids)
+            _imarks = ','.join('?' for _ in _ids)
+            execute(f"UPDATE occurrences SET operation_id=1 WHERE tire_id IN ({_imarks}) AND operation_id IS NULL", _ids)
+
+    # Completa únicamente ocurrencias históricas huérfanas cuyos neumáticos ya pertenecen
+    # inequívocamente a CERRO LINDO. No reasigna registros de otros talleres.
+    execute("""UPDATE occurrences SET operation_id=1
+               WHERE operation_id IS NULL
+                 AND tire_id IN (SELECT id FROM tires WHERE operation_id=1)""")
 
     page.title = 'MegaSoftire Web 2026'
     page.padding = 0
@@ -212,7 +369,7 @@ def main(page: ft.Page):
                 pass
         return s
 
-    def card(content, padding=18, width=None):
+    def card(content, padding=18, width=None, height=None):
         return ft.Container(
             content=content,
             bgcolor=CARD_BG,
@@ -220,6 +377,7 @@ def main(page: ft.Page):
             border_radius=14,
             padding=padding,
             width=width,
+            height=height,
             shadow=ft.BoxShadow(blur_radius=12, color='#12000000', offset=ft.Offset(0, 3)),
         )
 
@@ -250,30 +408,215 @@ def main(page: ft.Page):
         ], spacing=2)
 
     def dashboard():
-        def count(where='1=1', params=()):
-            return query(f'SELECT COUNT(*) n FROM tires WHERE {where}', params)[0]['n']
+        op_id = active_operation_id()
+        op = active_operation_row()
 
-        total = count()
+        def count(where='1=1', params=()):
+            return query(f'SELECT COUNT(*) n FROM tires WHERE operation_id=? AND ({where})', (op_id, *params))[0]['n']
+
+        # Contadores del Panel por operación activa.
+        # BAJA se toma también del evento BAJA para conservar los históricos migrados
+        # cuyo registro maestro pudo quedar sin operation_id durante versiones anteriores.
         service = count("status='SERVICIO'")
         standby = count("status='STAND-BY'")
         repair = count("status='REPARACIÓN'")
-        baja = count("status='BAJA'")
-        equip = query('SELECT COUNT(*) n FROM equipment WHERE active=1')[0]['n']
-        recent = query('''
-            SELECT o.event_date,o.event_code,t.code tire_code,e.code equipment_code,o.position
-            FROM occurrences o
-            JOIN tires t ON t.id=o.tire_id
-            LEFT JOIN equipment e ON e.id=o.equipment_id
-            ORDER BY o.event_date DESC,o.id DESC LIMIT 8
-        ''')
+        baja = query("""SELECT COUNT(DISTINCT t.id) n
+                        FROM tires t
+                        WHERE t.status='BAJA'
+                          AND (t.operation_id=? OR EXISTS (
+                              SELECT 1 FROM occurrences o
+                              WHERE o.tire_id=t.id AND o.operation_id=? AND o.event_code='BAJA'
+                          ))""", (op_id, op_id))[0]['n']
+        total = query("""SELECT COUNT(DISTINCT t.id) n
+                         FROM tires t
+                         WHERE t.operation_id=?
+                            OR EXISTS (
+                                SELECT 1 FROM occurrences o
+                                WHERE o.tire_id=t.id AND o.operation_id=? AND o.event_code='BAJA'
+                            )""", (op_id, op_id))[0]['n']
+        equip = query('SELECT COUNT(*) n FROM equipment WHERE active=1 AND operation_id=?', (op_id,))[0]['n']
 
-        recent_table = ft.DataTable(
-            columns=[ft.DataColumn(ft.Text(x)) for x in ['Fecha','Evento','Neumático','Equipo','Pos.']],
-            rows=[ft.DataRow(cells=[ft.DataCell(ft.Text(str(v or ''))) for v in [format_date(r['event_date']),r['event_code'],r['tire_code'],r['equipment_code'],r['position']]]) for r in recent]
+
+        # Selector visible únicamente en el Panel principal para Administrador General.
+        operations = query('SELECT id,name,client FROM operations WHERE active=1 ORDER BY name')
+        # V07: el valor real del selector es operation_id. El nombre es solo texto visible.
+        # Esto evita que Flet conserve visualmente la nueva opción mientras el estado interno
+        # todavía apunta a la operación anterior.
+        valid_operation_ids = {int(r['id']) for r in operations}
+        operation_selector = ft.Dropdown(
+            label='Operación activa',
+            value=str(op_id),
+            width=360,
+            options=[ft.DropdownOption(key=str(r['id']), text=str(r['name'])) for r in operations],
         )
 
+        def change_operation(e):
+            # Flet 1.0: Dropdown dispara on_select (no on_change).
+            # El valor seleccionado se obtiene de e.control.value.
+            raw = getattr(getattr(e, 'control', None), 'value', None)
+            try:
+                selected_id = int(str(raw))
+            except (TypeError, ValueError):
+                return
+            if selected_id not in valid_operation_ids:
+                return
+            if selected_id == active_operation_id():
+                return
+            operation_state['id'] = selected_id
+            # Reconstruye el Panel principal completo con el operation_id elegido.
+            # Las demás vistas toman active_operation_id() al abrirse, por lo que
+            # todo ingreso/consulta/movimiento queda inmediatamente en el taller seleccionado.
+            dashboard()
+
+        operation_selector.on_select = change_operation
+        admin_general = _is_general_admin()
+        selector_block = card(ft.Column([
+            ft.Row([
+                ft.Icon(ft.Icons.BUSINESS_OUTLINED, color=NAV_ACCENT, size=22),
+                ft.Text('SELECCIÓN DE OPERACIÓN', size=14, weight=ft.FontWeight.BOLD, color=TEXT_MAIN),
+            ], spacing=8),
+            ft.Text('Vista como Administrador General. Seleccione la operación que desea administrar.', size=12, color=TEXT_MUTED),
+            operation_selector,
+            ft.Text(f"Cliente: {op['client'] or '-'}", size=12, color=TEXT_MUTED),
+        ], spacing=8), width=560) if admin_general else ft.Container(height=0)
+
+
+        # V16: administración multitaller desde el Panel principal (solo Administrador General).
+        workshop_name = ft.TextField(label='Nombre del taller / operación', width=280)
+        workshop_code = ft.TextField(label='Código', width=150)
+        workshop_client = ft.TextField(label='Cliente', width=280)
+        workshop_location = ft.TextField(label='Ubicación', width=220)
+
+        def create_workshop(e):
+            name=(workshop_name.value or '').strip().upper()
+            code=(workshop_code.value or '').strip().upper()
+            client=(workshop_client.value or '').strip()
+            location=(workshop_location.value or '').strip()
+            if not name or not code:
+                snack('Ingrese código y nombre del taller.', True); return
+            if query('SELECT id FROM operations WHERE UPPER(code)=UPPER(?) OR UPPER(name)=UPPER(?) LIMIT 1',(code,name)):
+                snack('Ya existe una operación con ese código o nombre.', True); return
+            execute('INSERT INTO operations(code,name,client,location,active) VALUES(?,?,?,?,1)',(code,name,client,location))
+            snack(f'Taller {name} creado correctamente.')
+            dashboard()
+
+        op_options=[ft.DropdownOption(key=str(r['id']), text=str(r['name'])) for r in operations]
+        user_fullname=ft.TextField(label='Nombre completo', width=280)
+        user_username=ft.TextField(label='Usuario', width=200)
+        user_password=ft.TextField(label='Contraseña', password=True, can_reveal_password=True, width=220)
+        user_role=ft.Dropdown(label='Rol', value='USUARIO', width=250, options=[
+            ft.DropdownOption(key='ADMINISTRADOR DE OPERACION', text='Administrador de Operación'),
+            ft.DropdownOption(key='USUARIO', text='Usuario / Técnico'),
+        ])
+        user_operation=ft.Dropdown(label='Taller asignado', value=str(op_id), width=300, options=op_options)
+
+        def create_user(e):
+            fullname=(user_fullname.value or '').strip()
+            username=(user_username.value or '').strip()
+            password=user_password.value or ''
+            role=(user_role.value or 'USUARIO').strip().upper()
+            try: assigned_op=int(str(user_operation.value))
+            except Exception: assigned_op=0
+            if not fullname or not username or not password or not assigned_op:
+                snack('Complete nombre, usuario, contraseña, rol y taller.', True); return
+            if len(password) < 6:
+                snack('La contraseña debe tener al menos 6 caracteres.', True); return
+            if query('SELECT id FROM users WHERE LOWER(username)=LOWER(?) LIMIT 1',(username,)):
+                snack('Ese nombre de usuario ya existe.', True); return
+            if not query('SELECT id FROM operations WHERE id=? AND active=1',(assigned_op,)):
+                snack('Seleccione un taller activo.', True); return
+            pwd_hash=hashlib.sha256(password.encode('utf-8')).hexdigest()
+            execute('INSERT INTO users(username,password_hash,full_name,role,active,operation_id) VALUES(?,?,?,?,1,?)',
+                    (username,pwd_hash,fullname,role,assigned_op))
+            snack(f'Usuario {username} creado y asignado al taller.')
+            dashboard()
+
+        workshops_rows=query('SELECT id,code,name,client,location,active FROM operations WHERE active=1 ORDER BY name')
+        users_rows=query("""SELECT u.id,u.username,u.full_name,u.role,u.active,u.operation_id,o.name operation_name
+                           FROM users u LEFT JOIN operations o ON o.id=u.operation_id
+                           WHERE u.active=1 ORDER BY o.name,u.username""")
+
+        def close_admin_dialog(dlg=None):
+            page.pop_dialog(); page.update()
+
+        def edit_workshop(row):
+            f_code=ft.TextField(label='Código',value=str(row['code'] or ''),width=180)
+            f_name=ft.TextField(label='Taller / operación',value=str(row['name'] or ''),width=300)
+            f_client=ft.TextField(label='Cliente',value=str(row['client'] or ''),width=300)
+            f_location=ft.TextField(label='Ubicación',value=str(row['location'] or ''),width=250)
+            def save_edit(e=None):
+                code=(f_code.value or '').strip().upper(); name=(f_name.value or '').strip().upper()
+                if not code or not name: snack('Código y nombre son obligatorios.',True); return
+                if query('SELECT id FROM operations WHERE id<>? AND (UPPER(code)=UPPER(?) OR UPPER(name)=UPPER(?)) LIMIT 1',(row['id'],code,name)):
+                    snack('Ya existe otro taller con ese código o nombre.',True); return
+                execute('UPDATE operations SET code=?,name=?,client=?,location=? WHERE id=?',(code,name,(f_client.value or '').strip(),(f_location.value or '').strip(),row['id']))
+                page.pop_dialog(); snack('Taller actualizado correctamente.'); dashboard()
+            dlg=ft.AlertDialog(modal=True,title=ft.Text('Editar taller / operación'),content=ft.Column([f_code,f_name,f_client,f_location],tight=True,spacing=10),actions=[ft.TextButton('Cancelar',on_click=lambda e: close_admin_dialog(dlg)),ft.Button('Guardar',icon=ft.Icons.SAVE,on_click=save_edit)])
+            page.show_dialog(dlg); page.update()
+
+        def delete_workshop(row):
+            wid=int(row['id'])
+            if wid==1: snack('CERRO LINDO es la operación base y no puede eliminarse.',True); return
+            counts={t:query(f'SELECT COUNT(*) n FROM {t} WHERE operation_id=?',(wid,))[0]['n'] for t in ('equipment','tires','occurrences','users')}
+            has_data=bool(counts['equipment'] or counts['tires'] or counts['occurrences'])
+            msg=('Este taller contiene equipos, neumáticos o movimientos. Por seguridad no se borrará la información; el taller será DESACTIVADO.' if has_data else 'Este taller no contiene información operativa. Se eliminará de la lista de talleres.')
+            def confirm(e=None):
+                if has_data:
+                    execute('UPDATE operations SET active=0 WHERE id=?',(wid,)); execute('UPDATE users SET active=0 WHERE operation_id=?',(wid,))
+                else:
+                    execute('DELETE FROM users WHERE operation_id=?',(wid,)); execute('DELETE FROM operations WHERE id=?',(wid,))
+                if active_operation_id()==wid: operation_state['id']=1
+                page.pop_dialog(); snack('Taller desactivado.' if has_data else 'Taller eliminado.'); dashboard()
+            dlg=ft.AlertDialog(modal=True,title=ft.Text('Eliminar taller / operación'),content=ft.Text(msg),actions=[ft.TextButton('Cancelar',on_click=lambda e: close_admin_dialog(dlg)),ft.Button('Eliminar',icon=ft.Icons.DELETE_OUTLINE,on_click=confirm)])
+            page.show_dialog(dlg); page.update()
+
+        def edit_user(row):
+            f_name=ft.TextField(label='Nombre completo',value=str(row['full_name'] or ''),width=280)
+            f_username=ft.TextField(label='Usuario',value=str(row['username'] or ''),width=220)
+            f_password=ft.TextField(label='Nueva contraseña (opcional)',password=True,can_reveal_password=True,width=260)
+            is_general=str(row['role'] or '').upper() in ('ADMIN','ADMINISTRADOR GENERAL','SUPERADMIN')
+            rv=str(row['role'] or 'USUARIO').upper()
+            f_role=ft.Dropdown(label='Rol',value=('USUARIO' if is_general else rv),width=260,options=[ft.DropdownOption(key='ADMINISTRADOR DE OPERACION',text='Administrador de Operación'),ft.DropdownOption(key='USUARIO',text='Usuario / Técnico')],disabled=is_general)
+            f_op=ft.Dropdown(label='Taller asignado',value=str(row['operation_id'] or op_id),width=300,options=[ft.DropdownOption(key=str(r['id']),text=str(r['name'])) for r in workshops_rows],disabled=is_general)
+            def save_edit(e=None):
+                name=(f_name.value or '').strip(); username=(f_username.value or '').strip(); pwd=f_password.value or ''
+                if not name or not username: snack('Nombre y usuario son obligatorios.',True); return
+                if query('SELECT id FROM users WHERE id<>? AND LOWER(username)=LOWER(?) LIMIT 1',(row['id'],username)): snack('Ese nombre de usuario ya existe.',True); return
+                if pwd and len(pwd)<6: snack('La contraseña debe tener al menos 6 caracteres.',True); return
+                if is_general:
+                    execute('UPDATE users SET full_name=?,username=? WHERE id=?',(name,username,row['id']))
+                else:
+                    try: assigned=int(str(f_op.value))
+                    except Exception: assigned=0
+                    if not assigned or not query('SELECT id FROM operations WHERE id=? AND active=1',(assigned,)): snack('Seleccione un taller activo.',True); return
+                    execute('UPDATE users SET full_name=?,username=?,role=?,operation_id=? WHERE id=?',(name,username,str(f_role.value or 'USUARIO').upper(),assigned,row['id']))
+                if pwd: execute('UPDATE users SET password_hash=? WHERE id=?',(hashlib.sha256(pwd.encode('utf-8')).hexdigest(),row['id']))
+                page.pop_dialog(); snack('Usuario actualizado correctamente.'); dashboard()
+            dlg=ft.AlertDialog(modal=True,title=ft.Text('Editar usuario'),content=ft.Column([f_name,f_username,f_password,f_role,f_op],tight=True,spacing=10),actions=[ft.TextButton('Cancelar',on_click=lambda e: close_admin_dialog(dlg)),ft.Button('Guardar',icon=ft.Icons.SAVE,on_click=save_edit)])
+            page.show_dialog(dlg); page.update()
+
+        def delete_user(row):
+            current_id=session.get('user',{}).get('id'); is_general=str(row['role'] or '').upper() in ('ADMIN','ADMINISTRADOR GENERAL','SUPERADMIN')
+            if current_id and int(row['id'])==int(current_id): snack('No puede eliminar el usuario con el que inició sesión.',True); return
+            if is_general: snack('El Administrador General principal no puede eliminarse desde este panel.',True); return
+            def confirm(e=None):
+                execute('UPDATE users SET active=0 WHERE id=?',(row['id'],)); page.pop_dialog(); snack('Usuario eliminado de la lista activa.'); dashboard()
+            dlg=ft.AlertDialog(modal=True,title=ft.Text('Eliminar usuario'),content=ft.Text(f"¿Desea eliminar/desactivar al usuario {row['username']}?"),actions=[ft.TextButton('Cancelar',on_click=lambda e: close_admin_dialog(dlg)),ft.Button('Eliminar',icon=ft.Icons.DELETE_OUTLINE,on_click=confirm)])
+            page.show_dialog(dlg); page.update()
+
+        workshop_table=ft.DataTable(columns=[ft.DataColumn(ft.Text(x)) for x in ['Código','Taller / operación','Cliente','Ubicación','Acciones']],rows=[ft.DataRow(cells=[ft.DataCell(ft.Text(str(r['code'] or ''))),ft.DataCell(ft.Text(str(r['name'] or ''))),ft.DataCell(ft.Text(str(r['client'] or ''))),ft.DataCell(ft.Text(str(r['location'] or ''))),ft.DataCell(ft.Row([ft.IconButton(icon=ft.Icons.EDIT_OUTLINED,tooltip='Editar',on_click=lambda e,r=r: edit_workshop(r)),ft.IconButton(icon=ft.Icons.CLOSE,tooltip='Eliminar',on_click=lambda e,r=r: delete_workshop(r))],spacing=2))]) for r in workshops_rows])
+        user_table=ft.DataTable(columns=[ft.DataColumn(ft.Text(x)) for x in ['Nombre','Usuario','Rol','Taller asignado','Acciones']],rows=[ft.DataRow(cells=[ft.DataCell(ft.Text(str(r['full_name'] or ''))),ft.DataCell(ft.Text(str(r['username'] or ''))),ft.DataCell(ft.Text('Administrador General' if str(r['role'] or '').upper()=='ADMIN' else str(r['role'] or ''))),ft.DataCell(ft.Text(str(r['operation_name'] or 'GENERAL'))),ft.DataCell(ft.Row([ft.IconButton(icon=ft.Icons.EDIT_OUTLINED,tooltip='Editar',on_click=lambda e,r=r: edit_user(r)),ft.IconButton(icon=ft.Icons.CLOSE,tooltip='Eliminar',on_click=lambda e,r=r: delete_user(r))],spacing=2))]) for r in users_rows])
+
+        management_block = ft.Column([
+            card(ft.Column([ft.Row([ft.Icon(ft.Icons.ADD_BUSINESS_OUTLINED,color=NAV_ACCENT),ft.Text('AGREGAR TALLER / OPERACIÓN',size=14,weight=ft.FontWeight.BOLD,color=TEXT_MAIN)],spacing=8),ft.Text('Cree nuevas operaciones sin modificar la información de los talleres existentes.',size=11,color=TEXT_MUTED),ft.Row([workshop_code,workshop_name,workshop_client,workshop_location],wrap=True,spacing=10),ft.Button('AGREGAR TALLER',icon=ft.Icons.ADD,on_click=create_workshop),ft.Divider(),ft.Text('TALLERES / OPERACIONES REGISTRADAS',size=13,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),ft.Row([workshop_table],scroll=ft.ScrollMode.AUTO)],spacing=10)),
+            card(ft.Column([ft.Row([ft.Icon(ft.Icons.PERSON_ADD_ALT_1_OUTLINED,color=NAV_ACCENT),ft.Text('CREAR USUARIO POR TALLER',size=14,weight=ft.FontWeight.BOLD,color=TEXT_MAIN)],spacing=8),ft.Text('Cada usuario queda vinculado a una sola operación y verá únicamente la información de ese taller.',size=11,color=TEXT_MUTED),ft.Row([user_fullname,user_username,user_password,user_role,user_operation],wrap=True,spacing=10),ft.Button('CREAR USUARIO',icon=ft.Icons.PERSON_ADD,on_click=create_user),ft.Divider(),ft.Text('USUARIOS REGISTRADOS',size=13,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),ft.Row([user_table],scroll=ft.ScrollMode.AUTO)],spacing=10)),
+        ],spacing=12) if admin_general else ft.Container(height=0)
+
+
         content.content = ft.Column([
-            page_title('Panel principal', 'Vista general de la operación de neumáticos OTR'),
+            page_title('Panel principal', f"Vista general de la operación de neumáticos OTR · {op['name']}"),
+            selector_block,
+            management_block,
             ft.Row([
                 metric_card('Neumáticos', total, ft.Icons.TIRE_REPAIR, 'Maestro total'),
                 metric_card('En servicio', service, ft.Icons.CHECK_CIRCLE_OUTLINE, 'Actualmente instalados'),
@@ -282,172 +625,228 @@ def main(page: ft.Page):
                 metric_card('Baja', baja, ft.Icons.CANCEL_OUTLINED, 'Fuera de servicio'),
                 metric_card('Equipos activos', equip, ft.Icons.PRECISION_MANUFACTURING_OUTLINED, 'Flota registrada'),
             ], wrap=True, spacing=12, run_spacing=12),
-            ft.Row([
-                card(ft.Column([
-                    ft.Text('Flujo operativo', size=17, weight=ft.FontWeight.BOLD, color=TEXT_MAIN),
-                    ft.Text('Registro → Instalación → Inspección → Rotación / Inversión → Desinstalación → Reparación → Reinstalación / Stand-by / Baja', size=13, color=TEXT_MUTED),
-                    ft.Row([
-                        ft.Chip(label=ft.Text('INST')),
-                        ft.Chip(label=ft.Text('INSP')),
-                        ft.Chip(label=ft.Text('INSC')),
-                        ft.Chip(label=ft.Text('ROT')),
-                        ft.Chip(label=ft.Text('INVE')),
-                        ft.Chip(label=ft.Text('DINS')),
-                        ft.Chip(label=ft.Text('REPA')),
-                        ft.Chip(label=ft.Text('BAJA')),
-                    ], wrap=True)
-                ]), width=560),
-                card(ft.Column([
-                    ft.Text('Estado del sistema', size=17, weight=ft.FontWeight.BOLD, color=TEXT_MAIN),
-                    ft.Row([ft.Icon(ft.Icons.CLOUD_DONE_OUTLINED, color=ft.Colors.GREEN_700), ft.Text('Web listo para publicación', color=TEXT_MAIN)]),
-                    ft.Row([ft.Icon(ft.Icons.STORAGE, color=NAV_ACCENT), ft.Text('SQLite — demostración', color=TEXT_MAIN)]),
-                    ft.Row([ft.Icon(ft.Icons.PHONE_ANDROID_OUTLINED, color=NAV_ACCENT), ft.Text('Diseño adaptable PC / móvil', color=TEXT_MAIN)]),
-                ]), width=390),
-            ], wrap=True, spacing=12),
-            card(ft.Column([
-                ft.Text('Movimientos recientes', size=17, weight=ft.FontWeight.BOLD, color=TEXT_MAIN),
-                ft.Row([recent_table], scroll=ft.ScrollMode.AUTO)
-            ])),
         ], scroll=ft.ScrollMode.AUTO, spacing=16)
         page.update()
 
     def equipment_view():
-        # Administración maestra de equipos. Se conservan la tabla equipment
-        # y todos sus registros existentes; solo se amplía con tipo de motor.
-        existing_cols = {r['name'] for r in query("PRAGMA table_info(equipment)")}
-        if 'motor_type' not in existing_cols:
-            execute('ALTER TABLE equipment ADD COLUMN motor_type TEXT')
+        op_id = active_operation_id()
 
-        # Catálogos dinámicos para evitar variantes de escritura y permitir
-        # autocompletar/autoguardar en un solo campo.
-        execute("""
-            CREATE TABLE IF NOT EXISTS equipment_catalogs(
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                category TEXT NOT NULL,
-                value TEXT COLLATE NOCASE NOT NULL,
-                UNIQUE(category, value)
+        # PostgreSQL/SQLite compatible: no se crean tablas auxiliares desde la vista.
+        # performance_type debe existir en equipment; el SQL de migración lo agrega.
+        def distinct_options(field):
+            rows = query(
+                f"SELECT DISTINCT {field} AS value "
+                "FROM equipment "
+                "WHERE operation_id=? AND "
+                f"{field} IS NOT NULL AND TRIM({field})<>'' "
+                f"ORDER BY {field}",
+                (op_id,)
             )
-        """)
+            return [ft.dropdown.Option(str(r['value'])) for r in rows]
 
-        catalog_defaults = {
-            'vehicle_type': ['Scoop','Dumper','Jumbo','Scaler','Camión','Cargador','Otro'],
-            'motor_type': ['Diésel','Eléctrico','Híbrido','Otro'],
-        }
-        for category, values in catalog_defaults.items():
-            for value in values:
-                execute('INSERT OR IGNORE INTO equipment_catalogs(category,value) VALUES(?,?)',(category,value))
+        def make_field(label, field, width=190):
+            options = distinct_options(field)
+            return ft.Dropdown(
+                label=label,
+                width=width,
+                editable=True,
+                enable_filter=True,
+                enable_search=True,
+                options=options
+            )
 
-        # Incorporar al catálogo los valores que ya existen en la flota.
-        historic_fields = {
-            'brand': 'brand',
-            'model': 'model',
-            'location': 'location',
-            'vehicle_type': 'vehicle_type',
-            'motor_type': 'motor_type',
-        }
-        for category, field_name in historic_fields.items():
-            for row in query(
-                f"SELECT DISTINCT {field_name} value FROM equipment "
-                f"WHERE {field_name} IS NOT NULL AND TRIM({field_name})<>''"
-            ):
-                execute('INSERT OR IGNORE INTO equipment_catalogs(category,value) VALUES(?,?)',
-                        (category,str(row['value']).strip()))
+        code = ft.TextField(label='Código de equipo *', width=190)
+        brand = make_field('Marca', 'brand')
+        model = make_field('Modelo', 'model')
+        location = make_field('Ubicación', 'location')
+        kind = make_field('Tipo', 'vehicle_type')
+        motor = make_field('Tipo de motor', 'motor_type')
 
-        def catalog_options(category):
-            return [ft.dropdown.Option(str(r['value'])) for r in query(
-                'SELECT value FROM equipment_catalogs WHERE category=? ORDER BY value COLLATE NOCASE',(category,))]
+        performance = ft.Dropdown(
+            label='Rendimiento *',
+            width=190,
+            value=None,
+            options=[
+                ft.dropdown.Option('HORAS'),
+                ft.dropdown.Option('KILÓMETROS'),
+            ]
+        )
 
-        def make_catalog_field(label, category, width=190):
-            return ft.Dropdown(label=label,width=width,editable=True,enable_filter=True,enable_search=True,
-                               options=catalog_options(category))
+        search = ft.TextField(
+            label='Buscar equipo',
+            prefix_icon=ft.Icons.SEARCH,
+            width=280
+        )
 
-        def normalize_catalog_key(value):
-            return ''.join(str(value or '').strip().lower().split())
+        performance_filter = ft.Dropdown(
+            label='Filtrar rendimiento',
+            width=190,
+            value='TODOS',
+            options=[
+                ft.dropdown.Option('TODOS', 'Todos'),
+                ft.dropdown.Option('HORAS', 'Horas'),
+                ft.dropdown.Option('KILÓMETROS', 'Kilómetros'),
+            ],
+        )
 
-        def catalog_value(dropdown):
-            typed=(getattr(dropdown,'text',None) or '').strip()
-            selected=(dropdown.value or '').strip()
-            raw=typed if typed else selected
-            if not raw: return ''
-            key=normalize_catalog_key(raw)
-            for option in dropdown.options or []:
-                candidate=str(getattr(option,'key',None) or getattr(option,'text',None) or '').strip()
-                if candidate and normalize_catalog_key(candidate)==key:
-                    return candidate
-            return raw
+        table = ft.DataTable(
+            columns=[
+                ft.DataColumn(ft.Text(x))
+                for x in [
+                    'Código',
+                    'Marca / Modelo',
+                    'Tipo',
+                    'Ubicación',
+                    'Tipo de motor',
+                    'Rendimiento'
+                ]
+            ],
+            rows=[]
+        )
 
-        def save_catalog_value(category,value):
-            clean=(value or '').strip()
-            if not clean: return clean
-            wanted=normalize_catalog_key(clean)
-            for row in query('SELECT value FROM equipment_catalogs WHERE category=?',(category,)):
-                existing=str(row['value']).strip()
-                if normalize_catalog_key(existing)==wanted:
-                    return existing
-            execute('INSERT OR IGNORE INTO equipment_catalogs(category,value) VALUES(?,?)',(category,clean))
-            return clean
+        def refresh():
+            term = (search.value or '').strip()
+            perf = (performance_filter.value or 'TODOS').strip().upper()
 
-        code=ft.TextField(label='Código de equipo *',width=190)
-        brand=make_catalog_field('Marca','brand')
-        model=make_catalog_field('Modelo','model')
-        location=make_catalog_field('Ubicación','location')
-        kind=make_catalog_field('Tipo','vehicle_type')
-        motor=make_catalog_field('Tipo de motor','motor_type')
-        search=ft.TextField(label='Buscar equipo',prefix_icon=ft.Icons.SEARCH,width=280)
-        table=ft.DataTable(columns=[ft.DataColumn(ft.Text(x)) for x in ['Código','Marca / Modelo','Tipo','Ubicación','Tipo de motor']],rows=[])
+            where = ['operation_id=?']
+            params = [op_id]
 
-        catalog_fields=[(brand,'brand'),(model,'model'),(location,'location'),(kind,'vehicle_type'),(motor,'motor_type')]
-
-        def refresh_catalog_dropdowns():
-            for control,category in catalog_fields:
-                control.options=catalog_options(category)
-
-        def refresh(e=None):
-            term=(search.value or '').strip()
             if term:
-                rows=query("SELECT * FROM equipment WHERE code LIKE ? OR brand LIKE ? OR model LIKE ? ORDER BY code",(f'%{term}%',f'%{term}%',f'%{term}%'))
-            else:
-                rows=query('SELECT * FROM equipment ORDER BY code')
-            table.rows=[ft.DataRow(cells=[ft.DataCell(ft.Text(str(v or ''))) for v in [
-                r['code'],f"{r['brand'] or ''} {r['model'] or ''}".strip(),r['vehicle_type'],r['location'],r['motor_type']
-            ]]) for r in rows]
-            page.update()
-        search.on_change=refresh
+                where.append(
+                    '(code LIKE ? OR brand LIKE ? OR model LIKE ?)'
+                )
+                params.extend([
+                    f'%{term}%',
+                    f'%{term}%',
+                    f'%{term}%'
+                ])
 
-        def clear_catalog_control(control):
-            control.value=None
-            try: control.text=''
-            except Exception: pass
+            if perf != 'TODOS':
+                where.append("UPPER(COALESCE(performance_type,''))=?")
+                params.append(perf)
+
+            rows = query(
+                'SELECT code,brand,model,vehicle_type,location,motor_type,'
+                'performance_type '
+                'FROM equipment WHERE ' + ' AND '.join(where) +
+                ' ORDER BY code',
+                tuple(params)
+            )
+
+            table.rows = [
+                ft.DataRow(
+                    cells=[
+                        ft.DataCell(ft.Text(str(v or '')))
+                        for v in [
+                            r['code'],
+                            f"{r['brand'] or ''} {r['model'] or ''}".strip(),
+                            r['vehicle_type'],
+                            r['location'],
+                            r['motor_type'],
+                            r['performance_type'],
+                        ]
+                    ]
+                )
+                for r in rows
+            ]
+            page.update()
+
+        def refresh_fields():
+            for control, field in [
+                (brand, 'brand'),
+                (model, 'model'),
+                (location, 'location'),
+                (kind, 'vehicle_type'),
+                (motor, 'motor_type'),
+            ]:
+                control.options = distinct_options(field)
+
+        search.on_change = lambda e: refresh()
+        performance_filter.on_select = lambda e: refresh()
 
         def save(e):
-            if not (code.value or '').strip(): return snack('Ingrese el código del equipo.',True)
+            if not (code.value or '').strip():
+                return snack('Ingrese el código del equipo.', True)
+
+            performance_value = (performance.value or '').strip().upper()
+            if performance_value not in ('HORAS', 'KILÓMETROS'):
+                return snack(
+                    'Seleccione el rendimiento del equipo: HORAS o KILÓMETROS.',
+                    True
+                )
+
             try:
-                values={category:save_catalog_value(category,catalog_value(control)) for control,category in catalog_fields}
-                execute('INSERT INTO equipment(code,brand,model,location,vehicle_type,motor_type) VALUES(?,?,?,?,?,?)',(
-                    code.value.strip(),values['brand'],values['model'],values['location'],values['vehicle_type'],values['motor_type']))
-                code.value=''
-                for control,_ in catalog_fields: clear_catalog_control(control)
-                refresh_catalog_dropdowns()
+                execute(
+                    'INSERT INTO equipment('
+                    'code,brand,model,location,vehicle_type,motor_type,'
+                    'performance_type,operation_id'
+                    ') VALUES(?,?,?,?,?,?,?,?)',
+                    (
+                        code.value.strip(),
+                        (brand.value or '').strip(),
+                        (model.value or '').strip(),
+                        (location.value or '').strip(),
+                        (kind.value or '').strip(),
+                        (motor.value or '').strip(),
+                        performance_value,
+                        op_id
+                    )
+                )
+
+                code.value = ''
+                brand.value = None
+                model.value = None
+                location.value = None
+                kind.value = None
+                motor.value = None
+                performance.value = None
+
+                refresh_fields()
                 snack('Equipo registrado correctamente.')
                 refresh()
-            except Exception as ex: snack(str(ex),True)
+
+            except Exception as ex:
+                snack(str(ex), True)
 
         refresh()
-        content.content=ft.Column([
-            page_title('8.1 EQUIPOS','Administración de equipos · Registro y consulta de la flota'),
+
+        content.content = ft.Column([
+            page_title(
+                '8.1 EQUIPOS',
+                'Administración de equipos · Registro y consulta de la flota'
+            ),
             card(ft.Column([
-                ft.Text('Nuevo equipo',size=17,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
-                ft.Row([code,brand,model,location,kind,motor],wrap=True),
-                ft.ElevatedButton('Registrar equipo',icon=ft.Icons.SAVE,on_click=save)
+                ft.Text(
+                    'Nuevo equipo',
+                    size=17,
+                    weight=ft.FontWeight.BOLD,
+                    color=TEXT_MAIN
+                ),
+                ft.Row(
+                    [
+                        code,
+                        brand,
+                        model,
+                        location,
+                        kind,
+                        motor,
+                        performance
+                    ],
+                    wrap=True
+                ),
+                ft.Button(
+                    'Registrar equipo',
+                    icon=ft.Icons.SAVE,
+                    on_click=save
+                )
             ])),
-            card(ft.Column([
-                ft.Row([ft.Text('Equipos registrados',size=17,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),ft.Container(expand=True),search]),
-                ft.Row([table],scroll=ft.ScrollMode.AUTO)
-            ]))
-        ],scroll=ft.ScrollMode.AUTO,spacing=16)
+        ], scroll=ft.ScrollMode.AUTO, spacing=16)
+
         page.update()
 
+
     def tires_view(status_filter=None, prefill_code=None):
+        op_id = active_operation_id()
         # Registro maestro de neumáticos.
         existing_cols = {r['name'] for r in query("PRAGMA table_info(tires)")}
         extra_cols = [
@@ -570,6 +969,254 @@ def main(page: ft.Page):
 
         FIELD_W = 220
 
+        # Carga masiva Excel: usa exactamente los mismos campos del formulario
+        # Nuevo neumático. El taller/operación se toma de la sesión activa y el
+        # sistema fuerza el estado inicial STAND-BY, sin equipo ni posición.
+        BULK_COLUMNS = [
+            'Código *', 'Serie Fab. *', 'Fecha de ingreso *', 'Costo $ *',
+            'Marca *', 'Medida *', 'Diseño *', 'Clasificación TRA *',
+            'Proveedor *', 'Presión recomendada *', 'Profundidad nueva EXT *',
+            'Profundidad nueva INT *', 'Profundidad de retiro (mm) *',
+            'Proyección de vida (h) *', 'Tipo de construcción *', 'Condición *'
+        ]
+
+        def _bulk_template_bytes():
+            try:
+                from openpyxl import Workbook
+                from openpyxl.styles import Font, PatternFill, Alignment
+                from openpyxl.worksheet.datavalidation import DataValidation
+                wb = Workbook()
+                ws = wb.active
+                ws.title = 'REGISTRO_NEUMATICOS'
+                ws.append(BULK_COLUMNS)
+                for cell in ws[1]:
+                    cell.font = Font(bold=True, color='FFFFFF')
+                    cell.fill = PatternFill('solid', fgColor='1E5AA8')
+                    cell.alignment = Alignment(horizontal='center')
+                widths = [18,22,18,14,18,16,20,24,18,22,24,24,28,24,24,18]
+                for i, width in enumerate(widths, 1):
+                    ws.column_dimensions[chr(64+i)].width = width
+                ws.freeze_panes = 'A2'
+                ws.auto_filter.ref = 'A1:P1'
+                dv_con = DataValidation(type='list', formula1='"Radial,Convencional"', allow_blank=False)
+                dv_cond = DataValidation(type='list', formula1='"Nueva,Reencauchada"', allow_blank=False)
+                ws.add_data_validation(dv_con); ws.add_data_validation(dv_cond)
+                dv_con.add('O2:O5000'); dv_cond.add('P2:P5000')
+                ws2 = wb.create_sheet('INSTRUCCIONES')
+                instructions = [
+                    ['CARGA MASIVA DE NEUMÁTICOS - MEGASOFTIRE'],
+                    ['Complete únicamente la hoja REGISTRO_NEUMATICOS.'],
+                    ['Los campos deben coincidir con el formulario Nuevo neumático. Un ejemplo de llenado aparece en esta hoja de instrucciones.'],
+                    ['Ejemplo: 10001 | SERIE-001 | 18/09/2026 | 5000 | Yokohama | 29.5R25 | RB31 | L-3 | Proveedor | 90 | 105 | 105 | 15 | 3000 | Convencional | Nueva'],
+                    ['No agregue taller, equipo, posición ni situación: el sistema usa el taller activo y registra automáticamente STAND-BY.'],
+                    ['Regla principal: debe existir Código O Serie Fab.; el otro puede quedar en blanco. Los campos sin información se dejan en blanco.'],
+                    ['Antes de guardar, MegaSoftire mostrará una validación y un resumen de los registros.'],
+                ]
+                for row in instructions: ws2.append(row)
+                ws2.column_dimensions['A'].width = 110
+                ws2['A1'].font = Font(bold=True, size=14, color='1E5AA8')
+                buf = io.BytesIO(); wb.save(buf); return buf.getvalue()
+            except Exception as ex:
+                raise RuntimeError(f'No se pudo crear la plantilla Excel: {ex}')
+
+        # Picker persistente: en Flet 1.x los servicios deben conservar una
+        # referencia viva para reutilizarse durante toda la vista.
+        bulk_template_picker = ft.FilePicker()
+
+        async def download_bulk_template(e=None):
+            try:
+                template_bytes = _bulk_template_bytes()
+                if not template_bytes:
+                    raise RuntimeError('La plantilla Excel se generó vacía.')
+                await bulk_template_picker.save_file(
+                    file_name='PLANTILLA_CARGA_MASIVA_NEUMATICOS.xlsx',
+                    file_type=ft.FilePickerFileType.CUSTOM,
+                    allowed_extensions=['xlsx'],
+                    src_bytes=template_bytes,
+                )
+                # En Web, save_file() descarga los bytes entregados al navegador.
+                snack('Plantilla Excel preparada para descarga.')
+            except Exception as ex:
+                snack(f'No se pudo descargar la plantilla: {ex}', True)
+
+        def _clean_header(v):
+            return ' '.join(str(v or '').replace('*','').strip().split()).lower()
+
+        def _cell_text(v):
+            if v is None:
+                return ''
+            if isinstance(v, float) and v.is_integer():
+                return str(int(v))
+            return str(v).strip()
+
+        def _bulk_num(v, label, rownum, positive=False, nonnegative=False):
+            raw=_cell_text(v).replace(',','.')
+            # Los campos sin información se conservan en blanco.
+            if not raw:
+                return None
+            try:
+                n=float(raw)
+            except Exception:
+                raise ValueError(f'Fila {rownum}: {label} no es numérico.')
+            if positive and n <= 0:
+                raise ValueError(f'Fila {rownum}: {label} debe ser mayor que 0.')
+            if nonnegative and n < 0:
+                raise ValueError(f'Fila {rownum}: {label} no puede ser negativo.')
+            return n
+
+        def _read_bulk_excel(data):
+            try:
+                from openpyxl import load_workbook
+                wb=load_workbook(io.BytesIO(data), data_only=True, read_only=True)
+                ws=wb['REGISTRO_NEUMATICOS'] if 'REGISTRO_NEUMATICOS' in wb.sheetnames else wb.active
+                rows=list(ws.iter_rows(values_only=True))
+                if not rows:
+                    raise ValueError('El archivo Excel está vacío.')
+                headers=[_clean_header(v) for v in rows[0]]
+                wanted=[_clean_header(v) for v in BULK_COLUMNS]
+                positions={h:i for i,h in enumerate(headers) if h}
+                missing=[BULK_COLUMNS[i] for i,h in enumerate(wanted) if h not in positions]
+                if missing:
+                    raise ValueError('Faltan columnas obligatorias: ' + ', '.join(missing))
+                data_rows=[]
+                for excel_row, raw in enumerate(rows[1:], start=2):
+                    if not any(v not in (None,'') for v in raw):
+                        continue
+                    def val(label):
+                        idx=positions[_clean_header(label)]
+                        return raw[idx] if idx < len(raw) else None
+                    code=_cell_text(val('Código *'))
+                    serial=_cell_text(val('Serie Fab. *'))
+                    # Regla maestra: basta Código O Serie Fab.; no se exigen ambos.
+                    if not code and not serial:
+                        raise ValueError(f'Fila {excel_row}: debe ingresar Código o Serie Fab.')
+                    date_value=val('Fecha de ingreso *')
+                    if isinstance(date_value, (dt.datetime, dt.date)):
+                        date_iso=date_value.strftime('%Y-%m-%d')
+                    else:
+                        date_iso=normalize_date(_cell_text(date_value))
+                    if not date_iso: raise ValueError(f'Fila {excel_row}: Fecha de ingreso inválida.')
+                    cost=_bulk_num(val('Costo $ *'),'Costo $',excel_row,nonnegative=True)
+                    pressure_value=_bulk_num(val('Presión recomendada *'),'Presión recomendada',excel_row,positive=True)
+                    new_ext=_bulk_num(val('Profundidad nueva EXT *'),'Profundidad nueva EXT',excel_row,positive=True)
+                    new_int=_bulk_num(val('Profundidad nueva INT *'),'Profundidad nueva INT',excel_row,positive=True)
+                    retirement=_bulk_num(val('Profundidad de retiro (mm) *'),'Profundidad de retiro',excel_row,nonnegative=True)
+                    life=_bulk_num(val('Proyección de vida (h) *'),'Proyección de vida',excel_row,positive=True)
+                    if retirement is not None and new_ext is not None and new_int is not None and retirement >= min(new_ext,new_int):
+                        raise ValueError(f'Fila {excel_row}: la profundidad de retiro debe ser menor que la profundidad nueva.')
+                    construction=_cell_text(val('Tipo de construcción *')) or None
+                    condition_value=_cell_text(val('Condición *')) or None
+                    if construction and construction.lower() not in ('radial','convencional'):
+                        raise ValueError(f'Fila {excel_row}: Tipo de construcción debe ser Radial o Convencional.')
+                    if condition_value and condition_value.lower() not in ('nueva','reencauchada'):
+                        raise ValueError(f'Fila {excel_row}: Condición debe ser Nueva o Reencauchada.')
+                    required_text = {
+                        'Marca *': _cell_text(val('Marca *')),
+                        'Medida *': _cell_text(val('Medida *')),
+                        'Diseño *': _cell_text(val('Diseño *')),
+                        'Clasificación TRA *': _cell_text(val('Clasificación TRA *')),
+                        'Proveedor *': _cell_text(val('Proveedor *')),
+                    }
+                    # Los demás campos pueden quedar en blanco si el Excel no tiene información.
+                    data_rows.append({
+                        'code':code,'serial':serial,'entry_date':date_iso,'cost':cost,
+                        'brand':required_text['Marca *'],'size':required_text['Medida *'],
+                        'design':required_text['Diseño *'],'compound':required_text['Clasificación TRA *'],
+                        'supplier':required_text['Proveedor *'],'pressure':pressure_value,
+                        'new_ext':new_ext,'new_int':new_int,'retirement':retirement,'life':life,
+                        'construction':construction,'condition':condition_value,
+                    })
+                if not data_rows:
+                    raise ValueError('No se encontraron registros para importar.')
+                codes=[r['code'].strip().lower() for r in data_rows if r['code'].strip()]
+                serials=[r['serial'].strip().lower() for r in data_rows if r['serial'].strip()]
+                if len(codes)!=len(set(codes)):
+                    raise ValueError('El archivo contiene códigos neumático duplicados.')
+                if len(serials)!=len(set(serials)):
+                    raise ValueError('El archivo contiene series de fábrica duplicadas.')
+                existing_codes={str(r['code']).strip().lower() for r in query('SELECT code FROM tires WHERE operation_id=?',(op_id,))}
+                existing_serials={str(r['serial']).strip().lower() for r in query("SELECT serial FROM tires WHERE operation_id=? AND serial IS NOT NULL AND TRIM(serial)<>''",(op_id,))}
+                dup_codes=[r['code'] for r in data_rows if r['code'].strip() and r['code'].strip().lower() in existing_codes]
+                dup_serials=[r['serial'] for r in data_rows if r['serial'].strip() and r['serial'].strip().lower() in existing_serials]
+                if dup_codes:
+                    raise ValueError('Códigos ya existentes en el taller activo: ' + ', '.join(dup_codes[:10]) + ('...' if len(dup_codes)>10 else ''))
+                if dup_serials:
+                    raise ValueError('Series ya existentes en el taller activo: ' + ', '.join(dup_serials[:10]) + ('...' if len(dup_serials)>10 else ''))
+                return data_rows
+            except ValueError:
+                raise
+            except Exception as ex:
+                raise ValueError(f'No se pudo leer el Excel: {ex}')
+
+        async def process_bulk_file(f):
+            try:
+                if not f or not getattr(f, 'bytes', None):
+                    raise ValueError('No se pudo leer el contenido del archivo seleccionado.')
+                rows=_read_bulk_excel(f.bytes)
+                preview='\n'.join([f"{i+1}. {r['code']} | {r['serial']} | {r['brand']} | {r['size']} | {r['design']}" for i,r in enumerate(rows[:8])])
+                if len(rows)>8: preview += f"\n... y {len(rows)-8} registro(s) más."
+                op=active_operation_row()
+                def confirm_bulk(e2=None):
+                    try:
+                        from database import connect
+                        with connect() as con:
+                            for r in rows:
+                                con.execute(
+                                    '''INSERT INTO tires(
+                                        code,serial,brand,size,design,new_tread,recommended_pressure,
+                                        tread_inner,tread_outer,entry_date,cost_usd,compound,supplier,
+                                        new_tread_outer,new_tread_inner,construction_type,tire_condition,
+                                        retirement_tread,projected_life_target,projected_life,status,
+                                        equipment_id,position,current_meter,operation_id
+                                    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+                                    (r['code'] or None,r['serial'] or None,r['brand'] or None,r['size'] or None,r['design'] or None,(max(v for v in (r['new_ext'],r['new_int']) if v is not None) if any(v is not None for v in (r['new_ext'],r['new_int'])) else None),
+                                     r['pressure'],r['new_int'],r['new_ext'],r['entry_date'] or None,r['cost'],r['compound'] or None,r['supplier'] or None,
+                                     r['new_ext'],r['new_int'],r['construction'],r['condition'],r['retirement'],r['life'],r['life'],
+                                     'STAND-BY',None,None,None,op_id)
+                                )
+                                for category,key in [('brand','brand'),('size','size'),('design','design'),('compound','compound'),('supplier','supplier')]:
+                                    if r[key]:
+                                        con.execute('INSERT OR IGNORE INTO tire_catalogs(category,value) VALUES(?,?)',(category,r[key]))
+                        page.pop_dialog(); snack(f"Carga masiva completada: {len(rows)} neumático(s) registrados en STAND-BY."); refresh()
+                    except Exception as ex:
+                        snack(f'No se pudo completar la carga. No se guardó ningún registro: {ex}', True)
+                dlg=ft.AlertDialog(
+                    modal=True,
+                    title=ft.Text(f'Confirmar carga masiva · {op["name"]}'),
+                    content=ft.Column([
+                        ft.Text(f'Se encontraron {len(rows)} neumático(s) válidos.'),
+                        ft.Text('Todos quedarán en STAND-BY, sin equipo y sin posición.',weight=ft.FontWeight.BOLD,color=NAV_ACCENT),
+                        ft.Text(preview,size=11,font_family='monospace'),
+                    ],tight=True,scroll=ft.ScrollMode.AUTO),
+                    actions=[ft.TextButton('Cancelar',on_click=lambda e2: (page.pop_dialog(),page.update())),ft.Button('Confirmar carga',icon=ft.Icons.UPLOAD,on_click=confirm_bulk)]
+                )
+                page.show_dialog(dlg); page.update()
+            except Exception as ex:
+                snack(str(ex),True)
+
+        # En Web, el selector de archivos debe abrirse dentro del gesto original
+        # del navegador. Por eso Cargar Excel usa la acción cliente PickFiles y
+        # recibe el archivo mediante on_result. Esto evita que Chrome/Firefox
+        # bloqueen el selector y funciona también en navegadores más estrictos.
+        async def on_bulk_file_result(e):
+            try:
+                files = e.files or []
+                if not files:
+                    return
+                await process_bulk_file(files[0])
+            except Exception as ex:
+                snack(str(ex), True)
+
+        bulk_file_picker = ft.FilePicker(on_result=on_bulk_file_result)
+        bulk_pick_action = ft.PickFiles(
+            bulk_file_picker,
+            dialog_title='Seleccionar Excel de neumáticos',
+            file_type=ft.FilePickerFileType.CUSTOM,
+            allowed_extensions=['xlsx'],
+            allow_multiple=False,
+            with_data=True,
+        )
+
         code=ft.TextField(label='Código *',width=FIELD_W,value=(str(prefill_code) if prefill_code else ''))
         serial=ft.TextField(label='Serie Fab. *',width=FIELD_W)
         entry_date=ft.TextField(label='Fecha de ingreso *',value=dt.date.today().strftime('%d/%m/%Y'),width=FIELD_W)
@@ -598,7 +1245,7 @@ def main(page: ft.Page):
 
         search=ft.TextField(label='Buscar neumático',prefix_icon=ft.Icons.SEARCH,width=260)
         eq_options=[ft.dropdown.Option('', 'Todos los equipos')]
-        eq_options += [ft.dropdown.Option(str(r['id']), r['code']) for r in query('SELECT id,code FROM equipment WHERE active=1 ORDER BY code')]
+        eq_options += [ft.dropdown.Option(str(r['id']), r['code']) for r in query('SELECT id,code FROM equipment WHERE active=1 AND operation_id=? ORDER BY code',(op_id,))]
         eq_filter=ft.Dropdown(label='Equipo',width=180,value='',options=eq_options)
         summary=ft.Text('',size=12,color=TEXT_MUTED)
 
@@ -662,7 +1309,7 @@ def main(page: ft.Page):
 
         def refresh(e=None):
             sql='SELECT t.*,e.code equipment_code FROM tires t LEFT JOIN equipment e ON e.id=t.equipment_id'
-            clauses=[]; params=[]
+            clauses=['t.operation_id=?']; params=[op_id]
             if status_filter:
                 clauses.append('t.status=?'); params.append(status_filter)
             term=(search.value or '').strip()
@@ -720,7 +1367,7 @@ def main(page: ft.Page):
                       "o.position,o.meter,o.tread_inner,o.tread_outer,o.pressure,o.location "
                       "FROM occurrences o JOIN tires t ON t.id=o.tire_id "
                       "LEFT JOIN equipment e ON e.id=o.equipment_id")
-            hp=[]; hc=[]
+            hp=[op_id]; hc=['o.operation_id=?']
             if eq_filter.value:
                 hc.append('o.equipment_id=?'); hp.append(int(eq_filter.value))
             if status_filter and not eq_filter.value:
@@ -742,19 +1389,10 @@ def main(page: ft.Page):
         search.on_change=refresh
         eq_filter.on_change=refresh
 
-        required_controls = [
-            ('Código', code),
-            ('Serie Fab.', serial),
-            ('Fecha de ingreso', entry_date),
-            ('Costo $', cost_usd),
-            ('Presión recomendada', pressure),
-            ('Profundidad nueva EXT', tread_outer_new),
-            ('Profundidad nueva INT', tread_inner_new),
-            ('Profundidad de retiro', retirement_tread),
-            ('Proyección de vida', projected_life_target),
-            ('Tipo de construcción', construction),
-            ('Condición', condition),
-        ]
+        # Regla maestra de identificación: basta Código O Serie Fab.
+        # Todos los demás campos pueden quedar en blanco cuando la información
+        # no está disponible; se validan únicamente cuando se proporciona un valor.
+        required_controls = []
 
         def normalize_date(value):
             raw=(value or '').strip()
@@ -782,11 +1420,10 @@ def main(page: ft.Page):
             condition.value=None
 
         def save(e):
-            missing=[]
-            for label,ctrl in required_controls:
-                value=ctrl.value
-                if value is None or not str(value).strip():
-                    missing.append(label)
+            code_value=(code.value or '').strip()
+            serial_value=(serial.value or '').strip()
+            if not code_value and not serial_value:
+                return snack('Debe ingresar Código o Serie Fab. (al menos uno).', True)
 
             brand_value = catalog_value(brand)
             size_value = catalog_value(size)
@@ -794,18 +1431,10 @@ def main(page: ft.Page):
             compound_value = catalog_value(compound)
             supplier_value = catalog_value(supplier)
 
-            for label, value in [
-                ('Marca', brand_value),
-                ('Medida', size_value),
-                ('Diseño', design_value),
-                ('Clasificación TRA', compound_value),
-                ('Proveedor', supplier_value),
-            ]:
-                if not value:
-                    missing.append(label)
-
-            if missing:
-                return snack('Faltan campos obligatorios: ' + ', '.join(missing), True)
+            # Marca, medida, diseño, TRA y proveedor pueden quedar en blanco
+            # cuando la información no está disponible. La regla maestra es
+            # que exista Código O Serie Fab.; los demás campos se validan
+            # únicamente cuando contienen un valor.
 
             date_iso=normalize_date(entry_date.value)
             if not date_iso:
@@ -818,22 +1447,22 @@ def main(page: ft.Page):
             retirement=num(retirement_tread.value)
             life_target=num(projected_life_target.value)
 
-            if cost is None or cost < 0:
+            if cost is not None and cost < 0:
                 return snack('Costo $ inválido.', True)
-            if rec_pressure is None or rec_pressure <= 0:
+            if rec_pressure is not None and rec_pressure <= 0:
                 return snack('Presión recomendada inválida.', True)
-            if new_ext is None or new_ext <= 0:
+            if new_ext is not None and new_ext <= 0:
                 return snack('Profundidad nueva EXT inválida.', True)
-            if new_int is None or new_int <= 0:
+            if new_int is not None and new_int <= 0:
                 return snack('Profundidad nueva INT inválida.', True)
-            if retirement is None or retirement < 0:
+            if retirement is not None and retirement < 0:
                 return snack('Profundidad de retiro inválida.', True)
-            if retirement >= min(float(new_ext), float(new_int)):
+            if retirement is not None and new_ext is not None and new_int is not None and retirement >= min(float(new_ext), float(new_int)):
                 return snack('La profundidad de retiro debe ser menor que la profundidad nueva.', True)
-            if life_target is None or life_target <= 0:
+            if life_target is not None and life_target <= 0:
                 return snack('Proyección de vida inválida.', True)
 
-            new_tread_ref=max(float(new_ext), float(new_int))
+            new_tread_ref=max(float(new_ext), float(new_int)) if new_ext is not None and new_int is not None else None
 
             # Si se digitó un valor nuevo, se incorpora al catálogo y queda
             # disponible automáticamente para los siguientes registros.
@@ -859,11 +1488,11 @@ def main(page: ft.Page):
                            code,serial,brand,size,design,new_tread,recommended_pressure,
                            tread_inner,tread_outer,entry_date,cost_usd,compound,supplier,
                            new_tread_outer,new_tread_inner,construction_type,tire_condition,
-                           retirement_tread,projected_life_target,projected_life
-                       ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                           retirement_tread,projected_life_target,projected_life,operation_id
+                       ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                     (
-                        code.value.strip(),
-                        serial.value.strip(),
+                        code_value or None,
+                        serial_value or None,
                         brand_value,
                         size_value,
                         design_value,
@@ -882,6 +1511,7 @@ def main(page: ft.Page):
                         retirement,
                         life_target,
                         life_target,
+                        op_id,
                     )
                 )
                 refresh_catalog_dropdowns()
@@ -899,14 +1529,14 @@ def main(page: ft.Page):
         if not status_filter:
             blocks.append(card(ft.Column([
                 ft.Text('Nuevo neumático',size=17,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
-                ft.Text('Todos los campos son obligatorios.',size=11,color=TEXT_MUTED),
+                ft.Text('Código o Serie Fab. es obligatorio. Los demás campos pueden quedar en blanco.',size=11,color=TEXT_MUTED),
 
                 ft.Row([code,serial,entry_date,cost_usd],wrap=True,spacing=10,run_spacing=10),
                 ft.Row([brand,size,design,compound],wrap=True,spacing=10,run_spacing=10),
                 ft.Row([supplier,pressure,tread_outer_new,tread_inner_new],wrap=True,spacing=10,run_spacing=10),
                 ft.Row([retirement_tread,projected_life_target,construction,condition],wrap=True,spacing=10,run_spacing=10),
 
-                ft.ElevatedButton('Registrar neumático',icon=ft.Icons.SAVE,on_click=save)
+                ft.Row([ft.Button('Registrar neumático',icon=ft.Icons.SAVE,on_click=save), ft.Button('Cargar Excel',icon=ft.Icons.UPLOAD_FILE,action=bulk_pick_action), ft.Button('Plantilla Excel',icon=ft.Icons.DESCRIPTION,url='/descargar-plantilla-excel')],wrap=True,spacing=8)
             ])))
 
         if status_filter:
@@ -990,14 +1620,16 @@ def main(page: ft.Page):
         page.update()
 
     def service_general_view():
-        """Consulta operativa de neumáticos actualmente instalados."""
+        """Consulta operativa de neumáticos actualmente instalados, aislada por operación."""
+        op_id = active_operation_id()
         eq_rows = query("""
             SELECT DISTINCT e.id,e.code,e.brand,e.model,e.location,e.vehicle_type,e.tire_size
             FROM equipment e
             JOIN tires t ON t.equipment_id=e.id
             WHERE e.active=1 AND t.status='SERVICIO'
+              AND e.operation_id=? AND t.operation_id=?
             ORDER BY e.code
-        """)
+        """, (op_id, op_id))
         ALL='__ALL__'
         eq_filter = ft.Dropdown(
             label='Equipo en servicio',
@@ -1035,6 +1667,7 @@ def main(page: ft.Page):
         brand_pie_body = ft.Column([], spacing=8, horizontal_alignment=ft.CrossAxisAlignment.CENTER)
         pressure_pie_body = ft.Column([], spacing=8, horizontal_alignment=ft.CrossAxisAlignment.CENTER)
         valve_pie_body = ft.Column([], spacing=8, horizontal_alignment=ft.CrossAxisAlignment.CENTER)
+        fleet_body = ft.Column([], spacing=8, horizontal_alignment=ft.CrossAxisAlignment.CENTER)
 
         def dashboard_bar(label, value, max_value, suffix='', decimals=1):
             try:
@@ -1140,217 +1773,362 @@ def main(page: ft.Page):
                 ft.Container(expand=True, content=plot),
             ], spacing=8, vertical_alignment=ft.CrossAxisAlignment.START)
 
-        def grouped_hours_chart(groups):
-            """Horas por posición: acumuladas (azul) + restantes proyectadas (naranja)."""
+        def grouped_performance_chart(groups, performance_type):
+            """Acumulado + restante proyectado, separado por unidad de rendimiento."""
             import math
             pos_order = ['P1', 'P2', 'P3', 'P4']
+            unit = performance_unit_label(performance_type)
+            if not groups:
+                return ft.Text(f'Sin datos suficientes para graficar en {unit}.', size=11, color=TEXT_MUTED)
             all_totals = []
             for vals in groups.values():
                 for data in vals.values():
-                    if data is None:
-                        continue
-                    if isinstance(data, dict):
-                        worked = float(data.get('worked') or 0.0)
-                        remaining = float(data.get('remaining') or 0.0)
-                    else:
-                        worked = float(data)
-                        remaining = 0.0
-                    all_totals.append(max(0.0, worked) + max(0.0, remaining))
+                    if data:
+                        all_totals.append(max(0.0, float(data.get('worked') or 0.0)) + max(0.0, float(data.get('remaining') or 0.0)))
             if not all_totals:
-                return ft.Text('Sin datos suficientes para graficar.', size=11, color=TEXT_MUTED)
-
-            step = 1000
+                return ft.Text(f'Sin datos suficientes para graficar en {unit}.', size=11, color=TEXT_MUTED)
+            step = 1000 if performance_type == PERFORMANCE_HOURS else 10000
             max_total = max(all_totals)
-            # Eje Y siempre en rangos exactos de 1000 h y con un escalón libre
-            # por encima de la barra más alta para que la proyección no quede
-            # pegada al borde superior del gráfico.
-            next_tick = (int(math.floor(max_total / step)) + 1) * step
-            y_max = max(4000, next_tick)
+            if max_total <= step and max_total > 0:
+                step = max(1, int(math.ceil(max_total / 4.0)))
+            y_max = max(step * 4, (int(math.floor(max_total / step)) + 1) * step)
             ticks = list(range(y_max, -1, -step))
-            chart_h = 150
-            bar_w = 10
-            y_axis = ft.Column(
-                [ft.Text(f'{t}', size=8.5, color=TEXT_MUTED) for t in ticks],
-                height=chart_h,
-                alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-                horizontal_alignment=ft.CrossAxisAlignment.END,
-            )
-
-            group_blocks = []
-            group_items = list(groups.items())
-            for idx, (eq, pos_values) in enumerate(group_items):
-                bars = []
+            chart_h, bar_w = 150, 10
+            y_axis = ft.Column([ft.Text(f'{t:,.0f}', size=8.5, color=TEXT_MUTED) for t in ticks], height=chart_h,
+                               alignment=ft.MainAxisAlignment.SPACE_BETWEEN, horizontal_alignment=ft.CrossAxisAlignment.END)
+            group_blocks=[]
+            items=list(groups.items())
+            for idx,(label,pos_values) in enumerate(items):
+                bars=[]
                 for pos in pos_order:
-                    data = pos_values.get(pos)
-                    if data is None:
-                        stacked_bar = ft.Column(
-                            [ft.Container(width=bar_w, height=2, bgcolor='#CBD5E1', border_radius=2)],
-                            spacing=0,
-                            height=chart_h,
-                            alignment=ft.MainAxisAlignment.END,
-                            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-                        )
+                    data=pos_values.get(pos)
+                    if not data:
+                        stacked=ft.Column([ft.Container(width=bar_w,height=2,bgcolor='#CBD5E1',border_radius=2)],spacing=0,height=chart_h,alignment=ft.MainAxisAlignment.END)
                     else:
-                        if isinstance(data, dict):
-                            worked = max(0.0, float(data.get('worked') or 0.0))
-                            remaining = max(0.0, float(data.get('remaining') or 0.0))
-                        else:
-                            worked = max(0.0, float(data))
-                            remaining = 0.0
-                        worked_h = chart_h * min(worked, float(y_max)) / float(y_max)
-                        remaining_h = chart_h * min(remaining, max(0.0, float(y_max) - worked)) / float(y_max)
-                        segments = []
-                        # Orden visual aprobado: horas acumuladas (azul) en la base
-                        # y horas restantes proyectadas (naranja) encima.
-                        # En ft.Column con alineación END, el último segmento queda en la base.
-                        if remaining > 0:
-                            segments.append(ft.Container(
-                                width=bar_w,
-                                height=max(2, remaining_h),
-                                bgcolor='#F59E0B',
-                                border_radius=ft.BorderRadius.only(top_left=2, top_right=2),
-                            ))
-                        if worked > 0:
-                            segments.append(ft.Container(
-                                width=bar_w,
-                                height=max(3, worked_h),
-                                bgcolor=NAV_ACCENT,
-                                border_radius=(
-                                    ft.BorderRadius.only(bottom_left=2, bottom_right=2)
-                                    if remaining > 0 else 2
-                                ),
-                            ))
-                        stacked_bar = ft.Column(
-                            segments,
-                            spacing=0,
-                            height=chart_h,
-                            alignment=ft.MainAxisAlignment.END,
-                            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-                        )
-                    bars.append(ft.Column([
-                        ft.Container(height=chart_h, alignment=ft.Alignment.BOTTOM_CENTER, content=stacked_bar),
-                        ft.Text(pos, size=7.2, weight=ft.FontWeight.BOLD, color=TEXT_MUTED,
-                                text_align=ft.TextAlign.CENTER),
-                    ], spacing=2, horizontal_alignment=ft.CrossAxisAlignment.CENTER))
-
-                group_blocks.append(ft.Container(
-                    width=76,
-                    content=ft.Column([
-                        ft.Row(bars, spacing=4, alignment=ft.MainAxisAlignment.CENTER,
-                               vertical_alignment=ft.CrossAxisAlignment.END),
-                        ft.Text(eq, size=9, weight=ft.FontWeight.BOLD,
-                                color=TEXT_MAIN, text_align=ft.TextAlign.CENTER),
-                    ], spacing=3, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
-                ))
-                if idx < len(group_items) - 1:
-                    group_blocks.append(ft.Container(
-                        width=12,
-                        height=chart_h + 28,
-                        alignment=ft.Alignment.BOTTOM_CENTER,
-                        content=ft.Text('|', size=12, weight=ft.FontWeight.BOLD, color=TEXT_MUTED),
-                    ))
-
-            plot = ft.Stack([
-                ft.Column(
-                    [_soft_dotted_grid() for _ in ticks],
-                    height=chart_h,
-                    alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-                    spacing=0,
-                ),
-                ft.Row(
-                    group_blocks,
-                    spacing=4,
-                    alignment=ft.MainAxisAlignment.START,
-                    vertical_alignment=ft.CrossAxisAlignment.END,
-                ),
-            ], height=chart_h + 28)
-
-            legend = ft.Row([
-                ft.Row([
-                    ft.Container(width=10, height=10, bgcolor=NAV_ACCENT, border_radius=2),
-                    ft.Text('Horas acumuladas', size=9, color=TEXT_MUTED),
-                ], spacing=5),
-                ft.Row([
-                    ft.Container(width=10, height=10, bgcolor='#F59E0B', border_radius=2),
-                    ft.Text('Horas restantes proyectadas', size=9, color=TEXT_MUTED),
-                ], spacing=5),
-            ], spacing=16)
-
-            return ft.Column([
-                legend,
-                ft.Row([
-                    ft.Column([
-                        ft.Text('Horas (h)', size=8.5, color=TEXT_MUTED),
-                        y_axis,
-                        ft.Container(height=24),
-                    ], spacing=1, horizontal_alignment=ft.CrossAxisAlignment.END),
-                    ft.Container(expand=True, content=plot),
-                ], spacing=8, vertical_alignment=ft.CrossAxisAlignment.START),
-            ], spacing=4)
+                        worked=max(0.0,float(data.get('worked') or 0.0)); remaining=max(0.0,float(data.get('remaining') or 0.0))
+                        wh=chart_h*min(worked,y_max)/y_max; rh=chart_h*min(remaining,max(0.0,y_max-worked))/y_max
+                        seg=[]
+                        if remaining>0: seg.append(ft.Container(width=bar_w,height=max(2,rh),bgcolor='#F59E0B',border_radius=ft.BorderRadius.only(top_left=2,top_right=2)))
+                        if worked>0: seg.append(ft.Container(width=bar_w,height=max(3,wh),bgcolor=NAV_ACCENT,border_radius=(ft.BorderRadius.only(bottom_left=2,bottom_right=2) if remaining>0 else 2)))
+                        stacked=ft.Column(seg,spacing=0,height=chart_h,alignment=ft.MainAxisAlignment.END,horizontal_alignment=ft.CrossAxisAlignment.CENTER)
+                    bars.append(ft.Column([ft.Container(height=chart_h,alignment=ft.Alignment.BOTTOM_CENTER,content=stacked),ft.Text(pos,size=7.2,weight=ft.FontWeight.BOLD,color=TEXT_MUTED)],spacing=2,horizontal_alignment=ft.CrossAxisAlignment.CENTER))
+                group_blocks.append(ft.Container(width=92,content=ft.Column([ft.Row(bars,spacing=4,alignment=ft.MainAxisAlignment.CENTER,vertical_alignment=ft.CrossAxisAlignment.END),ft.Text(label,size=8.5,weight=ft.FontWeight.BOLD,color=TEXT_MAIN,text_align=ft.TextAlign.CENTER,max_lines=2,overflow=ft.TextOverflow.ELLIPSIS)],spacing=3,horizontal_alignment=ft.CrossAxisAlignment.CENTER)))
+                if idx<len(items)-1: group_blocks.append(ft.Container(width=10,height=chart_h+28,alignment=ft.Alignment.BOTTOM_CENTER,content=ft.Text('|',size=12,weight=ft.FontWeight.BOLD,color=TEXT_MUTED)))
+            plot=ft.Stack([ft.Column([_soft_dotted_grid() for _ in ticks],height=chart_h,alignment=ft.MainAxisAlignment.SPACE_BETWEEN,spacing=0),ft.Row(group_blocks,spacing=4,alignment=ft.MainAxisAlignment.START,vertical_alignment=ft.CrossAxisAlignment.END)],height=chart_h+28)
+            legend=ft.Row([ft.Row([ft.Container(width=10,height=10,bgcolor=NAV_ACCENT,border_radius=2),ft.Text(f'Acumulado ({unit})',size=9,color=TEXT_MUTED)],spacing=5),ft.Row([ft.Container(width=10,height=10,bgcolor='#F59E0B',border_radius=2),ft.Text(f'Restante proyectado ({unit})',size=9,color=TEXT_MUTED)],spacing=5)],spacing=16)
+            return ft.Column([ft.Row([ft.Text(f'{unit} por modelo de equipo',size=9,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),ft.Container(expand=True),ft.Text('P1 · P2 · P3 · P4',size=8.5,color=TEXT_MUTED)]),legend,ft.Row([ft.Column([ft.Text(unit,size=8.5,color=TEXT_MUTED),y_axis,ft.Container(height=24)],spacing=1,horizontal_alignment=ft.CrossAxisAlignment.END),ft.Container(content=ft.Row([plot],scroll=ft.ScrollMode.ALWAYS),expand=True)],spacing=8,vertical_alignment=ft.CrossAxisAlignment.START)],spacing=4)
 
         def donut_svg_chart(items, total=None, palette=None, legend_lines=None, center_label='Total'):
-            """Dona SVG compatible con Flet actual, con leyenda compacta y simétrica."""
+            """Dona grande centrada + leyenda inferior en 2 columnas con alto dinámico."""
             if not items:
                 return ft.Text('Sin datos suficientes para graficar.', size=11, color=TEXT_MUTED)
+
             import base64, math
+
             if total is None:
                 total = sum(count for _label, count in items)
+
             if palette is None:
-                palette = ['#1D4ED8', '#16A34A', '#EA580C', '#A855F7', '#DC2626', '#0D9488', '#CA8A04', '#475569']
-            cx, cy, radius, stroke = 82, 82, 50, 24
+                palette = ['#1D4ED8', '#16A34A', '#EA580C', '#A855F7', '#DC2626',
+                           '#0D9488', '#CA8A04', '#475569']
+
+            positive = [(str(label), int(count)) for label, count in items if int(count) > 0]
+
+            # ============================================================
+            # 1. CALCULAR AUTOMÁTICAMENTE LA LEYENDA
+            # ============================================================
+            # Dos columnas. El sistema determina cuántas filas necesita.
+            legend_count = len(positive)
+            legend_rows = max(1, math.ceil(legend_count / 2))
+
+            # Altura por fila y márgenes de la leyenda.
+            LEGEND_ROW_H = 20
+            LEGEND_TOP_BOTTOM = 12
+            legend_height = legend_rows * LEGEND_ROW_H + LEGEND_TOP_BOTTOM
+
+            # ============================================================
+            # 2. CALCULAR AUTOMÁTICAMENTE EL ALTO TOTAL
+            # ============================================================
+            # La dona conserva un tamaño grande y centrado.
+            chart_width = 480
+            donut_height = 290
+            separator_height = 4
+
+            # El alto se adapta a la cantidad real de elementos.
+            total_height = donut_height + separator_height + legend_height
+
+            cx, cy = chart_width / 2, 132
+            radius, stroke = 108, 44
             circumference = 2 * math.pi * radius
-            offset = 0.0
+
+            # ============================================================
+            # 3. DIBUJAR LA DONA
+            # ============================================================
             circles = []
-            legend = []
-            for idx, (label, count) in enumerate(items):
+            offset = 0.0
+
+            for idx, (_label, count) in enumerate(positive):
                 color = palette[idx % len(palette)]
-                pct_value = (count / total * 100.0) if total else 0.0
                 dash = circumference * (count / total) if total else 0.0
                 gap = max(0.0, circumference - dash)
-                if count > 0:
-                    circles.append(
-                        f'<circle cx="{cx}" cy="{cy}" r="{radius}" fill="none" stroke="{color}" '
-                        f'stroke-width="{stroke}" stroke-dasharray="{dash:.3f} {gap:.3f}" '
-                        f'stroke-dashoffset="{-offset:.3f}" transform="rotate(-90 {cx} {cy})" />'
-                    )
+
+                circles.append(
+                    f'<circle cx="{cx}" cy="{cy}" r="{radius}" fill="none" '
+                    f'stroke="{color}" stroke-width="{stroke}" '
+                    f'stroke-dasharray="{dash:.3f} {gap:.3f}" '
+                    f'stroke-dashoffset="{-offset:.3f}" '
+                    f'transform="rotate(-90 {cx} {cy})" />'
+                )
                 offset += dash
-                legend.append(ft.Row([
-                    ft.Container(width=9, height=9, bgcolor=color, border_radius=2),
-                    ft.Text(f'{label}: {count} ({pct_value:.1f}%)', size=9.2, color=TEXT_MAIN),
-                ], spacing=6))
+
             svg = (
-                '<svg xmlns="http://www.w3.org/2000/svg" width="164" height="164" viewBox="0 0 164 164">'
-                '<circle cx="82" cy="82" r="50" fill="none" stroke="#E2E8F0" stroke-width="24" />'
+                f'<svg xmlns="http://www.w3.org/2000/svg" '
+                f'width="{chart_width}" height="{donut_height}" '
+                f'viewBox="0 0 {chart_width} {donut_height}">'
+                f'<circle cx="{cx}" cy="{cy}" r="{radius}" fill="none" '
+                f'stroke="#E2E8F0" stroke-width="{stroke}" />'
                 + ''.join(circles) +
-                f'<text x="82" y="79" text-anchor="middle" font-family="Arial" font-size="23" font-weight="700" fill="#172033">{total}</text>'
-                f'<text x="82" y="98" text-anchor="middle" font-family="Arial" font-size="10" fill="#64748B">{center_label}</text>'
+                f'<text x="{cx}" y="{cy-2}" text-anchor="middle" '
+                f'font-family="Arial" font-size="30" font-weight="700" '
+                f'fill="#172033">{total}</text>'
+                f'<text x="{cx}" y="{cy+20}" text-anchor="middle" '
+                f'font-family="Arial" font-size="10" fill="#64748B">'
+                f'{center_label}</text>'
                 '</svg>'
             )
+
             svg_b64 = base64.b64encode(svg.encode('utf-8')).decode('ascii')
-            chart = ft.Image(src='data:image/svg+xml;base64,' + svg_b64, width=164, height=164, fit=ft.BoxFit.CONTAIN)
-            controls = [
-                ft.Row([chart, ft.Column(legend, spacing=5)], spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER)
-            ]
-            if legend_lines:
-                controls.append(
-                    ft.Container(
-                        width=285,
-                        border=ft.Border.all(1, '#CBD5E1'),
-                        border_radius=8,
-                        padding=8,
-                        content=ft.Column([
-                            ft.Text('LEYENDA / CRITERIO', size=9, weight=ft.FontWeight.BOLD, color=TEXT_MAIN),
-                            *[ft.Text(line, size=8.5, color=TEXT_MAIN) for line in legend_lines],
-                        ], spacing=3),
+
+            chart = ft.Container(
+                width=chart_width,
+                height=donut_height,
+                alignment=ft.Alignment(0, 0),
+                content=ft.Image(
+                    src='data:image/svg+xml;base64,' + svg_b64,
+                    width=chart_width,
+                    height=donut_height,
+                    fit=ft.BoxFit.CONTAIN,
+                ),
+            )
+
+            # ============================================================
+            # 4. LEYENDA INFERIOR EN DOS COLUMNAS
+            # ============================================================
+            legend_entries = []
+
+            for idx, (label, count) in enumerate(positive):
+                color = palette[idx % len(palette)]
+                pct_value = (count / total * 100.0) if total else 0.0
+
+                legend_entries.append(
+                    ft.Row(
+                        [
+                            ft.Container(
+                                width=10,
+                                height=10,
+                                bgcolor=color,
+                                border_radius=2,
+                            ),
+                            ft.Text(
+                                f'{label}: {count} ({pct_value:.1f}%)',
+                                size=10,
+                                color=TEXT_MAIN,
+                                no_wrap=True,
+                                overflow=ft.TextOverflow.ELLIPSIS,
+                            ),
+                        ],
+                        spacing=6,
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
                     )
                 )
-            return ft.Column(controls, spacing=6, horizontal_alignment=ft.CrossAxisAlignment.CENTER)
 
-        def brand_pie_chart(brand_counts):
-            if not brand_counts:
+            # Repartición automática en dos columnas.
+            mid = math.ceil(len(legend_entries) / 2)
+            left_entries = legend_entries[:mid]
+            right_entries = legend_entries[mid:]
+
+            while len(left_entries) < legend_rows:
+                left_entries.append(ft.Container(height=LEGEND_ROW_H))
+
+            while len(right_entries) < legend_rows:
+                right_entries.append(ft.Container(height=LEGEND_ROW_H))
+
+            legend = ft.Container(
+                width=chart_width,
+                height=legend_height,
+                padding=ft.Padding(left=8, top=2, right=8, bottom=8),
+                content=ft.Row(
+                    [
+                        ft.Column(
+                            left_entries,
+                            spacing=0,
+                            expand=True,
+                            horizontal_alignment=ft.CrossAxisAlignment.START,
+                        ),
+                        ft.Column(
+                            right_entries,
+                            spacing=0,
+                            expand=True,
+                            horizontal_alignment=ft.CrossAxisAlignment.START,
+                        ),
+                    ],
+                    spacing=18,
+                    vertical_alignment=ft.CrossAxisAlignment.START,
+                ),
+            )
+
+            controls = [chart, ft.Container(height=separator_height), legend]
+
+            if legend_lines:
+                extra_height = len(legend_lines) * 18 + 24
+                total_height += extra_height
+
+                controls.append(
+                    ft.Container(
+                        width=chart_width,
+                        padding=ft.Padding(left=8, top=2, right=8, bottom=4),
+                        content=ft.Column(
+                            [
+                                ft.Text(
+                                    'LEYENDA / CRITERIO',
+                                    size=9,
+                                    weight=ft.FontWeight.BOLD,
+                                    color=TEXT_MAIN,
+                                ),
+                                *[
+                                    ft.Text(line, size=9, color=TEXT_MAIN)
+                                    for line in legend_lines
+                                ],
+                            ],
+                            spacing=3,
+                        ),
+                    )
+                )
+
+            # ============================================================
+            # 5. EL CONTENEDOR EXTERIOR TAMBIÉN CRECE
+            # ============================================================
+            return ft.Container(
+                width=chart_width,
+                height=total_height,
+                alignment=ft.Alignment(0, 0),
+                content=ft.Column(
+                    controls,
+                    spacing=0,
+                    horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                ),
+            )
+
+        def horizontal_bar_chart(items, title, subtitle='', max_items=20):
+            """Barras horizontales con altura adaptable."""
+            if not items:
                 return ft.Text('Sin datos suficientes para graficar.', size=11, color=TEXT_MUTED)
+
+            import math
+            ordered = sorted(
+                [(str(label), int(count)) for label, count in items if int(count) > 0],
+                key=lambda x: (-x[1], x[0])
+            )[:max_items]
+
+            total = sum(c for _, c in ordered) or 1
+            max_value = max(c for _, c in ordered) or 1
+            palette = ['#1D4ED8','#16A34A','#EA580C','#A855F7',
+                       '#DC2626','#0D9488','#CA8A04','#475569']
+
+            rows = []
+            for i, (label, count) in enumerate(ordered):
+                color = palette[i % len(palette)]
+                rows.append(
+                    ft.Row([
+                        ft.Container(
+                            width=125,
+                            content=ft.Text(label, size=10, color=TEXT_MAIN,
+                                            no_wrap=True,
+                                            overflow=ft.TextOverflow.ELLIPSIS),
+                        ),
+                        ft.Container(
+                            width=max(35, 270 * count / max_value),
+                            height=22,
+                            bgcolor=color,
+                            border_radius=4,
+                            alignment=ft.Alignment(1, 0),
+                            padding=ft.Padding(left=5, top=0, right=6, bottom=0),
+                            content=ft.Text(str(count), size=10,
+                                            weight=ft.FontWeight.BOLD,
+                                            color='#FFFFFF'),
+                        ),
+                    ], spacing=6)
+                )
+
+            legend_items = [
+                ft.Text(f'{label}: {count} ({count / total * 100:.1f}%)',
+                        size=9, color=TEXT_MUTED, no_wrap=True,
+                        overflow=ft.TextOverflow.ELLIPSIS)
+                for label, count in ordered
+            ]
+
+            mid = math.ceil(len(legend_items) / 2)
+            left, right = legend_items[:mid], legend_items[mid:]
+            rows_needed = max(len(left), len(right))
+            while len(left) < rows_needed:
+                left.append(ft.Container(height=16))
+            while len(right) < rows_needed:
+                right.append(ft.Container(height=16))
+
+            legend = ft.Row([
+                ft.Column(left, spacing=2, expand=True),
+                ft.Column(right, spacing=2, expand=True),
+            ], spacing=12)
+
+            dynamic_height = 300
+
+            return ft.Container(
+                height=300,
+                content=ft.Column([
+                    ft.Text(title, size=13, weight=ft.FontWeight.BOLD, color=TEXT_MAIN),
+                    ft.Text(subtitle, size=9, color=TEXT_MUTED),
+                    ft.Container(height=4),
+                    ft.Column(rows, spacing=5),
+                    ft.Divider(height=8, color='#E2E8F0'),
+                    legend,
+                ], spacing=3),
+            )
+
+        def brand_bar_chart(brand_counts):
             ordered = sorted(brand_counts.items(), key=lambda x: (-x[1], x[0]))
-            return donut_svg_chart(ordered, palette=['#1D4ED8', '#16A34A', '#EA580C', '#A855F7', '#DC2626', '#0D9488'])
+            return horizontal_bar_chart(
+                ordered,
+                'DISTRIBUCIÓN POR MARCA',
+                'Cantidad de neumáticos actualmente en servicio',
+            )
+
+        def fleet_vehicle_chart(operation_id):
+            """Flota completa del taller activo: característica + modelo + cantidad."""
+            rows = query(
+                """
+                SELECT
+                    COALESCE(NULLIF(TRIM(vehicle_type), ''), 'SIN CARACTERÍSTICA') AS characteristic,
+                    COALESCE(NULLIF(TRIM(model), ''), 'SIN MODELO') AS model,
+                    COUNT(*) AS qty
+                FROM equipment
+                WHERE operation_id=?
+                GROUP BY 1,2
+                ORDER BY 1,2
+                """,
+                (operation_id,)
+            )
+
+            items = [
+                (f"{str(r['characteristic']).strip()} · {str(r['model']).strip()}", int(r['qty']))
+                for r in rows
+            ]
+
+            return horizontal_bar_chart(
+                items,
+                'FLOTA VEHICULAR',
+                'Equipos del taller activo por característica y modelo',
+                max_items=30,
+            )
 
         def pressure_pie_chart(counts):
             items = [
@@ -1364,12 +2142,54 @@ def main(page: ft.Page):
                 palette=['#16A34A', '#F59E0B', '#DC2626', '#7C3AED'],
             )
 
-        def valve_pie_chart(counts):
-            items = [
-                ('Con tapa', counts.get('yes', 0)),
-                ('Sin tapa', counts.get('no', 0)),
-            ]
-            return donut_svg_chart(items, palette=['#16A34A', '#DC2626'])
+        def valve_status_chart(ops_rows):
+            """Gráfico SI/NO de tapa de válvula para el panel 2.1.
+            Eje X = SI / NO; altura = cantidad; debajo se muestran las posiciones.
+            """
+            yes_pos=[]
+            no_pos=[]
+            for r, od in ops_rows:
+                pos = str(r['position'] or '—').strip()
+                if str(od.get('valve_cap') or '').strip().upper() == 'SI':
+                    yes_pos.append(pos)
+                else:
+                    no_pos.append(pos)
+
+            values=[('SÍ',len(yes_pos),'#28B7E6'),('NO',len(no_pos),'#EF4444')]
+            max_count=max([v[1] for v in values] + [1])
+            chart_w=290
+            chart_h=175
+            base_y=122
+            plot_top=20
+            bar_w=58
+            xs=[72, 170]
+            layers=[ft.Container(left=0,top=plot_top,width=chart_w,height=1,bgcolor='#D5DDE6')]
+            # Ejes y guías ligeras
+            for tick in range(max_count+1):
+                y=base_y-(tick/max_count)*88 if max_count else base_y
+                layers.append(ft.Container(left=32,top=y,width=220,height=1,bgcolor='#E5EAF0'))
+                layers.append(ft.Container(left=10,top=y-7,width=18,height=14,alignment=ft.Alignment.CENTER,
+                                           content=ft.Text(str(tick),size=8,color=TEXT_MUTED,text_align=ft.TextAlign.CENTER)))
+            for x,(label,count,color) in zip(xs, values):
+                bh=(count/max_count)*88 if max_count else 0
+                y=base_y-bh
+                layers.append(ft.Container(left=x,top=y,width=bar_w,height=max(bh,2),bgcolor=color,
+                                           border_radius=ft.BorderRadius(7,7,0,0),
+                                           alignment=ft.Alignment.TOP_CENTER,
+                                           content=ft.Container(padding=ft.Padding(left=2,top=4,right=2,bottom=2),
+                                                                content=ft.Text(str(count),size=13,weight=ft.FontWeight.BOLD,color=ft.Colors.WHITE,text_align=ft.TextAlign.CENTER))))
+                layers.append(ft.Container(left=x-5,top=base_y+7,width=bar_w+10,
+                                           alignment=ft.Alignment.CENTER,
+                                           content=ft.Text(label,size=11,weight=ft.FontWeight.BOLD,color=TEXT_MAIN,text_align=ft.TextAlign.CENTER)))
+
+            plot=ft.Stack(controls=layers,width=chart_w,height=chart_h)
+            yes_text=', '.join(yes_pos) if yes_pos else 'Ninguna'
+            no_text=', '.join(no_pos) if no_pos else 'Ninguna'
+            return ft.Column([
+                ft.Row([plot],alignment=ft.MainAxisAlignment.CENTER),
+                ft.Text(f'SÍ: {len(yes_pos)} neumático(s) · Posiciones: {yes_text}',size=8.5,color='#15803D',weight=ft.FontWeight.BOLD,text_align=ft.TextAlign.CENTER),
+                ft.Text(f'NO: {len(no_pos)} neumático(s) · Posiciones: {no_text}',size=8.5,color='#B91C1C',weight=ft.FontWeight.BOLD,text_align=ft.TextAlign.CENTER),
+            ],spacing=3,horizontal_alignment=ft.CrossAxisAlignment.CENTER)
 
         def dashboard_card(title, subtitle, body, height=None):
             return ft.Container(
@@ -1387,17 +2207,43 @@ def main(page: ft.Page):
                 ], spacing=5),
             )
 
-        # Dashboard: primero las tres donas simétricas; debajo,
-        # remanente y horas acumuladas a todo el ancho.
-        dashboard = ft.Column([
-            ft.Row([
-                dashboard_card('DISTRIBUCIÓN POR MARCA', 'Participación de neumáticos actualmente en servicio', brand_pie_body, height=245),
-                dashboard_card('PRESIONES VS. PRESIÓN RECOMENDADA', 'Diferencia absoluta entre presión actual y recomendada', pressure_pie_body, height=245),
-                dashboard_card('TAPA VÁLVULA', 'Estado de tapa de válvula en neumáticos en servicio', valve_pie_body, height=245),
-            ], spacing=12, vertical_alignment=ft.CrossAxisAlignment.START),
-            dashboard_card('REMANENTE POR POSICIÓN (%)', 'Eje X: equipos · P1, P2, P3 y P4 · Eje Y: % remanente', rem_chart_body),
-            dashboard_card('HORAS ACUMULADAS + HORAS RESTANTES POR POSICIÓN (h)', 'Azul: horas acumuladas · Naranja: horas restantes proyectadas · Altura total: proyección de vida', hours_chart_body),
-        ], spacing=12)
+        # Dashboard 2.1: tres columnas.
+        dashboard = ft.Row([
+            ft.Container(
+                expand=True,
+                content=dashboard_card(
+                    'DISTRIBUCIÓN POR MARCA',
+                    'Cantidad de neumáticos actualmente en servicio',
+                    brand_pie_body,
+                         height=300,
+                ),
+            ),
+            ft.Container(
+                expand=True,
+                content=dashboard_card(
+                    'FLOTA VEHICULAR',
+                    'Flota completa del taller activo',
+                    fleet_body,
+                         height=300,
+                ),
+            ),
+            ft.Container(
+                expand=True,
+                content=ft.Column([
+                    dashboard_card(
+                        'EVALUACIÓN DE PRESIÓN (PSI)',
+                        'Diferencia entre presión actual y recomendada',
+                        pressure_pie_body,
+                         height=300,
+                    ),
+                    dashboard_card(
+                        'EVALUACIÓN DE EVALUACIÓN DE TAPA VÁLVULASS',
+                        'Estado de tapa de válvula en neumáticos en servicio',
+                        valve_pie_body,
+                    ),
+                ], spacing=12),
+            ),
+        ], spacing=12, vertical_alignment=ft.CrossAxisAlignment.START)
 
         # Tabla técnica compacta: encabezado fijo + desplazamiento vertical interno.
         # El contenedor horizontal usa ScrollMode.ALWAYS para mantener disponible
@@ -1498,10 +2344,10 @@ def main(page: ft.Page):
         service_body = ft.Column([], spacing=0, scroll=ft.ScrollMode.ALWAYS)
         service_table_inner = ft.Column([
             service_header,
-            ft.Container(height=360, content=service_body),
+            ft.Container(height=420, content=service_body),
         ], spacing=0, width=service_total_width)
         service_table_view = ft.Container(
-            height=420,
+            height=480,
             content=ft.Row(
                 [service_table_inner],
                 scroll=ft.ScrollMode.ALWAYS,
@@ -1552,37 +2398,20 @@ def main(page: ft.Page):
                 return None
             return None
 
-        def tire_operational_data(r):
-            tid = r['id']
-            eid = r['equipment_id']
-            inst = query("""
-                SELECT meter,event_date FROM occurrences
-                WHERE tire_id=? AND event_code='INST'
-                  AND (? IS NULL OR equipment_id=?)
-                ORDER BY event_date DESC,id DESC LIMIT 1
-            """, (tid, eid, eid))
-            inst_meter = inst[0]['meter'] if inst else None
-            inst_date = inst[0]['event_date'] if inst else ''
-            last = query("""
-                SELECT event_date,event_code,meter,tread_inner,tread_outer,pressure,
-                       pressure_condition,location,reason,notes
-                FROM occurrences WHERE tire_id=?
-                ORDER BY id DESC LIMIT 1
-            """, (tid,))
-            last_row = last[0] if last else None
+        # V10: caché por refresco para evitar 3 consultas SQLite por cada neumático.
+        # Con 33 neumáticos, la vista pasaba de ~100 consultas a solo 3 consultas masivas.
+        operational_cache_state = {'inst': {}, 'last': {}, 'insp': {}}
 
-            # Para la tabla de Neumáticos en servicio, los campos de inspección
-            # se toman de la última INSP/INSC registrada del neumático.
-            insp = query("""
-                SELECT event_date,event_code,meter,tread_inner,tread_outer,pressure,
-                       pressure_condition,location,reason,notes
-                FROM occurrences
-                WHERE tire_id=? AND event_code IN ('INSP','INSC')
-                -- La fecha se guarda en formatos históricos mixtos (dd/mm/aaaa e ISO),
-                -- por eso la última inspección se determina por el ID de registro.
-                ORDER BY id DESC LIMIT 1
-            """, (tid,))
-            inspection_row = insp[0] if insp else last_row
+        def tire_operational_data(r):
+            tid = int(r['id'])
+            eid = r['equipment_id']
+            inst_row = operational_cache_state['inst'].get((tid, eid))
+            if inst_row is None and eid is None:
+                inst_row = operational_cache_state['inst'].get((tid, None))
+            inst_meter = inst_row['meter'] if inst_row else None
+            inst_date = inst_row['event_date'] if inst_row else ''
+            last_row = operational_cache_state['last'].get(tid)
+            inspection_row = operational_cache_state['insp'].get(tid) or last_row
 
             current_meter = r['current_meter']
             worked = None
@@ -1603,8 +2432,16 @@ def main(page: ft.Page):
                     hpmm = worked / wear
 
             last_pressure = inspection_row['pressure'] if inspection_row and inspection_row['pressure'] is not None else None
-            note_text = str(inspection_row['notes'] or '').upper() if inspection_row else ''
-            valve_cap = 'SI' if ('TAPA' in note_text or 'VALVULA' in note_text or 'VÁLVULA' in note_text) else 'NO'
+            # Tapa Válvula representa el estado del ÚLTIMO evento registrado.
+            valve_source = last_row or inspection_row
+            valve_raw = str(valve_source['valve_cap'] or '').strip().upper() if valve_source and 'valve_cap' in valve_source.keys() else ''
+            if valve_raw in ('SI','SÍ'):
+                valve_cap = 'SI'
+            elif valve_raw == 'NO':
+                valve_cap = 'NO'
+            else:
+                note_text = str(valve_source['notes'] or '').upper() if valve_source and 'notes' in valve_source.keys() else ''
+                valve_cap = 'SI' if ('TAPA' in note_text or 'VALVULA' in note_text or 'VÁLVULA' in note_text) else 'NO'
             return {
                 'inst_meter': inst_meter, 'inst_date': inst_date, 'worked': worked,
                 'min_tread': min_tread, 'wear': wear, 'rem': rem, 'hpmm': hpmm,
@@ -1674,9 +2511,9 @@ def main(page: ft.Page):
                            e.location equipment_location,e.vehicle_type,e.tire_size equipment_tire_size
                     FROM tires t
                     LEFT JOIN equipment e ON e.id=t.equipment_id
-                    WHERE t.status='SERVICIO'
+                    WHERE t.status='SERVICIO' AND t.operation_id=?
                 """
-                options_params = []
+                options_params = [op_id]
                 if equipment_state['id'] not in (None, '', ALL):
                     options_sql += ' AND t.equipment_id=?'
                     options_params.append(int(equipment_state['id']))
@@ -1721,6 +2558,75 @@ def main(page: ft.Page):
                 # ROT: bloqueado hasta definir su funcionalidad.
                 btn.disabled = (not can_open) or code in ('INST', 'ROT')
 
+            # V10: precarga masiva de ocurrencias para los neumáticos visibles.
+            # Evita el patrón N+1 y mejora notablemente el tiempo de apertura/refresco.
+            operational_cache_state['inst'].clear()
+            operational_cache_state['last'].clear()
+            operational_cache_state['insp'].clear()
+            row_ids = [int(r['id']) for r in rows]
+            if row_ids:
+                marks = ','.join('?' for _ in row_ids)
+                # Optimización crítica: NO cargar todo el historial de occurrences.
+                # El reporte general solo necesita el último evento, la última INSP/INSC
+                # y la última INST de cada neumático visible. Con muchos movimientos
+                # históricos, traer todas las ocurrencias hacía que Argentum tardara
+                # demasiado en abrir el reporte.
+                latest_rows = query(
+                    f"""SELECT id,tire_id,equipment_id,event_date,event_code,meter,
+                               tread_inner,tread_outer,pressure,pressure_condition,
+                               location,reason,notes,valve_cap
+                        FROM (
+                            SELECT o.*, ROW_NUMBER() OVER (
+                                PARTITION BY o.tire_id
+                                ORDER BY o.id DESC
+                            ) rn
+                            FROM occurrences o
+                            WHERE o.operation_id=? AND o.tire_id IN ({marks})
+                        ) q
+                        WHERE rn=1""",
+                    (op_id, *row_ids)
+                )
+                for o in latest_rows:
+                    operational_cache_state['last'][int(o['tire_id'])] = o
+
+                insp_rows = query(
+                    f"""SELECT id,tire_id,equipment_id,event_date,event_code,meter,
+                               tread_inner,tread_outer,pressure,pressure_condition,
+                               location,reason,notes,valve_cap
+                        FROM (
+                            SELECT o.*, ROW_NUMBER() OVER (
+                                PARTITION BY o.tire_id
+                                ORDER BY o.id DESC
+                            ) rn
+                            FROM occurrences o
+                            WHERE o.operation_id=?
+                              AND o.tire_id IN ({marks})
+                              AND o.event_code IN ('INSP','INSC')
+                        ) q
+                        WHERE rn=1""",
+                    (op_id, *row_ids)
+                )
+                for o in insp_rows:
+                    operational_cache_state['insp'][int(o['tire_id'])] = o
+
+                inst_rows = query(
+                    f"""SELECT id,tire_id,equipment_id,event_date,event_code,meter
+                        FROM (
+                            SELECT o.*, ROW_NUMBER() OVER (
+                                PARTITION BY o.tire_id,o.equipment_id
+                                ORDER BY o.id DESC
+                            ) rn
+                            FROM occurrences o
+                            WHERE o.operation_id=?
+                              AND o.event_code='INST'
+                              AND o.tire_id IN ({marks})
+                        ) q
+                        WHERE rn=1""",
+                    (op_id, *row_ids)
+                )
+                for o in inst_rows:
+                    operational_cache_state['inst'][(int(o['tire_id']), o['equipment_id'])] = o
+
             ops = [(r, tire_operational_data(r)) for r in rows]
             service_body.controls = []
             export_rows_state['rows'] = []
@@ -1729,7 +2635,62 @@ def main(page: ft.Page):
 
             previous_equipment = None
             equipment_group_index = -1
-            equipment_group_colors = ['#F4F7FA', '#EAF1F7']  # azul/gris suave
+            equipment_group_colors = ['#F4F7FA', '#EAF1F7']
+            equipment_tire_counts = {}
+            for rr in rows:
+                if rr['equipment_id'] is not None:
+                    equipment_tire_counts[rr['equipment_id']] = equipment_tire_counts.get(rr['equipment_id'], 0) + 1
+
+            # Cada equipo se presenta como un acordeón. Al abrir 2.1 solo se
+            # muestran los encabezados de los equipos; los neumáticos quedan
+            # ocultos hasta pulsar el botón deslizable del equipo.
+            current_group = None
+            current_children = None
+
+            def make_equipment_header(equipment_code, group_detail, tire_count, children_container):
+                expanded = {'value': False}
+
+                def toggle(_e):
+                    expanded['value'] = not expanded['value']
+                    children_container.visible = expanded['value']
+                    toggle_icon.icon = (
+                        ft.Icons.KEYBOARD_ARROW_UP if expanded['value']
+                        else ft.Icons.KEYBOARD_ARROW_DOWN
+                    )
+                    page.update()
+
+                toggle_icon = ft.IconButton(
+                    icon=ft.Icons.KEYBOARD_ARROW_DOWN,
+                    icon_size=22,
+                    icon_color='#173B5E',
+                    tooltip='Mostrar / ocultar neumáticos',
+                    on_click=toggle,
+                )
+
+                return ft.Container(
+                    height=42,
+                    bgcolor='#DCE7F2',
+                    padding=ft.Padding(left=8, top=0, right=8, bottom=0),
+                    alignment=ft.Alignment.CENTER_LEFT,
+                    content=ft.Row([
+                        toggle_icon,
+                        ft.Icon(ft.Icons.PRECISION_MANUFACTURING_OUTLINED, size=17, color='#173B5E'),
+                        ft.Text(
+                            f'EQUIPO: {equipment_code}  ·  {group_detail}',
+                            size=10.5, weight=ft.FontWeight.BOLD, color='#173B5E', expand=True,
+                        ),
+                        ft.Container(
+                            bgcolor='#173B5E', border_radius=12,
+                            padding=ft.Padding(left=10, top=4, right=10, bottom=4),
+                            content=ft.Text(
+                                f'{tire_count} NEUMÁTICO' + ('S' if tire_count != 1 else '') +
+                                ' CARGADO' + ('S' if tire_count != 1 else ''),
+                                size=9.5, weight=ft.FontWeight.BOLD, color='#FFFFFF'
+                            )
+                        ),
+                    ], spacing=6),
+                )
+
             for r, od in ops:
                 if od['rem'] is not None:
                     rem_values.append(od['rem'])
@@ -1738,13 +2699,33 @@ def main(page: ft.Page):
 
                 equipment_code = r['equipment_code'] or '—'
 
-                # Cada equipo se identifica con un color suave alternado.
-                # Las cuatro posiciones del mismo equipo conservan el mismo fondo.
                 if equipment_code != previous_equipment:
                     equipment_group_index += 1
+                    if current_group is not None:
+                        service_body.controls.append(current_group)
+
                     if previous_equipment is not None:
-                        service_body.controls.append(ft.Container(height=7, bgcolor='#DCE6EF'))
-                row_bgcolor = equipment_group_colors[equipment_group_index % len(equipment_group_colors)]
+                        service_body.controls.append(ft.Container(height=5, bgcolor='#DCE6EF'))
+
+                    tire_count = equipment_tire_counts.get(r['equipment_id'], 0)
+                    vehicle_type = str(r['vehicle_type'] or '').strip()
+                    equipment_model = str(r['equipment_model'] or '').strip()
+                    group_detail = ' · '.join(x for x in (vehicle_type, equipment_model) if x) or 'Sin tipo/modelo'
+
+                    current_children = ft.Column(
+                        [],
+                        spacing=0,
+                        visible=False,
+                    )
+                    header = make_equipment_header(
+                        equipment_code, group_detail, tire_count, current_children
+                    )
+                    current_group = ft.Column(
+                        [header, current_children],
+                        spacing=0,
+                    )
+
+                row_bgcolor = '#F4F7FA' if (equipment_group_index % 2 == 0) else '#EAF1F7'
                 previous_equipment = equipment_code
 
                 original_outer = r['new_tread_outer'] if 'new_tread_outer' in r.keys() else None
@@ -1771,10 +2752,6 @@ def main(page: ft.Page):
                 if r['cost_usd'] is not None and od['worked'] is not None and float(od['worked']) > 0:
                     cost_hour = float(r['cost_usd']) / float(od['worked'])
 
-                # Proyección restante (h), usando el criterio conservador aprobado:
-                # RTD actual = MENOR lectura entre RTD EXT e INT.
-                # Hs/mm = horas de rodado / desgaste consumido.
-                # Horas proyectadas = (RTD actual - RTD de retiro) x Hs/mm.
                 projected_hours = None
                 retirement_tread = r['retirement_tread'] if 'retirement_tread' in r.keys() else None
                 if (hs_mm is not None and current_min is not None and retirement_tread is not None):
@@ -1797,13 +2774,13 @@ def main(page: ft.Page):
                     fmt(rtd_ext) if rtd_ext is not None else '—',
                     fmt(rtd_int) if rtd_int is not None else '—',
                     f"{rtd_diff:.1f}" if rtd_diff is not None else '—',
-                    None,  # gráfico Vida útil
+                    None,
                     format_date(od['inspection_date']) or '—',
                     fmt(od['inspection_meter']) or '—',
                     fmt(od['worked']) or '—',
                     f"{hs_mm:.2f}" if hs_mm is not None else '—',
                     f"{projected_hours:,.0f}" if projected_hours is not None else '—',
-                    None,  # gráfico Horas de rodado + proyección
+                    None,
                 ]
 
                 row_cells = []
@@ -1811,10 +2788,15 @@ def main(page: ft.Page):
                     if idx == 11:
                         row_cells.append(life_graph_cell(rem_pct, service_widths[idx], row_bgcolor))
                     elif idx == 17:
-                        row_cells.append(hours_projection_graph_cell(od['worked'], projected_hours, service_widths[idx], row_bgcolor))
+                        row_cells.append(hours_projection_graph_cell(
+                            od['worked'], projected_hours, service_widths[idx], row_bgcolor
+                        ))
                     else:
-                        row_cells.append(service_cell(v, service_widths[idx], bold=idx in (0,2), bgcolor=row_bgcolor))
-                service_body.controls.append(ft.Row(row_cells, spacing=0))
+                        row_cells.append(service_cell(
+                            v, service_widths[idx], bold=idx in (0,2), bgcolor=row_bgcolor
+                        ))
+                current_children.controls.append(ft.Row(row_cells, spacing=0))
+
                 export_rows_state['rows'].append({
                     'EQUIPO': equipment_code,
                     'POSICIÓN': f"P{r['position']}" if r['position'] not in (None, '') else '—',
@@ -1833,81 +2815,36 @@ def main(page: ft.Page):
                     'HORAS DE RODADO': od['worked'],
                     'Hs/mm': hs_mm,
                     'HORAS PROYECTADAS': projected_hours,
-                    'HORAS DE RODADO + PROYECCIÓN': (float(od['worked'] or 0) + float(projected_hours or 0)) if (od['worked'] is not None or projected_hours is not None) else None,
+                    'HORAS DE RODADO + PROYECCIÓN': (
+                        float(od['worked'] or 0) + float(projected_hours or 0)
+                    ) if (od['worked'] is not None or projected_hours is not None) else None,
                 })
+
+            if current_group is not None:
+                service_body.controls.append(current_group)
 
             total_service = len(rows)
             eq_count = len({r['equipment_id'] for r in rows if r['equipment_id'] is not None})
             avg_rem = sum(rem_values) / len(rem_values) if rem_values else None
             current_meter = max([float(r['current_meter']) for r in rows if r['current_meter'] is not None], default=None)
-            latest_date = ''
-            if rows:
-                ids = tuple(r['id'] for r in rows)
-                qmarks = ','.join('?' for _ in ids)
-                rr = query('SELECT MAX(event_date) d FROM occurrences WHERE tire_id IN (' + qmarks + ')', ids)
-                latest_date = rr[0]['d'] if rr else ''
-
             metrics.controls = [
                 metric_card('En servicio', total_service, ft.Icons.TIRE_REPAIR, 'Neumáticos del filtro actual'),
                 metric_card('Equipos con neumáticos', eq_count, ft.Icons.PRECISION_MANUFACTURING_OUTLINED, 'Flota del filtro actual'),
                 metric_card('Remanente promedio', pct(avg_rem) if avg_rem is not None else '—', ft.Icons.ASSESSMENT_OUTLINED, 'Sobre profundidad nueva'),
             ]
 
-            # Dashboard por equipo y posición. En Remanente, el eje X son los equipos
-            # y dentro de cada equipo se muestran P1, P2, P3 y P4; eje Y = % remanente.
-            chart_groups = {}
-            for r, od in ops:
-                eq = r['equipment_code'] or '—'
-                pos = f"P{r['position']}" if r['position'] not in (None, '') else '—'
-                original_outer = r['new_tread_outer'] if 'new_tread_outer' in r.keys() else None
-                original_inner = r['new_tread_inner'] if 'new_tread_inner' in r.keys() else None
-                if original_outer is None:
-                    original_outer = r['new_tread']
-                if original_inner is None:
-                    original_inner = r['new_tread']
-                original_vals = [v for v in (original_outer, original_inner) if isinstance(v, (int, float))]
-                current_vals = [v for v in (r['tread_outer'], r['tread_inner']) if isinstance(v, (int, float))]
-                rem = None
-                if original_vals and current_vals and min(original_vals) not in (None, 0):
-                    rem = max(0, min(100, float(min(current_vals)) / float(min(original_vals)) * 100))
-                worked = None
-                if od['worked'] is not None:
-                    try:
-                        worked = max(0.0, float(od['worked']))
-                    except Exception:
-                        worked = None
-                # Horas restantes proyectadas usando el mismo criterio aprobado:
-                # menor RTD EXT/INT y profundidad de retiro del Registro Maestro.
-                remaining_hours = None
-                if worked is not None and original_vals and current_vals:
-                    original_min_chart = min(original_vals)
-                    current_min_chart = min(current_vals)
-                    wear_mm_chart = max(0.0, float(original_min_chart) - float(current_min_chart))
-                    retirement_tread_chart = r['retirement_tread'] if 'retirement_tread' in r.keys() else None
-                    if wear_mm_chart > 0 and retirement_tread_chart is not None:
-                        hs_mm_chart = float(worked) / wear_mm_chart
-                        remaining_mm_chart = max(0.0, float(current_min_chart) - float(retirement_tread_chart))
-                        remaining_hours = remaining_mm_chart * hs_mm_chart
-
-                g = chart_groups.setdefault(eq, {'rem_by_pos': {}, 'hours_by_pos': {}})
-                if rem is not None and pos in ('P1','P2','P3','P4'):
-                    g['rem_by_pos'][pos] = rem
-                if worked is not None and pos in ('P1','P2','P3','P4'):
-                    g['hours_by_pos'][pos] = {
-                        'worked': worked,
-                        'remaining': remaining_hours if remaining_hours is not None else 0.0,
-                    }
-
-            rem_groups = {k: v['rem_by_pos'] for k, v in chart_groups.items() if v['rem_by_pos']}
-            hours_groups = {k: v['hours_by_pos'] for k, v in chart_groups.items() if v['hours_by_pos']}
-            rem_chart_body.controls = [grouped_remanente_chart(rem_groups)]
-            hours_chart_body.controls = [grouped_hours_chart(hours_groups)]
+            # Los gráficos REMANENTE POR POSICIÓN y ACUMULADO + RESTANTE
+            # quedan ocultos en esta reestructuración. No se recalculan para
+            # reducir el tiempo de carga de talleres con muchos equipos.
+            rem_chart_body.controls = []
+            hours_chart_body.controls = []
 
             brand_counts = {}
             for r, _od in ops:
                 brand = str(r['brand'] or 'Sin marca').strip() or 'Sin marca'
                 brand_counts[brand] = brand_counts.get(brand, 0) + 1
-            brand_pie_body.controls = [brand_pie_chart(brand_counts)]
+            brand_pie_body.controls = [brand_bar_chart(brand_counts)]
+            fleet_body.controls = [fleet_vehicle_chart(op_id)]
 
             # Distribución de presión respecto a la presión recomendada.
             # Sobrepresión es una categoría exclusiva: presión actual > 120% de la recomendada.
@@ -1943,10 +2880,10 @@ def main(page: ft.Page):
                     valve_counts['yes'] += 1
                 else:
                     valve_counts['no'] += 1
-            valve_pie_body.controls = [valve_pie_chart(valve_counts)]
+            valve_pie_body.controls = [valve_status_chart(ops)]
 
             if equipment_state['id'] not in (None, '', ALL):
-                er = query('SELECT * FROM equipment WHERE id=?', (int(equipment_state['id']),))
+                er = query('SELECT * FROM equipment WHERE id=? AND operation_id=?', (int(equipment_state['id']), op_id))
                 if er:
                     q = er[0]
                     eq_info.value = (
@@ -2131,9 +3068,9 @@ def main(page: ft.Page):
                        e.location equipment_location,e.vehicle_type,e.tire_size equipment_tire_size
                 FROM tires t
                 LEFT JOIN equipment e ON e.id=t.equipment_id
-                WHERE t.status='SERVICIO'
+                WHERE t.status='SERVICIO' AND t.operation_id=?
             """
-            params = []
+            params = [op_id]
             if eid != ALL:
                 sql += ' AND t.equipment_id=?'
                 params.append(int(eid))
@@ -2257,8 +3194,9 @@ def main(page: ft.Page):
         page.update()
 
     def service_equipment_report_view():
-        """2.2 Reporte por equipo: ficha y detalle P1-P4 del equipo seleccionado."""
-        eqs=query("SELECT id,code FROM equipment WHERE active=1 ORDER BY code")
+        op_id = active_operation_id()
+        """2.2 Reporte por equipo: ficha y detalle de todas las posiciones instaladas."""
+        eqs=query("SELECT id,code FROM equipment WHERE active=1 AND operation_id=? ORDER BY code", (op_id,))
         selector=ft.Dropdown(label='Seleccione el equipo',width=250,
             options=[ft.dropdown.Option(key=str(r['id']),text=r['code']) for r in eqs])
         info=ft.Column([],spacing=8)
@@ -2267,6 +3205,7 @@ def main(page: ft.Page):
         hours_chart_22=ft.Column([],spacing=6)
         pressure_chart_22=ft.Column([],spacing=6)
         valve_chart_22=ft.Column([],spacing=6)
+        pressure_history_22=ft.Column([],spacing=6)
 
         def metric(title,value,subtitle,accent='#1565C0'):
             return ft.Container(width=220,height=92,bgcolor=ft.Colors.WHITE,border_radius=12,
@@ -2278,11 +3217,14 @@ def main(page: ft.Page):
         def refresh(e=None):
             if not selector.value:
                 info.controls=[ft.Text('Seleccione un equipo para generar el reporte.',color=TEXT_MUTED)]
-                table_area.controls=[]; indicators.controls=[]; page.update(); return
+                table_area.controls=[]; rem_chart_22.controls=[]; hours_chart_22.controls=[]; pressure_chart_22.controls=[]; valve_chart_22.controls=[]; page.update(); return
             eid=int(selector.value)
-            eq=query('SELECT * FROM equipment WHERE id=?',(eid,))[0]
-            rows=query("""SELECT t.* FROM tires t WHERE t.equipment_id=? AND t.status='SERVICIO'
-                          ORDER BY CAST(COALESCE(NULLIF(t.position,''),'999') AS INTEGER),t.code""",(eid,))
+            eq_rows=query('SELECT * FROM equipment WHERE id=? AND operation_id=?',(eid,op_id));
+            if not eq_rows:
+                return
+            eq=eq_rows[0]
+            rows=query("""SELECT t.* FROM tires t WHERE t.equipment_id=? AND t.operation_id=? AND t.status='SERVICIO'
+                          ORDER BY CAST(COALESCE(NULLIF(t.position,''),'999') AS INTEGER),t.code""",(eid,op_id))
             info.controls=[ft.Row([
                 ft.Column([ft.Text('Código',size=9,color=TEXT_MUTED),ft.Text(eq['code'] or '—',weight=ft.FontWeight.BOLD)],width=125),
                 ft.Column([ft.Text('Marca',size=9,color=TEXT_MUTED),ft.Text(eq['brand'] or '—',weight=ft.FontWeight.BOLD)],width=145),
@@ -2294,18 +3236,18 @@ def main(page: ft.Page):
             data=[]; rems=[]; costs=[]; pressures_ok=0
             rem_by_pos={}; hours_by_pos={}; pressure_by_pos={}; valve_by_pos={}
             for r in rows:
-                occ=query("""SELECT * FROM occurrences WHERE tire_id=? ORDER BY id DESC LIMIT 1""",(r['id'],))
+                occ=query("""SELECT * FROM occurrences WHERE tire_id=? AND operation_id=? ORDER BY id DESC LIMIT 1""",(r['id'],op_id))
                 o=occ[0] if occ else None
-                insp=query("""SELECT * FROM occurrences WHERE tire_id=? AND event_code IN ('INSP','INSC') ORDER BY id DESC LIMIT 1""",(r['id'],))
+                insp=query("""SELECT * FROM occurrences WHERE tire_id=? AND operation_id=? AND event_code IN ('INSP','INSC') ORDER BY id DESC LIMIT 1""",(r['id'],op_id))
                 io=insp[0] if insp else None
                 # Horas acumuladas: usar exactamente el mismo criterio de 2.1.
                 # Se toma el horómetro del último evento INST del neumático en el
                 # equipo actual y se resta del horómetro actual guardado en tires.
                 inst=query("""SELECT meter FROM occurrences
-                              WHERE tire_id=? AND event_code='INST'
+                              WHERE tire_id=? AND operation_id=? AND event_code='INST'
                                 AND (? IS NULL OR equipment_id=?)
                               ORDER BY event_date DESC,id DESC LIMIT 1""",
-                           (r['id'],eid,eid))
+                           (r['id'],op_id,eid,eid))
                 inst_meter=inst[0]['meter'] if inst else None
                 current_meter=r['current_meter']
                 worked=None
@@ -2324,7 +3266,9 @@ def main(page: ft.Page):
                 prec=r['recommended_pressure']
                 if pactual is not None and prec not in (None,0) and abs(float(pactual)-float(prec))/float(prec)<=0.05: pressures_ok+=1
                 poskey=f"P{r['position']}" if r['position'] else '—'
-                if poskey in ('P1','P2','P3','P4'):
+                # Los gráficos deben representar TODAS las posiciones cargadas.
+                # No se limita a P1-P4: algunos equipos tienen P5, P6, ... P11, P12, etc.
+                if poskey != '—':
                     if rem is not None: rem_by_pos[poskey]=rem
                     remaining_hours=0.0
                     if worked is not None and newvals and curvals:
@@ -2335,8 +3279,15 @@ def main(page: ft.Page):
                             remaining_hours=max(0.0,float(current_min)-float(retirement))*(float(worked)/wear_mm)
                     if worked is not None: hours_by_pos[poskey]={'worked':float(worked),'remaining':float(remaining_hours)}
                     pressure_by_pos[poskey]={'actual':float(pactual) if pactual is not None else None,'recommended':float(prec) if prec is not None else None}
-                    note_text=str(io['notes'] or '').upper() if io and 'notes' in io.keys() else ''
-                    valve_by_pos[poskey]='SI' if ('TAPA' in note_text or 'VALVULA' in note_text or 'VÁLVULA' in note_text) else 'NO'
+                    valve_source = o or io
+                    valve_raw=str(valve_source['valve_cap'] or '').strip().upper() if valve_source and 'valve_cap' in valve_source.keys() else ''
+                    if valve_raw in ('SI','SÍ'):
+                        valve_by_pos[poskey]='SI'
+                    elif valve_raw == 'NO':
+                        valve_by_pos[poskey]='NO'
+                    else:
+                        note_text=str(valve_source['notes'] or '').upper() if valve_source and 'notes' in valve_source.keys() else ''
+                        valve_by_pos[poskey]='SI' if ('TAPA' in note_text or 'VALVULA' in note_text or 'VÁLVULA' in note_text) else 'NO'
                 data.append([
                     f"P{r['position']}" if r['position'] else '—',r['code'] or '—',r['serial'] or '—',r['brand'] or '—',
                     r['size'] or '—',r['design'] or '—',f"{worked:.0f}" if worked is not None else '—',
@@ -2357,55 +3308,724 @@ def main(page: ft.Page):
                 body.append(ft.Row([ft.Container(width=widths[i],height=36,bgcolor=bg,padding=6,
                     alignment=ft.Alignment.CENTER_LEFT,content=ft.Text(str(v),size=8.5,color=TEXT_MAIN)) for i,v in enumerate(row)],spacing=0))
             table_area.controls=[ft.Row([ft.Column(body,spacing=1)],scroll=ft.ScrollMode.AUTO)]
+            def position_sort_key(pos):
+                try:
+                    return (0, int(str(pos).lstrip('P')))
+                except Exception:
+                    return (1, str(pos))
+
+            def ordered_positions(values):
+                return sorted(values.keys(), key=position_sort_key)
+
+            def _dash_line(width=1, color='#D5DDE6', dash=5, gap=4):
+                parts=[]
+                for _ in range(18):
+                    parts.append(ft.Container(width=dash,height=width,bgcolor=color))
+                    parts.append(ft.Container(width=gap,height=width))
+                return ft.Row(parts,spacing=0)
+
             def bar_chart(values, y_max, suffix='', secondary=None, secondary_label=None):
-                pos_order=['P1','P2','P3','P4']; chart_h=150; bar_w=34
-                ticks=5
-                ylabels=ft.Column([ft.Text(f'{y_max*(ticks-i)/ticks:.0f}{suffix}',size=8,color=TEXT_MUTED) for i in range(ticks+1)],height=chart_h,alignment=ft.MainAxisAlignment.SPACE_BETWEEN,horizontal_alignment=ft.CrossAxisAlignment.END)
-                bars=[]
-                for pos in pos_order:
-                    v=values.get(pos)
-                    h=max(2,chart_h*max(0,min(float(v or 0),y_max))/y_max) if y_max else 2
-                    col=[ft.Container(height=chart_h,alignment=ft.Alignment.BOTTOM_CENTER,content=ft.Container(width=bar_w,height=h,bgcolor=NAV_ACCENT,border_radius=4)),ft.Text(pos,size=9,weight=ft.FontWeight.BOLD)]
-                    bars.append(ft.Column(col,spacing=4,horizontal_alignment=ft.CrossAxisAlignment.CENTER))
-                return ft.Row([ylabels,ft.Row(bars,spacing=28,alignment=ft.MainAxisAlignment.CENTER,vertical_alignment=ft.CrossAxisAlignment.END,expand=True)],spacing=10)
+                """Remanente por posición: barras horizontales dinámicas, escala 0-100% y valor visible."""
+                positions=ordered_positions(values)
+                if not positions:
+                    return ft.Text('Sin datos suficientes para graficar.',size=11,color=TEXT_MUTED)
+
+                # Escala fija 0-100% para que la comparación entre posiciones sea directa.
+                max_value=float(y_max or 100)
+                if max_value <= 0:
+                    max_value=100
+
+                # Escala superior alineada con el área de barras.
+                scale_labels=list(range(0,101,10))
+                # La escala coincide exactamente con los extremos de la pista.
+                # 0% se alinea con el inicio de la barra y 100% con el final.
+                scale_row=ft.Row([
+                    ft.Container(width=34),
+                    ft.Container(
+                        expand=True,
+                        content=ft.Row(
+                            [ft.Text(f'{v}{suffix}',size=8,color=TEXT_MUTED) for v in scale_labels],
+                            spacing=0,
+                            alignment=ft.MainAxisAlignment.SPACE_BETWEEN
+                        )
+                    )
+                ],spacing=8)
+
+                # Área de barras. Cada barra usa exactamente el valor calculado
+                # para la posición correspondiente; no hay valores fijos P1-P4.
+                rows=[]
+                for pos in positions:
+                    try:
+                        v=float(values.get(pos) or 0)
+                    except (TypeError,ValueError):
+                        v=0.0
+                    v=max(0.0,min(v,max_value))
+                    pct=(v/max_value) if max_value else 0.0
+
+                    fill=ft.Container(
+                        width=0,
+                        height=26,
+                        bgcolor=NAV_ACCENT,
+                        border_radius=5,
+                        content=ft.Text(
+                            f'{v:.1f}{suffix}',
+                            size=10,
+                            weight=ft.FontWeight.BOLD,
+                            color=ft.Colors.WHITE,
+                            text_align=ft.TextAlign.RIGHT
+                        ),
+                        padding=ft.Padding(left=6,top=4,right=8,bottom=4)
+                    )
+
+                    # La barra se coloca sobre una pista gris. La anchura se
+                    # calcula en proporción al ancho disponible del contenedor.
+                    bar_track=ft.Container(
+                        expand=True,
+                        height=26,
+                        bgcolor='#E7EDF4',
+                        border_radius=5,
+                        content=ft.Row(
+                            [fill],
+                            spacing=0
+                        )
+                    )
+
+                    # Actualizar el ancho relativo después de tener el espacio
+                    # disponible mediante una barra flexible: la fila interior
+                    # usa una proporción basada en Expanded.
+                    units=int(round(pct*100))
+                    units=max(0,min(100,units))
+                    fill.expand=units if units > 0 else False
+                    remaining_units=100-units
+
+                    # La parte vacía completa la pista para que la barra siempre
+                    # conserve la proporción 0-100%, incluso al cambiar de equipo.
+                    if remaining_units > 0:
+                        bar_track.content=ft.Row(
+                            [fill,
+                             ft.Container(expand=remaining_units,height=26)],
+                            spacing=0
+                        )
+                    else:
+                        bar_track.content=ft.Row([fill],spacing=0)
+
+                    rows.append(
+                        ft.Row([
+                            ft.Container(
+                                width=34,
+                                content=ft.Text(pos,size=9,weight=ft.FontWeight.BOLD,color=TEXT_MAIN)
+                            ),
+                            bar_track
+                        ],spacing=8)
+                    )
+
+                # Líneas verticales punteadas como referencia visual 20/40/60/80/100.
+                # Se mantienen discretas para no interferir con los valores.
+                return ft.Column(
+                    [scale_row, ft.Column(rows,spacing=7)],
+                    spacing=6
+                )
 
             def stacked_hours_chart(vals):
-                pos_order=['P1','P2','P3','P4']; chart_h=150; bar_w=34
-                totals=[(d.get('worked',0)+d.get('remaining',0)) for d in vals.values() if d]
-                ymax=max(4000, ((int(max(totals or [0]))//1000)+1)*1000)
-                bars=[]
-                for pos in pos_order:
-                    d=vals.get(pos,{}); w=max(0,float(d.get('worked',0))); r=max(0,float(d.get('remaining',0)))
-                    wh=chart_h*w/ymax; rh=chart_h*r/ymax
-                    bars.append(ft.Column([ft.Container(height=chart_h,alignment=ft.Alignment.BOTTOM_CENTER,content=ft.Column([ft.Container(width=bar_w,height=max(2,rh) if r else 0,bgcolor='#F59E0B'),ft.Container(width=bar_w,height=max(2,wh) if w else 0,bgcolor=NAV_ACCENT)],spacing=0,alignment=ft.MainAxisAlignment.END)),ft.Text(pos,size=9,weight=ft.FontWeight.BOLD)],spacing=4,horizontal_alignment=ft.CrossAxisAlignment.CENTER))
-                legend=ft.Row([ft.Row([ft.Container(width=9,height=9,bgcolor=NAV_ACCENT),ft.Text('Horas acumuladas',size=9,color=TEXT_MUTED)],spacing=4),ft.Row([ft.Container(width=9,height=9,bgcolor='#F59E0B'),ft.Text('Horas restantes proyectadas',size=9,color=TEXT_MUTED)],spacing=4)],spacing=14)
-                return ft.Column([legend,ft.Row(bars,spacing=28,alignment=ft.MainAxisAlignment.CENTER)],spacing=8)
+                """Horas acumuladas + proyección con leyenda y eje X oculto."""
+                positions=ordered_positions(vals)
+                if not positions:
+                    return ft.Text('Sin datos suficientes para graficar.',size=11,color=TEXT_MUTED)
+
+                totals=[
+                    max(0,float((d or {}).get('worked',0))) +
+                    max(0,float((d or {}).get('remaining',0)))
+                    for d in vals.values() if d
+                ]
+                max_total=max(totals or [0])
+                xmax=max(2000, int((max_total + 1999)//2000)*2000)
+
+                plot_w=510
+                label_w=38
+                total_w=58
+                rows=[]
+
+                for pos in positions:
+                    d=vals.get(pos,{}) or {}
+                    w=max(0,float(d.get('worked',0)))
+                    r=max(0,float(d.get('remaining',0)))
+                    total=w+r
+
+                    ww=(plot_w*w/xmax) if w else 0
+                    rw=(plot_w*r/xmax) if r else 0
+
+                    if w and ww < 42:
+                        ww=42
+                    if r and rw < 42:
+                        rw=42
+
+                    if ww+rw > plot_w and total > 0:
+                        scale=plot_w/(ww+rw)
+                        ww*=scale
+                        rw*=scale
+
+                    blue = ft.Container(
+                        width=ww, height=26,
+                        bgcolor=NAV_ACCENT, border_radius=4,
+                        alignment=ft.Alignment.CENTER,
+                        content=ft.Text(
+                            f'{w:,.0f} h', size=9,
+                            color=ft.Colors.WHITE,
+                            weight=ft.FontWeight.BOLD,
+                            text_align=ft.TextAlign.CENTER
+                        )
+                    ) if w else ft.Container(width=0)
+
+                    orange = ft.Container(
+                        width=rw, height=26,
+                        bgcolor='#F59E0B', border_radius=4,
+                        alignment=ft.Alignment.CENTER,
+                        content=ft.Text(
+                            f'{r:,.0f} h', size=9,
+                            color=ft.Colors.WHITE,
+                            weight=ft.FontWeight.BOLD,
+                            text_align=ft.TextAlign.CENTER
+                        )
+                    ) if r else ft.Container(width=0)
+
+                    rows.append(
+                        ft.Row([
+                            ft.Container(
+                                width=label_w, height=26,
+                                alignment=ft.Alignment.CENTER_RIGHT,
+                                content=ft.Text(
+                                    pos, size=9, weight=ft.FontWeight.BOLD,
+                                    text_align=ft.TextAlign.RIGHT
+                                )
+                            ),
+                            blue,
+                            orange,
+                            ft.Container(
+                                width=total_w, height=26,
+                                alignment=ft.Alignment.CENTER_LEFT,
+                                content=ft.Text(
+                                    f'{total:,.0f} h', size=9,
+                                    color=TEXT_MAIN,
+                                    weight=ft.FontWeight.BOLD
+                                )
+                            )
+                        ], spacing=2)
+                    )
+
+                # Leyenda solicitada: cuadrito azul + Horas acumuladas,
+                # cuadrito naranja + Proyección.
+                legend = ft.Row([
+                    ft.Row([
+                        ft.Container(width=10, height=10, bgcolor=NAV_ACCENT, border_radius=1),
+                        ft.Text('Horas acumuladas', size=9, color=TEXT_MUTED)
+                    ], spacing=4),
+                    ft.Row([
+                        ft.Container(width=10, height=10, bgcolor='#F59E0B', border_radius=1),
+                        ft.Text('Proyección', size=9, color=TEXT_MUTED)
+                    ], spacing=4)
+                ], spacing=14)
+
+                # Eje X: se conserva la escala dinámica, pero se ocultan
+                # completamente los valores numéricos.
+                axis = ft.Container(
+                    height=10,
+                    content=ft.Row([
+                        ft.Container(width=label_w),
+                        ft.Container(width=plot_w),
+                        ft.Container(width=total_w)
+                    ], spacing=2)
+                )
+
+                # Espaciador superior para alinear exactamente el inicio
+                # de P1/P2/P3/P4 con las barras del gráfico Remanente por posición.
+                alignment_spacer = ft.Container(height=1)
+
+                return ft.Column(
+                    [legend, alignment_spacer] + rows + [axis],
+                    spacing=6
+                )
 
             def pressure_chart(vals):
-                pos_order=['P1','P2','P3','P4']; actual={p:(vals.get(p) or {}).get('actual') or 0 for p in pos_order}
-                recs=[(vals.get(p) or {}).get('recommended') for p in pos_order if (vals.get(p) or {}).get('recommended') is not None]
-                ymax=max(120, int(max([v for v in actual.values()] + recs + [100])/10+2)*10)
-                chart_h=150; bar_w=34
-                bars=[]
-                for p in pos_order:
-                    v=float(actual.get(p) or 0); rec=(vals.get(p) or {}).get('recommended')
-                    h=chart_h*v/ymax
-                    bars.append(ft.Column([ft.Container(height=chart_h,alignment=ft.Alignment.BOTTOM_CENTER,content=ft.Container(width=bar_w,height=max(2,h),bgcolor=NAV_ACCENT,border_radius=4)),ft.Text(p,size=9,weight=ft.FontWeight.BOLD),ft.Text(f'{v:.0f} psi',size=8,color=TEXT_MUTED),ft.Text(f'Rec. {rec:.0f}' if rec is not None else 'Rec. —',size=8,color='#C62828')],spacing=2,horizontal_alignment=ft.CrossAxisAlignment.CENTER))
-                return ft.Row(bars,spacing=28,alignment=ft.MainAxisAlignment.CENTER)
+                """Presión actual por posición: barras horizontales con altura dinámica."""
+                positions=ordered_positions(vals)
+                if not positions:
+                    return ft.Text('Sin datos suficientes para graficar.',size=11,color=TEXT_MUTED)
+
+                rows=[]
+                all_values=[]
+                for p in positions:
+                    item=vals.get(p) or {}
+                    actual=item.get('actual')
+                    recommended=item.get('recommended')
+                    try:
+                        actual=float(actual) if actual is not None else None
+                    except (TypeError,ValueError):
+                        actual=None
+                    try:
+                        recommended=float(recommended) if recommended is not None else None
+                    except (TypeError,ValueError):
+                        recommended=None
+                    if actual is not None:
+                        all_values.append(actual)
+                    if recommended is not None:
+                        all_values.append(recommended)
+                    rows.append((p,actual,recommended))
+
+                max_psi=max(120.0, ((max(all_values)+9)//10)*10 if all_values else 120.0)
+                label_w=34
+                track_w=390
+                bar_h=20
+                row_gap=9
+
+                legend=ft.Row([
+                    ft.Row([ft.Container(width=10,height=10,bgcolor='#2E9B45',border_radius=3),
+                            ft.Text('Actual',size=8.5,color=TEXT_MAIN)],spacing=4),
+                    ft.Row([ft.Container(width=3,height=12,bgcolor='#DC2626',border_radius=1),
+                            ft.Text('Recomendada',size=8.5,color=TEXT_MAIN)],spacing=4),
+                ],alignment=ft.MainAxisAlignment.CENTER,spacing=18)
+
+                scale=ft.Row([
+                    ft.Container(width=label_w),
+                    ft.Container(width=track_w,content=ft.Row([
+                        ft.Text('0',size=7,color=TEXT_MUTED,width=16,text_align=ft.TextAlign.LEFT),
+                        ft.Container(expand=True),
+                        ft.Text(f'{max_psi:.0f}',size=7,color=TEXT_MUTED,width=30,text_align=ft.TextAlign.RIGHT),
+                    ],spacing=0)),
+                ],spacing=4)
+
+                visual_rows=[]
+                for pos,actual,recommended in rows:
+                    actual_ratio=max(0,min(1,(actual/max_psi) if actual is not None else 0))
+                    rec_ratio=max(0,min(1,(recommended/max_psi) if recommended is not None else 0))
+                    fill_w=max(0,(track_w-2)*actual_ratio)
+                    rec_x=max(0,(track_w-2)*rec_ratio)
+
+                    bar_layers=[
+                        ft.Container(left=0,top=0,width=track_w,height=bar_h,
+                                     bgcolor='#EEF2F6',border_radius=6,
+                                     border=ft.Border.all(1,'#D6DEE7')),
+                    ]
+                    if fill_w>0:
+                        bar_layers.append(ft.Container(left=1,top=1,width=max(2,fill_w),height=bar_h-2,
+                                                       bgcolor='#2E9B45',border_radius=5,
+                                                       alignment=ft.Alignment.CENTER_RIGHT,
+                                                       padding=ft.Padding(left=4,top=1,right=5,bottom=1),
+                                                       content=ft.Text(f'{actual:.0f}',size=8,weight=ft.FontWeight.BOLD,
+                                                                       color=ft.Colors.WHITE,text_align=ft.TextAlign.RIGHT)))
+                    if recommended is not None:
+                        bar_layers.append(ft.Container(left=rec_x,top=-2,width=3,height=bar_h+7,
+                                                       bgcolor='#DC2626',border_radius=1,
+                                                       tooltip=f'Presión recomendada: {recommended:.0f} PSI'))
+
+                    track=ft.Stack(controls=bar_layers,width=track_w,height=bar_h+7)
+                    visual_rows.append(
+                        ft.Row([
+                            ft.Container(width=label_w,alignment=ft.Alignment.CENTER_LEFT,
+                                         content=ft.Text(pos,size=8.5,weight=ft.FontWeight.BOLD,color=TEXT_MAIN)),
+                            track,
+                        ],spacing=4,vertical_alignment=ft.CrossAxisAlignment.CENTER)
+                    )
+
+                # Altura del gráfico = contenido real + márgenes, sin una altura fija.
+                dynamic_h = 76 + len(visual_rows) * (bar_h + 7 + row_gap)
+                return ft.Container(
+                    height=dynamic_h,
+                    content=ft.Column([
+                        legend,
+                        scale,
+                        ft.Column(visual_rows,spacing=row_gap)
+                    ],spacing=4)
+                )
 
             def valve_chart(vals):
-                bars=[]
-                for p in ['P1','P2','P3','P4']:
-                    yes=str(vals.get(p,'NO')).upper()=='SI'
-                    bars.append(ft.Column([ft.Container(height=150,alignment=ft.Alignment.BOTTOM_CENTER,content=ft.Container(width=42,height=100,bgcolor='#16A34A' if yes else '#EF4444',border_radius=4)),ft.Text(p,size=9,weight=ft.FontWeight.BOLD),ft.Text('SÍ' if yes else 'NO',size=9,weight=ft.FontWeight.BOLD,color='#15803D' if yes else '#B91C1C')],spacing=3,horizontal_alignment=ft.CrossAxisAlignment.CENTER))
-                return ft.Row(bars,spacing=28,alignment=ft.MainAxisAlignment.CENTER)
+                """Dona de tapa válvulas: dona + leyenda/datos a la derecha."""
+                positions=ordered_positions(vals)
+                if not positions:
+                    return ft.Text('Sin datos suficientes para graficar.',size=11,color=TEXT_MUTED)
+
+                import base64, math
+                yes=[p for p in positions if str(vals.get(p,'NO')).upper()=='SI']
+                no=[p for p in positions if str(vals.get(p,'NO')).upper()!='SI']
+                total=len(positions)
+
+                # Dona 25% más grande respecto de la versión anterior.
+                chart_w=250
+                chart_h=210
+                cx,cy=125,105
+                radius=81.25
+                stroke=37.5
+                circumference=2*math.pi*radius
+
+                values=[('SÍ',len(yes),'#28B7E6'),('NO',len(no),'#EF4444')]
+                circles=[]
+                offset=0.0
+                for label,count,color in values:
+                    if count<=0:
+                        continue
+                    dash=circumference*(count/total)
+                    gap=max(0.0,circumference-dash)
+                    circles.append(
+                        f'<circle cx="{cx}" cy="{cy}" r="{radius}" fill="none" '
+                        f'stroke="{color}" stroke-width="{stroke}" '
+                        f'stroke-dasharray="{dash:.3f} {gap:.3f}" '
+                        f'stroke-dashoffset="{-offset:.3f}" '
+                        f'transform="rotate(-90 {cx} {cy})" />'
+                    )
+                    offset += dash
+
+                svg=(
+                    f'<svg xmlns="http://www.w3.org/2000/svg" width="{chart_w}" height="{chart_h}" viewBox="0 0 {chart_w} {chart_h}">'
+                    f'<circle cx="{cx}" cy="{cy}" r="{radius}" fill="none" stroke="#E2E8F0" stroke-width="{stroke}" />'
+                    + ''.join(circles) +
+                    f'<text x="{cx}" y="{cy-2}" text-anchor="middle" font-family="Arial" font-size="24" font-weight="700" fill="#172033">{total}</text>'
+                    f'<text x="{cx}" y="{cy+16}" text-anchor="middle" font-family="Arial" font-size="9" fill="#64748B">Neumáticos</text>'
+                    '</svg>'
+                )
+                b64=base64.b64encode(svg.encode('utf-8')).decode('ascii')
+
+                legend=ft.Column([
+                    ft.Text('RESUMEN',size=10,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
+                    ft.Row([
+                        ft.Container(width=10,height=10,bgcolor='#28B7E6',border_radius=5),
+                        ft.Text(f'SÍ ({len(yes)})',size=10,color=TEXT_MAIN,weight=ft.FontWeight.BOLD)
+                    ],spacing=5),
+                    ft.Row([
+                        ft.Container(width=10,height=10,bgcolor='#EF4444',border_radius=5),
+                        ft.Text(f'NO ({len(no)})',size=10,color=TEXT_MAIN,weight=ft.FontWeight.BOLD)
+                    ],spacing=5),
+                    ft.Divider(height=1,color='#D8E1EB'),
+                    ft.Text(f'TOTAL: {total} neumáticos',size=10,color=TEXT_MAIN,weight=ft.FontWeight.BOLD),
+                    ft.Text('SÍ: '+(', '.join(yes) if yes else 'Ninguna'),
+                            size=8.5,color='#15803D',weight=ft.FontWeight.BOLD,no_wrap=False),
+                    ft.Text('NO: '+(', '.join(no) if no else 'Ninguna'),
+                            size=8.5,color='#B91C1C',weight=ft.FontWeight.BOLD,no_wrap=False),
+                ],spacing=6)
+
+                return ft.Row([
+                    ft.Container(width=chart_w,height=chart_h,alignment=ft.Alignment.CENTER,
+                                 content=ft.Image(src='data:image/svg+xml;base64,'+b64,width=chart_w,height=chart_h,fit=ft.BoxFit.CONTAIN)),
+                    ft.Container(expand=1,content=legend,padding=ft.Padding(left=4,top=14,right=2,bottom=0))
+                ],spacing=4,vertical_alignment=ft.CrossAxisAlignment.START)
 
             rem_chart_22.controls=[bar_chart(rem_by_pos,100,'%')]
             hours_chart_22.controls=[stacked_hours_chart(hours_by_pos)]
+            def pressure_history_chart(rows_for_equipment, equipment_id):
+                """Historial de presión en barras horizontales, agrupado por código.
+                La longitud de cada barra es proporcional al PSI real sobre una
+                escala fija de 0 a 120 PSI. Cada código conserva un tono de azul.
+                """
+                groups=[]
+                all_values=[]
+                total_events=0
+
+                for r in rows_for_equipment:
+                    code=str(r['code'] or '').strip() or f"ID {r['id']}"
+                    pos=f"P{r['position']}" if r['position'] else '—'
+                    try:
+                        recommended=float(r['recommended_pressure']) if r['recommended_pressure'] is not None else None
+                    except (TypeError,ValueError):
+                        recommended=None
+
+                    tire_events=query("""
+                        SELECT id,event_code,event_date,pressure
+                        FROM occurrences
+                        WHERE tire_id=? AND operation_id=?
+                          AND pressure IS NOT NULL
+                        ORDER BY event_date ASC,id ASC
+                    """,(r['id'],op_id))
+
+                    points=[]
+                    for n,ev in enumerate(tire_events,1):
+                        try:
+                            psi=float(ev['pressure'])
+                        except (TypeError,ValueError):
+                            continue
+                        all_values.append(psi)
+                        total_events += 1
+                        points.append({
+                            'n':n,
+                            'psi':psi,
+                            'recommended':recommended,
+                            'event':str(ev['event_code'] or ''),
+                            'date':format_date(ev['event_date']) if ev['event_date'] else '—'
+                        })
+
+                    groups.append((code,pos,points))
+
+                if not groups or not any(points for _,_,points in groups):
+                    return ft.Text(
+                        'Sin historial de presión disponible para los neumáticos del equipo seleccionado.',
+                        size=11,color=TEXT_MUTED
+                    )
+
+                # Escala fija solicitada: 0–120 PSI.
+                max_psi = 120.0
+
+                # Dimensiones de la pista, ajustadas al ancho de la tarjeta.
+                label_w = 46
+                track_w = 355
+                bar_h = 10
+                event_gap = 2
+                group_gap = 19
+
+                # Eje X: marcas cada 20 PSI hasta 120 PSI.
+                tick_values = [0,20,40,60,80,100,120]
+                tick_items = []
+                for tv in tick_values:
+                    align = ft.TextAlign.LEFT if tv == 0 else (
+                        ft.TextAlign.RIGHT if tv == 120 else ft.TextAlign.CENTER
+                    )
+                    tick_items.append(
+                        ft.Container(
+                            expand=1,
+                            content=ft.Text(
+                                str(tv),size=10,color=ft.Colors.BLACK,
+                                weight=ft.FontWeight.BOLD,
+                                text_align=align,no_wrap=True
+                            )
+                        )
+                    )
+
+                scale = ft.Row([
+                    ft.Container(width=label_w),
+                    ft.Container(
+                        width=track_w,
+                        content=ft.Row(tick_items,spacing=0)
+                    ),
+                ],spacing=4)
+
+                blue_palette=[
+                    '#0B84B7','#119ED0','#1AA8D8','#249FCE','#2BA7D5',
+                    '#39AED9','#45B4DE','#2E8FBE','#1789BA','#3A9BC8',
+                    '#0E76A8','#4AA9D2'
+                ]
+                code_colors={
+                    code:blue_palette[i % len(blue_palette)]
+                    for i,(code,_,_) in enumerate(groups)
+                }
+
+                code_groups=[]
+                for code,pos,points in groups:
+                    if not points:
+                        continue
+
+                    rows_for_code=[]
+                    for pnt in points:
+                        # La longitud de la barra representa el PSI real:
+                        # 120 PSI = 100% del ancho disponible.
+                        psi = max(0.0, min(max_psi, float(pnt['psi'])))
+                        ratio = psi / max_psi
+                        fill_w = max(2, (track_w - 2) * ratio)
+                        pct = ratio * 100.0
+
+                        rec = pnt.get('recommended')
+                        fill_color = code_colors.get(code,'#16A9D8')
+                        class_label = f'Neumático {code}'
+
+                        # Pista + barra proporcional + marcas verticales de 20 PSI.
+                        tick_lines=[]
+                        for tv in (20,40,60,80,100):
+                            x = max(0, min(track_w-1, (track_w-1) * (tv/max_psi)))
+                            tick_lines.append(
+                                ft.Container(
+                                    left=x,
+                                    top=0,
+                                    width=1,
+                                    height=bar_h,
+                                    bgcolor='#D6DEE7'
+                                )
+                            )
+
+                        # El valor de PSI se coloca al final de la barra,
+                        # reemplazando la etiqueta de porcentaje.
+                        # Para valores muy cercanos a 120 PSI se mantiene visible
+                        # dentro del área de la tarjeta.
+                        psi_left = min(track_w - 32, max(3, fill_w + 4))
+                        psi_label = ft.Container(
+                            left=psi_left,
+                            top=-1,
+                            width=32,
+                            height=bar_h + 2,
+                            alignment=ft.Alignment.CENTER_LEFT,
+                            content=ft.Text(
+                                f"{pnt['psi']:.0f} PSI",
+                                size=10.5,
+                                weight=ft.FontWeight.BOLD,
+                                color='#0B3D66',
+                                no_wrap=True,
+                                text_align=ft.TextAlign.LEFT,
+                            )
+                        )
+
+                        bar_track = ft.Stack(
+                            controls=[
+                                ft.Container(
+                                    width=track_w,
+                                    height=bar_h,
+                                    bgcolor='#EEF2F6',
+                                    border_radius=4,
+                                    border=ft.Border.all(1,'#D6DEE7')
+                                ),
+                                *tick_lines,
+                                ft.Container(
+                                    width=fill_w,
+                                    height=max(2,bar_h-2),
+                                    left=1,
+                                    top=1,
+                                    bgcolor=fill_color,
+                                    border_radius=3,
+                                ),
+                                psi_label,
+                            ],
+                            width=track_w,
+                            height=bar_h
+                        )
+
+                        row=ft.Row(
+                            [bar_track],
+                            spacing=4,
+                            vertical_alignment=ft.CrossAxisAlignment.CENTER
+                        )
+                        row.tooltip=(
+                            f"{code} · {pos} · {pnt['date']} · {pnt['psi']:.0f} PSI · {pct:.0f}% · {class_label}"
+                            + (f" · Recomendada {rec:.0f} PSI" if rec is not None else '')
+                        )
+                        rows_for_code.append(row)
+
+                    # Código del neumático centrado verticalmente respecto a
+                    # todas las barras de su propio grupo.
+                    group_rows_height = len(rows_for_code) * bar_h + max(0, len(rows_for_code)-1) * event_gap
+                    centered_code = ft.Container(
+                        width=label_w,
+                        height=group_rows_height,
+                        alignment=ft.Alignment.CENTER,
+                        content=ft.Text(
+                            code,
+                            size=10.5,
+                            weight=ft.FontWeight.BOLD,
+                            color=ft.Colors.BLACK,
+                            no_wrap=True,
+                            overflow=ft.TextOverflow.ELLIPSIS,
+                            text_align=ft.TextAlign.LEFT,
+                        )
+                    )
+
+                    group_content = ft.Row(
+                        [
+                            centered_code,
+                            ft.Column(rows_for_code,spacing=event_gap),
+                        ],
+                        spacing=4,
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    )
+
+                    code_groups.append(
+                        ft.Container(
+                            padding=ft.Padding(left=0,top=0,right=0,bottom=group_gap),
+                            content=group_content
+                        )
+                    )
+
+                dynamic_h = 44 + total_events * (bar_h + event_gap + 1) + len(code_groups) * group_gap
+                return ft.Container(
+                    height=dynamic_h,
+                    content=ft.Column([
+                        scale,
+                        ft.Column(code_groups,spacing=0)
+                    ],spacing=4)
+                )
+
             pressure_chart_22.controls=[pressure_chart(pressure_by_pos)]
             valve_chart_22.controls=[valve_chart(valve_by_pos)]
+            pressure_history_22.controls=[pressure_history_chart(rows,eid)]
+
+            # Altura dinámica únicamente para los dos gráficos de presión.
+            # Presión actual crece según la cantidad de posiciones.
+            # Historial crece según la cantidad de registros de presión.
+            pressure_card_height = max(240, 145 + len(pressure_by_pos) * 40)
+
+            history_event_count = 0
+            history_group_count = 0
+            for _trow in rows:
+                _hist = query(
+                    """SELECT id FROM occurrences
+                       WHERE tire_id=? AND operation_id=? AND pressure IS NOT NULL""",
+                    (_trow['id'],op_id)
+                )
+                if _hist:
+                    history_group_count += 1
+                    history_event_count += len(_hist)
+
+            # Altura dinámica del historial: se ajusta al número real de barras
+            # y a los grupos de códigos, evitando un espacio blanco excesivo.
+            # Se deja un margen superior/inferior para título, escala y separación.
+            history_card_height = max(
+                270,
+                118 + history_event_count * 13 + max(0, history_group_count - 1) * 19
+            )
+
+            graph_row2_left.height = pressure_card_height
+            graph_row2_mid.height = history_card_height
+
+            # Altura dinámica REAL de la FILA 01 (Remanente por posición + Horas acumuladas).
+            # Cada posición necesita su propia fila visible en ambos gráficos.
+            # La altura crece aproximadamente 33 px por posición para evitar
+            # que equipos con muchas posiciones queden recortados.
+            graph_row1_height = max(260, 90 + len(rows) * 33)
+            graph_row1_left.height = graph_row1_height
+            graph_row1_right.height = graph_row1_height
+
+            graph_row1_left.content = card(ft.Column([
+                ft.Text('REMANENTE POR POSICIÓN (%)',size=14,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
+                ft.Text('Eje X: % remanente · Eje Y: posiciones instaladas',size=9,color=TEXT_MUTED),
+                ft.Container(expand=True, content=rem_chart_22)
+            ],spacing=8),padding=14)
+
+            graph_row1_right.content = card(ft.Column([
+                ft.Text('HORAS ACUMULADAS + PROYECCION',size=14,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
+                ft.Container(expand=True, content=hours_chart_22)
+            ],spacing=8),padding=14)
+
+            graph_row2_left.content = card(ft.Column([
+                ft.Text('PRESIÓN ACTUAL VS. PRESIÓN RECOMENDADA (PSI)',size=13,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
+                ft.Text('Eje X: PSI · Eje Y: posiciones instaladas',size=9,color=TEXT_MUTED),
+                ft.Container(expand=True, content=pressure_chart_22)
+            ],spacing=8),padding=14)
+
+            graph_row2_mid.content = card(ft.Column([
+                ft.Text('HISTORIAL DE PRESIÓN POR NEUMÁTICO',size=13,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
+                ft.Text('Eje X: PSI · Eje Y: código del neumático',size=9,color=TEXT_MUTED),
+                ft.Container(expand=True, content=pressure_history_22)
+            ],spacing=8),padding=14)
+
+            graph_row2_right.content = card(ft.Column([
+                ft.Text('ESTADO DE EVALUACIÓN DE TAPA VÁLVULAS',size=13,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
+                ft.Text('Por posición instalada: SÍ / NO',size=9,color=TEXT_MUTED),
+                ft.Container(expand=True, content=valve_chart_22)
+            ],spacing=8),padding=14)
+
+            # La tarjeta de Tapa Válvulas queda 25% más alta que su altura base.
+            graph_row2_right.height = 338
+
             page.update()
         selector.on_change=refresh
+
+        # Contenedores de gráficos con altura actualizable desde refresh().
+        # Esto evita depender de una variable `rows` que solo existe dentro de refresh.
+        graph_row1_left = ft.Container(expand=1)
+        graph_row1_right = ft.Container(expand=1)
+        graph_row2_left = ft.Container(expand=1)
+        graph_row2_mid = ft.Container(expand=1)
+        graph_row2_right = ft.Container(expand=1)
+
+        # Alturas iniciales. refresh() las recalcula según el número real de neumáticos.
+        initial_graph_height = 260
+        initial_graph_height_row2 = 270
+        for _c in (graph_row1_left, graph_row1_right):
+            _c.height = initial_graph_height
+        for _c in (graph_row2_left, graph_row2_mid, graph_row2_right):
+            _c.height = initial_graph_height_row2
+
         content.content=ft.Column([
             page_title('2.2 REPORTE POR EQUIPO','Información detallada de un solo equipo'),
             ft.Row([ft.OutlinedButton('VOLVER A NEUMÁTICOS EN SERVICIO',icon=ft.Icons.ARROW_BACK,on_click=lambda e:service_menu_view())]),
@@ -2416,19 +4036,24 @@ def main(page: ft.Page):
             ],spacing=12),padding=16),
             card(ft.Column([ft.Text('NEUMÁTICOS DEL EQUIPO',size=15,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),table_area],spacing=10),padding=14),
             ft.Row([
-                ft.Container(expand=1,content=card(ft.Column([ft.Text('REMANENTE POR POSICIÓN (%)',size=14,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),ft.Text('Eje X: P1, P2, P3, P4 · Eje Y: % remanente',size=9,color=TEXT_MUTED),rem_chart_22],spacing=8),padding=14)),
-                ft.Container(expand=1,content=card(ft.Column([ft.Text('HORAS ACUMULADAS + HORAS RESTANTES POR POSICIÓN (h)',size=14,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),ft.Text('Azul: horas acumuladas · Naranja: horas restantes proyectadas',size=9,color=TEXT_MUTED),hours_chart_22],spacing=8),padding=14)),
+                graph_row1_left,
+                graph_row1_right,
             ],spacing=12,vertical_alignment=ft.CrossAxisAlignment.START),
+            # FILA 2: tres gráficos alineados y simétricos.
+            # Cada tarjeta ocupa exactamente 1/3 del ancho disponible y comparte
+            # la misma altura, evitando que el historial quede debajo de los otros.
             ft.Row([
-                ft.Container(expand=1,content=card(ft.Column([ft.Text('PRESIÓN ACTUAL VS. PRESIÓN RECOMENDADA (PSI)',size=14,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),ft.Text('Eje X: P1, P2, P3, P4 · Eje Y: nivel de PSI',size=9,color=TEXT_MUTED),pressure_chart_22],spacing=8),padding=14)),
-                ft.Container(expand=1,content=card(ft.Column([ft.Text('ESTADO DE TAPA VÁLVULA',size=14,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),ft.Text('Por posición: SÍ / NO',size=9,color=TEXT_MUTED),valve_chart_22],spacing=8),padding=14)),
+                graph_row2_left,
+                graph_row2_mid,
+                graph_row2_right,
             ],spacing=12,vertical_alignment=ft.CrossAxisAlignment.START),
         ],scroll=ft.ScrollMode.AUTO,spacing=14)
         refresh()
         page.update()
 
     def movement_view():
-        tire=ft.Dropdown(label='Neumático *',width=310,options=[ft.dropdown.Option(str(r['id']),f"{r['code']} | {r['serial'] or 's/serie'}") for r in query('SELECT id,code,serial FROM tires ORDER BY code')])
+        op_id = active_operation_id()
+        tire=ft.Dropdown(label='Neumático *',width=310,options=[ft.dropdown.Option(str(r['id']),f"{r['code']} | {r['serial'] or 's/serie'}") for r in query('SELECT id,code,serial FROM tires WHERE operation_id=? ORDER BY code',(op_id,))])
         # ROT se mantiene fuera del selector hasta definir su funcionalidad.
         event=ft.Dropdown(
             label='Evento *',
@@ -2436,9 +4061,20 @@ def main(page: ft.Page):
             options=[ft.dropdown.Option(k,f'{k} - {v}') for k,v in EVENTS.items() if k != 'ROT']
         )
         date=ft.TextField(label='Fecha',value=dt.date.today().strftime('%d/%m/%Y'),width=260,dense=True,bgcolor='#FFFFFF')
-        equip=ft.Dropdown(label='Equipo',width=155,dense=True,bgcolor='#FFFFFF',options=[ft.dropdown.Option(str(r['id']),r['code']) for r in query('SELECT id,code FROM equipment WHERE active=1 ORDER BY code')])
+        equip=ft.Dropdown(label='Equipo',width=155,dense=True,bgcolor='#FFFFFF',options=[ft.dropdown.Option(str(r['id']),r['code']) for r in query('SELECT id,code FROM equipment WHERE active=1 AND operation_id=? ORDER BY code',(op_id,))])
+        performance_info=ft.Text(
+            'Rendimiento: —',
+            size=10,
+            color=TEXT_MUTED,
+            weight=ft.FontWeight.BOLD
+        )
         pos=ft.TextField(label='Pos.',width=95,dense=True,bgcolor='#FFFFFF')
-        meter=ft.TextField(label='Horómetro',width=260,dense=True,bgcolor='#FFFFFF')
+        # Regla fundamental: ambos campos existen, pero solo uno puede utilizarse
+        # según el rendimiento del EQUIPO seleccionado. Ambos alimentan el mismo
+        # campo `meter` de occurrences para conservar el esquema actual.
+        horometer=ft.TextField(label='Horómetro',width=260,dense=True,bgcolor='#FFFFFF',disabled=True)
+        odometer=ft.TextField(label='Odómetro',width=260,dense=True,bgcolor='#FFFFFF',disabled=True)
+        meter=horometer  # Compatibilidad interna: el valor operativo se obtiene mediante active_meter_value().
         ti=ft.TextField(label='INT',width=125,dense=True,bgcolor='#FFFFFF')
         to=ft.TextField(label='EXT',width=125,dense=True,bgcolor='#FFFFFF')
         press=ft.TextField(label='Psi',width=125,dense=True,bgcolor='#FFFFFF')
@@ -2473,11 +4109,17 @@ def main(page: ft.Page):
         reason=ft.Dropdown(label='Motivo',width=260,dense=True,bgcolor='#FFFFFF',options=[])
         loc=ft.TextField(label='Lugar',width=260,dense=True,bgcolor='#FFFFFF')
         notes=ft.TextField(label='Observaciones',multiline=True,min_lines=1,max_lines=2,width=260,dense=True,bgcolor='#FFFFFF')
+        valve_cap=ft.Dropdown(
+            label='Tapa Válvula *', width=260, dense=True, bgcolor='#FFFFFF', value='NO',
+            options=[ft.DropdownOption(key='SI', text='SI'), ft.DropdownOption(key='NO', text='NO')]
+        )
         ref=ft.Text('',size=11,color=TEXT_MUTED)
         pre_tire = session.pop('movement_tire_id', None)
         pre_event = session.pop('movement_event', None)
         if pre_tire:
-            tire.value = pre_tire
+            # V22 MULTITALLER: nunca reutilizar una selección proveniente de otra operación.
+            _pre_ok = query('SELECT id FROM tires WHERE id=? AND operation_id=?', (int(pre_tire), op_id)) if str(pre_tire).isdigit() else []
+            tire.value = pre_tire if _pre_ok else None
         if pre_event:
             event.value = pre_event
 
@@ -2512,10 +4154,57 @@ def main(page: ft.Page):
                 return None
             rows=query(
                 'SELECT t.*,e.code equipment_code,e.location equipment_location '
-                'FROM tires t LEFT JOIN equipment e ON e.id=t.equipment_id WHERE t.id=?',
-                (int(tire.value),)
+                'FROM tires t LEFT JOIN equipment e ON e.id=t.equipment_id AND e.operation_id=t.operation_id WHERE t.id=? AND t.operation_id=?',
+                (int(tire.value), op_id)
             )
             return rows[0] if rows else None
+
+        def selected_performance_type():
+            return get_equipment_performance_type(equip.value, op_id) if equip.value else None
+
+        def active_meter_control():
+            perf = selected_performance_type()
+            return horometer if perf == PERFORMANCE_HOURS else odometer if perf == PERFORMANCE_KILOMETERS else None
+
+        def active_meter_value():
+            ctrl = active_meter_control()
+            return ctrl.value if ctrl is not None else ''
+
+        def set_active_meter_value(value):
+            perf = selected_performance_type()
+            if perf == PERFORMANCE_HOURS:
+                horometer.value = fmt(value) if value not in (None, '') else ''
+                odometer.value = ''
+            elif perf == PERFORMANCE_KILOMETERS:
+                odometer.value = fmt(value) if value not in (None, '') else ''
+                horometer.value = ''
+            else:
+                horometer.value = ''
+                odometer.value = ''
+
+        def apply_meter_mode(lock=False):
+            perf = selected_performance_type()
+            # Sin equipo no se puede determinar la unidad: ambos quedan bloqueados.
+            if perf == PERFORMANCE_HOURS:
+                horometer.disabled = bool(lock)
+                odometer.disabled = True
+                horometer.label = 'Horómetro'
+                odometer.label = 'Odómetro (no aplica)'
+            elif perf == PERFORMANCE_KILOMETERS:
+                horometer.disabled = True
+                odometer.disabled = bool(lock)
+                horometer.label = 'Horómetro (no aplica)'
+                odometer.label = 'Odómetro'
+            else:
+                horometer.disabled = True
+                odometer.disabled = True
+                horometer.label = 'Horómetro'
+                odometer.label = 'Odómetro'
+            try:
+                horometer.update(); odometer.update()
+            except Exception:
+                pass
+            return perf
 
         def historical_limits(tid):
             # El horómetro conserva su validación histórica por lectura máxima.
@@ -2523,16 +4212,16 @@ def main(page: ft.Page):
             # evento registrado. Esto es indispensable después de una INVE,
             # porque EXT/INT cambian físicamente de lado.
             meter_rows=query(
-                'SELECT MAX(meter) max_meter FROM occurrences WHERE tire_id=?',
-                (tid,)
+                'SELECT MAX(meter) max_meter FROM occurrences WHERE tire_id=? AND operation_id=?',
+                (tid, op_id)
             )
             last_tread=query(
                 '''SELECT tread_inner,tread_outer
                    FROM occurrences
-                   WHERE tire_id=?
+                   WHERE tire_id=? AND operation_id=?
                      AND (tread_inner IS NOT NULL OR tread_outer IS NOT NULL)
                    ORDER BY id DESC LIMIT 1''',
-                (tid,)
+                (tid, op_id)
             )
             return {
                 'max_meter': meter_rows[0]['max_meter'] if meter_rows else None,
@@ -2560,7 +4249,7 @@ def main(page: ft.Page):
             return None
 
         def latest_event_date(tid):
-            rows=query('SELECT event_date FROM occurrences WHERE tire_id=?',(tid,))
+            rows=query('SELECT event_date FROM occurrences WHERE tire_id=? AND operation_id=?',(tid,op_id))
             dates=[parse_event_date(r['event_date']) for r in rows]
             dates=[d for d in dates if d is not None]
             return max(dates) if dates else None
@@ -2574,16 +4263,28 @@ def main(page: ft.Page):
                        current_meter=COALESCE(?,current_meter),
                        tread_inner=COALESCE(?,tread_inner),
                        tread_outer=COALESCE(?,tread_outer)
-                   WHERE id=?''',
-                (lim['max_meter'],lim['min_ti'],lim['min_to'],tid)
+                   WHERE id=? AND operation_id=?''',
+                (lim['max_meter'],lim['min_ti'],lim['min_to'],tid,op_id)
             )
+
+        def refresh_equipment_performance(lock_meter=False):
+            performance_type = get_equipment_performance_type(equip.value, op_id)
+            performance_info.value = f'Rendimiento: {performance_unit_label(performance_type)}'
+            apply_meter_mode(lock=lock_meter)
+            try:
+                performance_info.update()
+            except Exception:
+                pass
+            return performance_type
 
         def load_current_state(e=None):
             r=current_tire()
             if not r:
                 equip.value=None
+                refresh_equipment_performance()
                 pos.value=''
-                meter.value=''
+                horometer.value=''
+                odometer.value=''
                 ti.value=''
                 to.value=''
                 press.value=''
@@ -2593,19 +4294,20 @@ def main(page: ft.Page):
                 return
 
             equip.value=str(r['equipment_id']) if r['equipment_id'] is not None else None
+            refresh_equipment_performance()
             pos.value=fmt(r['position'])
 
             lim=historical_limits(int(r['id']))
-            meter.value=fmt(lim['max_meter'] if lim and lim['max_meter'] is not None else r['current_meter'])
+            set_active_meter_value(lim['max_meter'] if lim and lim['max_meter'] is not None else r['current_meter'])
             ti.value=fmt(lim['min_ti'] if lim and lim['min_ti'] is not None else r['tread_inner'])
             to.value=fmt(lim['min_to'] if lim and lim['min_to'] is not None else r['tread_outer'])
 
             last=query(
-                '''SELECT pressure,pressure_condition,location
+                '''SELECT pressure,pressure_condition,location,valve_cap,notes
                    FROM occurrences
-                   WHERE tire_id=?
+                   WHERE tire_id=? AND operation_id=?
                    ORDER BY id DESC LIMIT 1''',
-                (int(r['id']),)
+                (int(r['id']), op_id)
             )
             last_row=last[0] if last else None
             press.value=fmt(last_row['pressure']) if last_row and last_row['pressure'] is not None else fmt(r['recommended_pressure'])
@@ -2615,9 +4317,17 @@ def main(page: ft.Page):
             cond.value='CALIENTE' if last_cond.startswith('CAL') else 'FRIO'
 
             loc.value=fmt(last_row['location']) if last_row and last_row['location'] else fmt(r['equipment_location'])
+            valve_raw = str(last_row['valve_cap'] or '').strip().upper() if last_row and 'valve_cap' in last_row.keys() else ''
+            if valve_raw in ('SI','SÍ'):
+                valve_cap.value='SI'
+            elif valve_raw == 'NO':
+                valve_cap.value='NO'
+            else:
+                note_text = str(last_row['notes'] or '').upper() if last_row and 'notes' in last_row.keys() else ''
+                valve_cap.value='SI' if ('TAPA' in note_text or 'VALVULA' in note_text or 'VÁLVULA' in note_text) else 'NO'
             ref.value=(
                 f"Estado actual: {r['status']} · Equipo: {r['equipment_code'] or '-'} · "
-                f"Pos.: {r['position'] or '-'} · Última lectura válida: {meter.value or '-'} · "
+                f"Pos.: {r['position'] or '-'} · Última lectura válida: {active_meter_value() or '-'} · "
                 f"Cocada E/I válida: {to.value or '-'}/{ti.value or '-'}"
             )
 
@@ -2628,9 +4338,13 @@ def main(page: ft.Page):
             # Estado editable por defecto. Cada evento aplica solo sus bloqueos propios.
             equip.disabled=False
             pos.disabled=False
-            meter.disabled=False
+            horometer.disabled=False
+            odometer.disabled=False
             ti.disabled=False
             to.disabled=False
+            # Tapa Válvula es editable en INST, INSP, INSC e INVE.
+            # En otros eventos se conserva el último valor como referencia y queda bloqueado.
+            valve_cap.disabled = ec not in ('INST','INSP','INSC','INVE')
 
             # MOTIVO: se utiliza únicamente en REPA y BAJA.
             # En INST, INSP, INSC, ROT, INVE y DINS permanece bloqueado.
@@ -2656,6 +4370,7 @@ def main(page: ft.Page):
             pos.disabled=locked
             if locked and r:
                 equip.value=str(r['equipment_id']) if r['equipment_id'] is not None else None
+                refresh_equipment_performance()
                 pos.value=fmt(r['position'])
                 if r['status'] != 'SERVICIO':
                     ref.value=(ref.value + ' · ADVERTENCIA: el neumático no figura EN SERVICIO').strip(' ·')
@@ -2665,18 +4380,19 @@ def main(page: ft.Page):
             # las cocadas EXT/INT se intercambian automáticamente y quedan bloqueadas.
             if ec == 'INVE' and r:
                 equip.value=str(r['equipment_id']) if r['equipment_id'] is not None else None
+                refresh_equipment_performance()
                 pos.value=fmt(r['position'])
                 last=query(
                     '''SELECT meter,tread_inner,tread_outer
                        FROM occurrences
-                       WHERE tire_id=?
+                       WHERE tire_id=? AND operation_id=?
                        ORDER BY id DESC LIMIT 1''',
-                    (int(r['id']),)
+                    (int(r['id']), op_id)
                 )
                 last_row=last[0] if last else None
                 if last_row:
                     if last_row['meter'] is not None:
-                        meter.value=fmt(last_row['meter'])
+                        set_active_meter_value(last_row['meter'])
                     prev_int=last_row['tread_inner']
                     prev_ext=last_row['tread_outer']
                 else:
@@ -2688,10 +4404,16 @@ def main(page: ft.Page):
                 ti.value=fmt(prev_ext)
                 equip.disabled=True
                 pos.disabled=True
-                meter.disabled=True
+                horometer.disabled=True
+                odometer.disabled=True
                 to.disabled=True
                 ti.disabled=True
 
+            # La unidad la determina el equipo.
+            # INSP e INSC deben permitir ingresar el horómetro/odómetro de la inspección.
+            # BAJA, DINS e INVE mantienen el medidor bloqueado.
+            meter_locked = ec in ('INVE','BAJA','DINS')
+            apply_meter_mode(lock=meter_locked)
             page.update()
 
         def ask_delete(occ_id):
@@ -2699,14 +4421,48 @@ def main(page: ft.Page):
                 return
             tid=int(tire.value)
 
+            # Regla de seguridad: solo se puede eliminar el último evento.
+            latest=query(
+                '''SELECT id,event_code
+                   FROM occurrences
+                   WHERE tire_id=? AND operation_id=?
+                   ORDER BY id DESC LIMIT 1''',
+                (tid, op_id)
+            )
+            if not latest or int(latest[0]['id']) != int(occ_id):
+                snack('Solo se puede eliminar el último evento.', True)
+                return
+            if str(latest[0]['event_code'] or '').strip().upper() == 'INST':
+                snack('El evento INST está bloqueado y no puede eliminarse.', True)
+                return
+
             def close_dialog(e=None):
-                dlg.open=False
+                page.pop_dialog()
                 page.update()
 
             def do_delete(e=None):
-                execute('DELETE FROM occurrences WHERE id=? AND tire_id=?',(occ_id,tid))
+                # Segunda validación justo antes de borrar: el evento debe seguir
+                # siendo el último y no puede ser INST.
+                check=query(
+                    '''SELECT id,event_code
+                       FROM occurrences
+                       WHERE tire_id=? AND operation_id=?
+                       ORDER BY id DESC LIMIT 1''',
+                    (tid, op_id)
+                )
+                if not check or int(check[0]['id']) != int(occ_id):
+                    page.pop_dialog()
+                    snack('El evento ya no es el último. No se eliminó.', True)
+                    refresh()
+                    return
+                if str(check[0]['event_code'] or '').strip().upper() == 'INST':
+                    page.pop_dialog()
+                    snack('El evento INST está bloqueado y no puede eliminarse.', True)
+                    refresh()
+                    return
+                execute('DELETE FROM occurrences WHERE id=? AND tire_id=? AND operation_id=?',(occ_id,tid,op_id))
                 recalc_numeric_state(tid)
-                dlg.open=False
+                page.pop_dialog()
                 snack('Evento eliminado correctamente.')
                 refresh()
 
@@ -2716,15 +4472,14 @@ def main(page: ft.Page):
                 content=ft.Text('¿Desea eliminar este evento del historial? Esta acción no se puede deshacer.'),
                 actions=[
                     ft.TextButton('Cancelar',on_click=close_dialog),
-                    ft.ElevatedButton('Eliminar',icon=ft.Icons.DELETE_OUTLINE,on_click=do_delete)
+                    ft.Button('Eliminar',icon=ft.Icons.DELETE_OUTLINE,on_click=do_delete)
                 ],
                 actions_alignment=ft.MainAxisAlignment.END
             )
-            page.dialog=dlg
-            dlg.open=True
+            page.show_dialog(dlg)
             page.update()
 
-        save_btn=ft.ElevatedButton(
+        save_btn=ft.Button(
             'Guardar movimiento',
             icon=ft.Icons.SAVE,
             disabled=True
@@ -2768,7 +4523,7 @@ def main(page: ft.Page):
             if last_date is not None and entered_date < last_date:
                 return False
 
-            new_meter=num(meter.value)
+            new_meter=num(active_meter_value())
             if new_meter is None:
                 return False
             if lim and lim['max_meter'] is not None and float(new_meter) < float(lim['max_meter']):
@@ -2827,12 +4582,12 @@ def main(page: ft.Page):
                     '''SELECT o.*,e.code equipment_code
                        FROM occurrences o
                        LEFT JOIN equipment e ON e.id=o.equipment_id
-                       WHERE o.tire_id=?
+                       WHERE o.tire_id=? AND o.operation_id=?
                        ORDER BY o.id DESC''',
-                    (int(tire.value),)
+                    (int(tire.value), op_id)
                 )
                 hist.rows=[]
-                for r in rows:
+                for idx, r in enumerate(rows):
                     hist.rows.append(
                         ft.DataRow(cells=[
                             ft.DataCell(ft.Text(format_date(r['event_date']))),
@@ -2846,8 +4601,9 @@ def main(page: ft.Page):
                             ft.DataCell(ft.Text(fmt(r['location']))),
                             ft.DataCell(ft.IconButton(
                                 icon=ft.Icons.DELETE_OUTLINE,
-                                tooltip='Eliminar evento',
-                                on_click=lambda e, oid=r['id']: ask_delete(oid)
+                                tooltip=('Eliminar último evento' if idx == 0 and str(r['event_code'] or '').upper() != 'INST' else 'Bloqueado: solo se puede eliminar el último evento'),
+                                disabled=(idx != 0 or str(r['event_code'] or '').upper() == 'INST'),
+                                on_click=(lambda e, oid=r['id']: ask_delete(oid)) if (idx == 0 and str(r['event_code'] or '').upper() != 'INST') else None
                             ))
                         ])
                     )
@@ -2864,18 +4620,23 @@ def main(page: ft.Page):
             save_btn.disabled = not form_is_valid()
             page.update()
 
-        tire.on_change=on_tire_change
-        event.on_change=on_event_change
+        tire.on_select=on_tire_change
+        event.on_select=on_event_change
         date.on_change=update_save_state
-        equip.on_change=update_save_state
+        def on_equipment_change(e):
+            refresh_equipment_performance()
+            update_save_state(e)
+
+        equip.on_select=on_equipment_change
         pos.on_change=update_save_state
         meter.on_change=update_save_state
         ti.on_change=update_save_state
         to.on_change=update_save_state
         press.on_change=update_save_state
-        cond.on_change=update_save_state
-        reason.on_change=update_save_state
+        cond.on_select=update_save_state
+        reason.on_select=update_save_state
         loc.on_change=update_save_state
+        valve_cap.on_select=update_save_state
 
         def save(e):
             if not tire.value or not event.value:
@@ -2904,18 +4665,22 @@ def main(page: ft.Page):
                 return snack(f'El evento {ec} no está permitido para el estado actual del neumático.', True)
             if ec in ('REPA','BAJA') and not (reason.value or '').strip():
                 return snack(f'Seleccione un motivo para {ec}.', True)
+            if ec in ('INST','INSP','INSC','INVE') and (str(valve_cap.value or '').strip().upper() not in ('SI','NO')):
+                return snack('Seleccione SI o NO en Tapa Válvula.', True)
+            if ec in ('INST','INSP','INSC','INVE') and (str(valve_cap.value or '').strip().upper() not in ('SI','NO')):
+                return snack('Seleccione SI o NO en Tapa Válvula.', True)
             valid_reason_codes = ({k for k,_ in REPA_REASONS} if ec == 'REPA' else {k for k,_ in BAJA_REASONS}) if ec in ('REPA','BAJA') else set()
             if ec in ('REPA','BAJA') and reason.value not in valid_reason_codes:
                 return snack(f'El motivo seleccionado no es válido para {ec}.', True)
 
             lim=historical_limits(tid)
-            new_meter=num(meter.value)
+            new_meter=num(active_meter_value())
             max_meter=lim['max_meter'] if lim else None
             if new_meter is None:
-                return snack('Ingrese el horómetro / km.',True)
+                return snack('Ingrese el Horómetro u Odómetro según el rendimiento del equipo.',True)
             if max_meter is not None and float(new_meter) < float(max_meter):
                 return snack(
-                    f'Horómetro inválido: {fmt(new_meter)} es menor que la última lectura válida {fmt(max_meter)}.',
+                    f'Lectura inválida: {fmt(new_meter)} es menor que la última lectura válida {fmt(max_meter)}.',
                     True
                 )
 
@@ -3000,9 +4765,15 @@ def main(page: ft.Page):
                 eid=int(equip.value) if equip.value else None
                 event_pos=pos.value
 
+            # V22 MULTITALLER: un movimiento jamás puede apuntar a un equipo de otra operación.
+            if eid is not None:
+                _eq_ok=query('SELECT id FROM equipment WHERE id=? AND operation_id=? AND active=1',(eid,op_id))
+                if not _eq_ok:
+                    return snack('El equipo seleccionado no pertenece a la operación activa.',True)
+
             if ec=='INSC' and query(
-                "SELECT id FROM occurrences WHERE tire_id=? AND event_code='INSC' AND event_date=? AND COALESCE(meter,-1)=COALESCE(?, -1)",
-                (tid,event_date,new_meter)
+                "SELECT id FROM occurrences WHERE tire_id=? AND operation_id=? AND event_code='INSC' AND event_date=? AND COALESCE(meter,-1)=COALESCE(?, -1)",
+                (tid,op_id,event_date,new_meter)
             ):
                 return snack('Ya existe una INSC con la misma fecha y lectura.',True)
 
@@ -3012,36 +4783,38 @@ def main(page: ft.Page):
             # Por seguridad, únicamente REPA y BAJA pueden grabar Motivo.
             # En cualquier otro evento se descarta un valor residual.
             reason_for_db=(reason.value or '').strip() if ec in ('REPA','BAJA') else ''
+            valve_for_db=(valve_cap.value or '').strip().upper() if ec in ('INST','INSP','INSC','INVE') else (valve_cap.value or 'NO').strip().upper()
+            valve_for_db='SI' if valve_for_db in ('SI','SÍ') else 'NO'
 
             execute(
                 '''INSERT INTO occurrences(
                        tire_id,event_code,event_date,equipment_id,position,meter,
-                       tread_inner,tread_outer,pressure,pressure_condition,reason,location,notes
-                   ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+                       tread_inner,tread_outer,pressure,pressure_condition,reason,location,notes,valve_cap,operation_id
+                   ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
                 (tid,ec,event_date,eid,event_pos,new_meter,new_ti,new_to,
-                 num(press.value),condition,reason_for_db,loc.value,notes.value)
+                 num(press.value),condition,reason_for_db,loc.value,notes.value,valve_for_db,op_id)
             )
 
             if ec=='INST':
                 execute(
                     "UPDATE tires SET status='SERVICIO',equipment_id=?,position=?,current_meter=?,"
-                    "tread_inner=COALESCE(?,tread_inner),tread_outer=COALESCE(?,tread_outer) WHERE id=?",
-                    (eid,event_pos,new_meter,new_ti,new_to,tid)
+                    "tread_inner=COALESCE(?,tread_inner),tread_outer=COALESCE(?,tread_outer) WHERE id=? AND operation_id=?",
+                    (eid,event_pos,new_meter,new_ti,new_to,tid,op_id)
                 )
             elif ec=='DINS':
                 execute(
-                    "UPDATE tires SET status='STAND-BY',equipment_id=NULL,position=NULL,current_meter=? WHERE id=?",
-                    (new_meter,tid)
+                    "UPDATE tires SET status='STAND-BY',equipment_id=NULL,position=NULL,current_meter=? WHERE id=? AND operation_id=?",
+                    (new_meter,tid,op_id)
                 )
             elif ec=='REPA':
-                execute("UPDATE tires SET status='REPARACIÓN' WHERE id=?",(tid,))
+                execute("UPDATE tires SET status='REPARACIÓN' WHERE id=? AND operation_id=?",(tid,op_id))
             elif ec=='BAJA':
-                execute("UPDATE tires SET status='BAJA',equipment_id=NULL,position=NULL WHERE id=?",(tid,))
+                execute("UPDATE tires SET status='BAJA',equipment_id=NULL,position=NULL WHERE id=? AND operation_id=?",(tid,op_id))
             else:
                 execute(
                     'UPDATE tires SET current_meter=COALESCE(?,current_meter),'
-                    'tread_inner=COALESCE(?,tread_inner),tread_outer=COALESCE(?,tread_outer) WHERE id=?',
-                    (new_meter,new_ti,new_to,tid)
+                    'tread_inner=COALESCE(?,tread_inner),tread_outer=COALESCE(?,tread_outer) WHERE id=? AND operation_id=?',
+                    (new_meter,new_ti,new_to,tid,op_id)
                 )
 
             snack(f'Evento {ec} registrado correctamente.')
@@ -3082,7 +4855,7 @@ def main(page: ft.Page):
             options=[]
         )
 
-        register_missing_btn = ft.ElevatedButton(
+        register_missing_btn = ft.Button(
             'REGISTRAR NEUMÁTICO',
             icon=ft.Icons.ADD_CIRCLE_OUTLINE,
             visible=False
@@ -3102,6 +4875,7 @@ def main(page: ft.Page):
             'Fecha',
             'Equipo-Posición',
             'Horómetro',
+            'Odómetro',
             'Hrs Acumuladas',
             'Ext/Int - Inicial',
             'Ext/Int - Último',
@@ -3109,6 +4883,9 @@ def main(page: ft.Page):
             'Proyección Hrs',
             'Horas Acumuladas',
             'Costo x Hrs.',
+            'Proyección Km',
+            'Km Acumulados',
+            'Costo x Km',
             'Tapa Válvula',
             'Lugar de Operación',
         ]
@@ -3124,6 +4901,7 @@ def main(page: ft.Page):
             'Fecha',
             'Equipo-Posición',
             'Horómetro',
+            'Odómetro',
             'Hrs Acumuladas',
             'Ext/Int - Inicial',
             'Ext/Int - Último',
@@ -3131,6 +4909,9 @@ def main(page: ft.Page):
             'Proyección Hrs',
             'Horas Acumuladas',
             'Costo x Hrs.',
+            'Proyección Km',
+            'Km Acumulados',
+            'Costo x Km',
             'Tapa Válvula',
             'Lugar de Operación',
             'Motivo',
@@ -3165,13 +4946,17 @@ def main(page: ft.Page):
             'Proyección Hrs': ft.Text('—', size=12, color=TEXT_MAIN),
             'Horas Acumuladas': ft.Text('—', size=12, color=TEXT_MAIN),
             'Costo x Hrs.': ft.Text('—', size=12, color=TEXT_MAIN),
+            'Proyección Km': ft.Text('—', size=12, color=TEXT_MAIN),
+            'Km Acumulados': ft.Text('—', size=12, color=TEXT_MAIN),
+            'Costo x Km': ft.Text('—', size=12, color=TEXT_MAIN),
             'Tapa Válvula': ft.Text('—', size=12, color=TEXT_MAIN),
         }
         inline_controls = {
             'Nro. Eventos': new_event_text['Nro. Eventos'],
             'Fecha': date,
-            'Equipo-Posición': ft.Row([equip, pos], spacing=4, tight=True),
-            'Horómetro': meter,
+            'Equipo-Posición': ft.Row([equip, pos, performance_info], spacing=4, tight=True, wrap=True),
+            'Horómetro': horometer,
+            'Odómetro': odometer,
             'Hrs Acumuladas': new_event_text['Hrs Acumuladas'],
             'Ext/Int - Inicial': new_event_text['Ext/Int - Inicial'],
             'Ext/Int - Último': ft.Row([to, ti], spacing=4, tight=True),
@@ -3179,7 +4964,10 @@ def main(page: ft.Page):
             'Proyección Hrs': new_event_text['Proyección Hrs'],
             'Horas Acumuladas': new_event_text['Horas Acumuladas'],
             'Costo x Hrs.': new_event_text['Costo x Hrs.'],
-            'Tapa Válvula': new_event_text['Tapa Válvula'],
+            'Proyección Km': new_event_text['Proyección Km'],
+            'Km Acumulados': new_event_text['Km Acumulados'],
+            'Costo x Km': new_event_text['Costo x Km'],
+            'Tapa Válvula': valve_cap,
             'Lugar de Operación': loc,
             'Motivo': reason,
             'Observaciones': notes,
@@ -3204,7 +4992,12 @@ def main(page: ft.Page):
             ], spacing=0)
         )
 
+        # Filas calculadas que se mantienen internamente, pero no se muestran
+        # en la ficha histórica. No se eliminan cálculos ni datos.
+        hidden_history_rows = {'Proyección Hrs', 'Proyección Km'}
         for label in vertical_labels:
+            if label in hidden_history_rows:
+                continue
             new_box = ft.Container(content=inline_controls[label], width=280, visible=False, bgcolor='#FFFFFF', padding=6, border=ft.Border(bottom=ft.BorderSide(1, '#DCE6EF')))
             new_event_cells[label] = new_box
             ficha_rows.append(
@@ -3335,7 +5128,7 @@ def main(page: ft.Page):
             ec = event.value or ''
             new_event_header.value = f'NUEVO: {ec}' if ec else 'NUEVO EVENTO'
 
-            occ = query('SELECT * FROM occurrences WHERE tire_id=? ORDER BY id', (int(tire.value),))
+            occ = query('SELECT * FROM occurrences WHERE tire_id=? AND operation_id=? ORDER BY id', (int(tire.value), op_id))
             base_inst = None
             for item in reversed(occ):
                 if item['event_code'] == 'INST':
@@ -3346,27 +5139,35 @@ def main(page: ft.Page):
             init_i = base_inst['tread_inner'] if base_inst and base_inst['tread_inner'] is not None else r['new_tread']
             new_event_text['Ext/Int - Inicial'].value = f"{fmt(init_e)}/{fmt(init_i)}"
 
-            event_hours = None
+            event_distance = None
             try:
-                m = num(meter.value)
+                m = num(active_meter_value())
                 if m is not None and base_inst and base_inst['meter'] is not None:
-                    event_hours = max(0, float(m) - float(base_inst['meter']))
+                    event_distance = max(0, float(m) - float(base_inst['meter']))
             except Exception:
-                event_hours = None
-            hrs_text = f'{event_hours:.1f}' if event_hours is not None else '—'
+                event_distance = None
+            perf = selected_performance_type()
+            hrs_text = f'{event_distance:.1f}' if perf == PERFORMANCE_HOURS and event_distance is not None else '—'
+            km_text = f'{event_distance:.1f}' if perf == PERFORMANCE_KILOMETERS and event_distance is not None else '—'
             new_event_text['Hrs Acumuladas'].value = hrs_text
             new_event_text['Horas Acumuladas'].value = hrs_text
+            new_event_text['Km Acumulados'].value = km_text
 
             life_value = r['projected_life_target'] if r['projected_life_target'] is not None else r['projected_life']
-            new_event_text['Proyección Hrs'].value = fmt(life_value) or '—'
+            new_event_text['Proyección Hrs'].value = fmt(life_value) if perf == PERFORMANCE_HOURS else '—'
+            new_event_text['Proyección Km'].value = fmt(life_value) if perf == PERFORMANCE_KILOMETERS else '—'
             try:
                 c = float(r['cost_usd']) if r['cost_usd'] is not None else None
             except Exception:
                 c = None
             new_event_text['Costo x Hrs.'].value = (
-                f'$ {c / event_hours:.2f}/h' if c is not None and event_hours is not None and event_hours > 0 else '—'
+                f'$ {c / event_distance:.2f}/h' if perf == PERFORMANCE_HOURS and c is not None and event_distance is not None and event_distance > 0 else '—'
             )
-            new_event_text['Tapa Válvula'].value = '—'
+            new_event_text['Costo x Km'].value = (
+                f'$ {c / event_distance:.2f}/km' if perf == PERFORMANCE_KILOMETERS and c is not None and event_distance is not None and event_distance > 0 else '—'
+            )
+            if str(valve_cap.value or '').strip().upper() not in ('SI','NO'):
+                valve_cap.value = 'NO'
 
         def cancel_inline(e=None):
             set_inline_event_mode(False)
@@ -3393,9 +5194,9 @@ def main(page: ft.Page):
         def load_foxpro_ficha(tid):
             rows = query(
                 '''SELECT t.*,e.code equipment_code
-                   FROM tires t LEFT JOIN equipment e ON e.id=t.equipment_id
-                   WHERE t.id=?''',
-                (int(tid),)
+                   FROM tires t LEFT JOIN equipment e ON e.id=t.equipment_id AND e.operation_id=t.operation_id
+                   WHERE t.id=? AND t.operation_id=?''',
+                (int(tid), op_id)
             )
             if not rows:
                 clear_foxpro_ficha()
@@ -3405,8 +5206,8 @@ def main(page: ft.Page):
             # textual almacenado en SQLite ni del id de inserción.
             occ_raw = query(
                 '''SELECT * FROM occurrences
-                   WHERE tire_id=?''',
-                (int(tid),)
+                   WHERE tire_id=? AND operation_id=?''',
+                (int(tid), op_id)
             )
 
             def occurrence_sort_key(item):
@@ -3468,21 +5269,34 @@ def main(page: ft.Page):
             foxpro_values['Equipo-Posición'].value = (
                 f"{r['equipment_code'] or '-'} - P{r['position'] or '-'}"
             )
-            foxpro_values['Horómetro'].value = fmt(current_meter) or '—'
-            foxpro_values['Hrs Acumuladas'].value = f"{hrs_acum:.1f}" if hrs_acum is not None else '—'
+            perf = get_equipment_performance_type(r['equipment_id'], op_id) if r['equipment_id'] is not None else None
+            foxpro_values['Horómetro'].value = fmt(current_meter) if perf == PERFORMANCE_HOURS else '—'
+            foxpro_values['Odómetro'].value = fmt(current_meter) if perf == PERFORMANCE_KILOMETERS else '—'
+            foxpro_values['Hrs Acumuladas'].value = f"{hrs_acum:.1f}" if perf == PERFORMANCE_HOURS and hrs_acum is not None else '—'
             foxpro_values['Ext/Int - Inicial'].value = f"{fmt(initial_e)}/{fmt(initial_i)}"
             foxpro_values['Ext/Int - Último'].value = f"{fmt(last_e)}/{fmt(last_i)}"
             foxpro_values['Psi Act(F/C)-Rec'].value = (
                 f"{fmt(actual_press) or '-'} ({press_cond or '-'}) / {fmt(rec_press) or '-'}"
             )
             life_value = r['projected_life_target'] if r['projected_life_target'] is not None else r['projected_life']
-            foxpro_values['Proyección Hrs'].value = fmt(life_value) or '—'
-            foxpro_values['Horas Acumuladas'].value = f"{hrs_acum:.1f}" if hrs_acum is not None else '—'
-            if header_cost is not None and hrs_acum is not None and hrs_acum > 0:
-                foxpro_values['Costo x Hrs.'].value = f"$ {header_cost / hrs_acum:.2f}/h"
+            foxpro_values['Proyección Hrs'].value = fmt(life_value) if perf == PERFORMANCE_HOURS else '—'
+            foxpro_values['Horas Acumuladas'].value = f"{hrs_acum:.1f}" if perf == PERFORMANCE_HOURS and hrs_acum is not None else '—'
+            foxpro_values['Costo x Hrs.'].value = (
+                f"$ {header_cost / hrs_acum:.2f}/h" if perf == PERFORMANCE_HOURS and header_cost is not None and hrs_acum is not None and hrs_acum > 0 else '—'
+            )
+            foxpro_values['Proyección Km'].value = fmt(life_value) if perf == PERFORMANCE_KILOMETERS else '—'
+            foxpro_values['Km Acumulados'].value = f"{hrs_acum:.1f}" if perf == PERFORMANCE_KILOMETERS and hrs_acum is not None else '—'
+            foxpro_values['Costo x Km'].value = (
+                f"$ {header_cost / hrs_acum:.2f}/km" if perf == PERFORMANCE_KILOMETERS and header_cost is not None and hrs_acum is not None and hrs_acum > 0 else '—'
+            )
+            valve_raw = str(last['valve_cap'] or '').strip().upper() if last and 'valve_cap' in last.keys() else ''
+            if valve_raw in ('SI','SÍ'):
+                foxpro_values['Tapa Válvula'].value='SI'
+            elif valve_raw == 'NO':
+                foxpro_values['Tapa Válvula'].value='NO'
             else:
-                foxpro_values['Costo x Hrs.'].value = '—'
-            foxpro_values['Tapa Válvula'].value = 'NO'
+                note_text = str(last['notes'] or '').upper() if last and 'notes' in last.keys() else ''
+                foxpro_values['Tapa Válvula'].value = 'SI' if ('TAPA' in note_text or 'VALVULA' in note_text or 'VÁLVULA' in note_text) else 'NO'
             foxpro_values['Lugar de Operación'].value = fmt(last['location']) if last and last['location'] else '—'
 
 
@@ -3546,35 +5360,47 @@ def main(page: ft.Page):
                 # Mostrar código de equipo en lugar del id cuando exista.
                 if target['equipment_id']:
                     eq_row = query(
-                        'SELECT code FROM equipment WHERE id=?',
-                        (int(target['equipment_id']),)
+                        'SELECT code FROM equipment WHERE id=? AND operation_id=?',
+                        (int(target['equipment_id']), op_id)
                     )
                     if eq_row:
                         values['Equipo-Posición'].value = (
                             f"{eq_row[0]['code']} - P{target['position'] or '-'}"
                         )
 
-                values['Horómetro'].value = fmt(target['meter']) or '—'
+                target_perf = get_equipment_performance_type(target['equipment_id'], op_id) if target['equipment_id'] is not None else None
+                values['Horómetro'].value = fmt(target['meter']) if target_perf == PERFORMANCE_HOURS else '—'
+                values['Odómetro'].value = fmt(target['meter']) if target_perf == PERFORMANCE_KILOMETERS else '—'
                 values['Hrs Acumuladas'].value = (
-                    f"{event_hours:.1f}" if event_hours is not None else '—'
+                    f"{event_hours:.1f}" if target_perf == PERFORMANCE_HOURS and event_hours is not None else '—'
                 )
                 values['Ext/Int - Inicial'].value = f"{fmt(init_e)}/{fmt(init_i)}"
                 values['Ext/Int - Último'].value = f"{fmt(evt_e)}/{fmt(evt_i)}"
                 values['Psi Act(F/C)-Rec'].value = (
                     f"{fmt(evt_press) or '-'} ({evt_cond or '-'}) / {fmt(rec_press) or '-'}"
                 )
-                values['Proyección Hrs'].value = fmt(life_value) or '—'
+                values['Proyección Hrs'].value = fmt(life_value) if target_perf == PERFORMANCE_HOURS else '—'
                 values['Horas Acumuladas'].value = (
-                    f"{event_hours:.1f}" if event_hours is not None else '—'
+                    f"{event_hours:.1f}" if target_perf == PERFORMANCE_HOURS and event_hours is not None else '—'
                 )
-                if header_cost is not None and event_hours is not None and event_hours > 0:
-                    values['Costo x Hrs.'].value = f"$ {header_cost / event_hours:.2f}/h"
+                values['Costo x Hrs.'].value = (
+                    f"$ {header_cost / event_hours:.2f}/h" if target_perf == PERFORMANCE_HOURS and header_cost is not None and event_hours is not None and event_hours > 0 else '—'
+                )
+                values['Proyección Km'].value = fmt(life_value) if target_perf == PERFORMANCE_KILOMETERS else '—'
+                values['Km Acumulados'].value = (
+                    f"{event_hours:.1f}" if target_perf == PERFORMANCE_KILOMETERS and event_hours is not None else '—'
+                )
+                values['Costo x Km'].value = (
+                    f"$ {header_cost / event_hours:.2f}/km" if target_perf == PERFORMANCE_KILOMETERS and header_cost is not None and event_hours is not None and event_hours > 0 else '—'
+                )
+                valve_raw = str(target['valve_cap'] or '').strip().upper() if 'valve_cap' in target.keys() else ''
+                if valve_raw in ('SI','SÍ'):
+                    values['Tapa Válvula'].value='SI'
+                elif valve_raw == 'NO':
+                    values['Tapa Válvula'].value='NO'
                 else:
-                    values['Costo x Hrs.'].value = '—'
-                note_text = str(target['notes'] or '').upper() if 'notes' in target.keys() else ''
-                values['Tapa Válvula'].value = (
-                    'SI' if ('TAPA' in note_text or 'VALVULA' in note_text or 'VÁLVULA' in note_text) else 'NO'
-                )
+                    note_text = str(target['notes'] or '').upper() if 'notes' in target.keys() else ''
+                    values['Tapa Válvula'].value = 'SI' if ('TAPA' in note_text or 'VALVULA' in note_text or 'VÁLVULA' in note_text) else 'NO'
                 values['Lugar de Operación'].value = fmt(target['location']) if target['location'] else '—'
                 values['Motivo'].value = fmt(target['reason']) if 'reason' in target.keys() and target['reason'] else '—'
                 values['Observaciones'].value = fmt(target['notes']) if 'notes' in target.keys() and target['notes'] else '—'
@@ -3602,6 +5428,13 @@ def main(page: ft.Page):
         def select_operational_tire(tid):
             if not tid:
                 return
+            # V22: rechazo explícito de cualquier neumático que no pertenezca al taller activo.
+            _owned=query('SELECT id FROM tires WHERE id=? AND operation_id=?',(int(tid),op_id))
+            if not _owned:
+                tire.value=None
+                clear_foxpro_ficha()
+                update_event_button_states(None)
+                return snack('El neumático no pertenece a la operación activa.', True)
             tire.value = str(tid)
             set_inline_event_mode(False)
             movement_form.visible = False
@@ -3636,9 +5469,9 @@ def main(page: ft.Page):
 
             rows = query(
                 '''SELECT id,code,serial FROM tires
-                   WHERE code LIKE ? OR serial LIKE ?
+                   WHERE operation_id=? AND (code LIKE ? OR serial LIKE ?)
                    ORDER BY code''',
-                (f'%{term}%', f'%{term}%')
+                (op_id, f'%{term}%', f'%{term}%')
             )
             search_result.options = [
                 ft.dropdown.Option(str(r['id']), f"{r['code']} | {r['serial'] or 's/serie'}")
@@ -3672,7 +5505,7 @@ def main(page: ft.Page):
 
         search_tire.on_submit = do_search
         search_tire.on_change = do_search
-        search_result.on_change = on_search_result
+        search_result.on_select = on_search_result
 
         event_icons_local = {
             'INST': ft.Icons.ADD_CIRCLE_OUTLINE,
@@ -3701,8 +5534,8 @@ def main(page: ft.Page):
             rows = query(
                 """SELECT id,equipment_id,position,status
                    FROM tires
-                   WHERE id=?""",
-                (int(tid),)
+                   WHERE id=? AND operation_id=?""",
+                (int(tid), op_id)
             )
             if not rows:
                 for code, btn in event_buttons_local.items():
@@ -3874,8 +5707,45 @@ def main(page: ft.Page):
         ],scroll=ft.ScrollMode.AUTO,spacing=16)
         page.update()
 
+    def maintenance_nav_button(label, icon, on_click=None, active=False):
+        """Acceso uniforme para los submódulos del Programa de mantenimiento."""
+        return ft.Button(
+            label,
+            icon=icon,
+            on_click=on_click,
+            width=280,
+            height=44,
+            disabled=active,
+            bgcolor='#D7DFEA' if active else '#EAF2FF',
+            color='#5D6875' if active else '#1E5AA8',
+            style=ft.ButtonStyle(
+                shape=ft.RoundedRectangleBorder(radius=10),
+                text_style=ft.TextStyle(size=14, weight=ft.FontWeight.BOLD),
+            ),
+        )
+
+    def maintenance_nav_row(active=None):
+        """Accesos estandarizados 3.1–3.6 + volver. Todos con el mismo tamaño."""
+        return ft.Row([
+            maintenance_nav_button('VOLVER A PROGRAMA DE MANTENIMIENTO', ft.Icons.ARROW_BACK,
+                                   lambda e: maintenance_menu_view(), active=False),
+            maintenance_nav_button('3.1 Evaluación de remanente', ft.Icons.CHECK_CIRCLE_OUTLINE,
+                                   lambda e: maintenance_view(), active == '31'),
+            maintenance_nav_button('3.2 Diferencia RTD entre hombros', ft.Icons.COMPARE_ARROWS,
+                                   lambda e: maintenance_shoulders_view(), active == '32'),
+            maintenance_nav_button('3.3 Diferencia RTD mismo eje', ft.Icons.COMPARE_ARROWS,
+                                   lambda e: maintenance_axles_view(), active == '33'),
+            maintenance_nav_button('3.4 Diferencia entre ejes por equipo', ft.Icons.COMPARE_ARROWS,
+                                   lambda e: maintenance_four_positions_view(), active == '34'),
+            maintenance_nav_button('3.5 Nivelación de presión', ft.Icons.SPEED,
+                                   lambda e: maintenance_pressure_view(), active == '35'),
+            maintenance_nav_button('3.6 Reporte final de mantenimiento', ft.Icons.DESCRIPTION_OUTLINED,
+                                   lambda e: maintenance_final_report_view(), active == '36'),
+        ], spacing=10, run_spacing=10, wrap=True)
+
     def maintenance_view():
         """Programa de mantenimiento - Prueba 01: evaluación de remanente (RTD)."""
+        op_id = active_operation_id()
         rows = query("""
             SELECT
                 t.code, t.serial, t.brand, t.size, t.design,
@@ -3884,9 +5754,9 @@ def main(page: ft.Page):
                 e.vehicle_type, e.model AS equipment_model, t.position
             FROM tires t
             LEFT JOIN equipment e ON e.id=t.equipment_id
-            WHERE t.status='SERVICIO'
+            WHERE t.status='SERVICIO' AND t.operation_id=?
             ORDER BY COALESCE(e.code,''), t.position, t.code
-        """)
+        """, (op_id,))
 
         def rtd_value(r):
             vals=[]
@@ -3899,15 +5769,33 @@ def main(page: ft.Page):
             return min(vals) if vals else None
 
         def rtd_condition(rtd):
-            # Criterio aprobado para Prueba 01:
-            # Buen estado > 30 mm
-            # Próximo cambio > 20 y <= 30 mm
-            # Cambio urgente 0 a 20 mm
+            # Criterio general conservado para los indicadores globales.
             if rtd is None or rtd < 0:
                 return 'SIN LECTURA'
             if rtd > 30:
                 return 'BUEN ESTADO'
             if rtd > 20:
+                return 'PRÓXIMO CAMBIO'
+            return 'CAMBIO URGENTE'
+
+        def rtd_condition_by_category(category, rtd):
+            # Semáforo específico para remanente mínimo por tipo de equipo.
+            # El valor menor representa mayor proximidad al retiro.
+            if rtd is None or rtd < 0:
+                return 'SIN LECTURA'
+            thresholds = {
+                # Cambio urgente: 0–20 / 0–10 / 0–4.
+                # Próximo cambio: 21–30 / 11–15 / 5–6.
+                # Buen estado: >30 / >15 / >6.
+                'SCOOP': (20.0, 30.0),
+                'VOLQUETES': (10.0, 15.0),
+                'CAMIONETAS': (4.0, 6.0),
+                'OTROS': (10.0, 15.0),
+            }
+            emergency_max, preventive_max = thresholds.get(str(category).upper(), (10.0, 15.0))
+            if rtd > preventive_max:
+                return 'BUEN ESTADO'
+            if rtd > emergency_max:
                 return 'PRÓXIMO CAMBIO'
             return 'CAMBIO URGENTE'
 
@@ -3937,7 +5825,7 @@ def main(page: ft.Page):
 
         def top_metric(title, value, subtitle, value_color=TEXT_MAIN):
             return ft.Container(
-                width=250,
+                expand=1,
                 height=108,
                 bgcolor=CARD_BG,
                 border=ft.Border.all(1, '#DDE5ED'),
@@ -3991,18 +5879,24 @@ def main(page: ft.Page):
         ], spacing=0)
 
         def rtd_donut_chart():
-            """Dona compacta con la condición RTD calculada de la última lectura disponible."""
+            """Dona ampliada y centrada, con leyenda a la derecha usando exactamente los mismos colores."""
             import base64, math
+            palette={
+                'Buen Estado':'#2E9B45',
+                'Próximo Cambio':'#F2A900',
+                'Cambio Urgente':'#D92D20',
+            }
             items=[
-                ('Buen Estado', counts['BUEN ESTADO'], '#2E9B45'),
-                ('Próximo Cambio', counts['PRÓXIMO CAMBIO'], '#F2A900'),
-                ('Cambio Urgente', counts['CAMBIO URGENTE'], '#D92D20'),
+                ('Buen Estado', counts['BUEN ESTADO']),
+                ('Próximo Cambio', counts['PRÓXIMO CAMBIO']),
+                ('Cambio Urgente', counts['CAMBIO URGENTE']),
             ]
-            total_chart=sum(n for _,n,_ in items)
-            cx=cy=78; radius=46; stroke=22
+            total_chart=sum(n for _,n in items)
+            cx=cy=100; radius=61; stroke=27
             circumference=2*math.pi*radius
             offset=0.0; circles=[]; legend=[]
-            for label,n,color in items:
+            for label,n in items:
+                color=palette[label]
                 dash=circumference*(n/total_chart) if total_chart else 0
                 gap=max(0.0,circumference-dash)
                 if n>0:
@@ -4014,22 +5908,41 @@ def main(page: ft.Page):
                 offset += dash
                 pc=(n/total_chart*100) if total_chart else 0
                 legend.append(ft.Row([
-                    ft.Container(width=9,height=9,bgcolor=color,border_radius=2),
-                    ft.Text(f'{label}: {n} ({pc:.1f}%)',size=9.2,color=TEXT_MAIN),
-                ],spacing=5))
+                    ft.Container(width=10,height=10,bgcolor=color,border_radius=2),
+                    ft.Text(f'{label}: {n} ({pc:.1f}%)',size=8.8,color=TEXT_MAIN),
+                ],spacing=6))
             svg=(
-                '<svg xmlns="http://www.w3.org/2000/svg" width="156" height="156" viewBox="0 0 156 156">'
-                '<circle cx="78" cy="78" r="46" fill="none" stroke="#E2E8F0" stroke-width="22" />'
+                '<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200" viewBox="0 0 200 200">'
+                '<circle cx="100" cy="100" r="61" fill="none" stroke="#E2E8F0" stroke-width="27" />'
                 + ''.join(circles) +
-                f'<text x="78" y="76" text-anchor="middle" font-family="Arial" font-size="22" font-weight="700" fill="#172033">{total_chart}</text>'
-                '<text x="78" y="94" text-anchor="middle" font-family="Arial" font-size="9" fill="#64748B">neumáticos</text>'
+                f'<text x="100" y="98" text-anchor="middle" font-family="Arial" font-size="27" font-weight="700" fill="#172033">{total_chart}</text>'
+                '<text x="100" y="118" text-anchor="middle" font-family="Arial" font-size="10" fill="#64748B">neumáticos</text>'
                 '</svg>'
             )
             src='data:image/svg+xml;base64,'+base64.b64encode(svg.encode('utf-8')).decode('ascii')
-            return ft.Row([
-                ft.Image(src=src,width=150,height=150,fit=ft.BoxFit.CONTAIN),
-                ft.Column(legend,spacing=7),
-            ],spacing=8,vertical_alignment=ft.CrossAxisAlignment.CENTER)
+            # Distribución fija para asegurar que la leyenda quede siempre a la derecha
+            # y la dona permanezca realmente centrada dentro de su zona.
+            donut_box=ft.Container(
+                width=255,
+                height=215,
+                alignment=ft.Alignment.CENTER,
+                content=ft.Image(src=src,width=220,height=220,fit=ft.BoxFit.CONTAIN),
+            )
+            legend_box=ft.Container(
+                width=190,
+                height=215,
+                alignment=ft.Alignment.CENTER_LEFT,
+                content=ft.Column(legend,spacing=9,horizontal_alignment=ft.CrossAxisAlignment.START),
+            )
+            return ft.Container(
+                width=455,
+                height=215,
+                alignment=ft.Alignment.CENTER,
+                content=ft.Row([
+                    donut_box,
+                    legend_box,
+                ],spacing=10,vertical_alignment=ft.CrossAxisAlignment.CENTER)
+            )
 
         # Resumen por tipo de vehículo, basado en los neumáticos actualmente en servicio.
         vehicle_summary={}
@@ -4086,90 +5999,621 @@ def main(page: ft.Page):
             ])] if scoop_total else [])
         )
 
+        # Condición general desglosada por tipo de equipo.
+        # Cada neumático se coloca en la fila que corresponde a su condición RTD
+        # y en la columna de su tipo de equipo. Los umbrales son los específicos
+        # de cada categoría definidos en rtd_condition_by_category().
+        def classify_equipment(vehicle_type):
+            kind = str(vehicle_type or '').strip().upper()
+            kind = (kind.replace('Á','A').replace('É','E').replace('Í','I')
+                         .replace('Ó','O').replace('Ú','U').replace('Ü','U'))
+            if 'VOLQUETE' in kind:
+                return 'VOLQUETES'
+            if 'CAMIONETA' in kind or 'CAMION' in kind:
+                return 'CAMIONETAS'
+            if 'SCOOP' in kind:
+                return 'SCOOP'
+            return 'OTROS'
+
+        condition_by_category = {}
+        category_order = ['VOLQUETES', 'CAMIONETAS', 'SCOOP', 'OTROS']
+        present_categories = []
+        for r, rtd, _ in evaluated:
+            category = classify_equipment(r.get('vehicle_type'))
+            if category not in present_categories:
+                present_categories.append(category)
+            category_counts = condition_by_category.setdefault(category, {
+                'BUEN ESTADO': 0,
+                'PRÓXIMO CAMBIO': 0,
+                'CAMBIO URGENTE': 0,
+                'SIN LECTURA': 0,
+            })
+            category_condition = rtd_condition_by_category(category, rtd)
+            category_counts[category_condition] = category_counts.get(category_condition, 0) + 1
+
+        present_categories = [c for c in category_order if c in present_categories]
+        # Si existiera una categoría no contemplada, se conserva al final.
+        present_categories += [c for c in condition_by_category if c not in present_categories]
+
+        # CONSOLIDADO GENERAL:
+        # Los indicadores superiores deben ser exactamente la suma de todas
+        # las tablas por tipo de equipo. No se utiliza el criterio general
+        # rtd_condition(), porque cada categoría tiene sus propios umbrales.
+        counts = {
+            'BUEN ESTADO': sum(condition_by_category.get(cat, {}).get('BUEN ESTADO', 0)
+                               for cat in present_categories),
+            'PRÓXIMO CAMBIO': sum(condition_by_category.get(cat, {}).get('PRÓXIMO CAMBIO', 0)
+                                  for cat in present_categories),
+            'CAMBIO URGENTE': sum(condition_by_category.get(cat, {}).get('CAMBIO URGENTE', 0)
+                                  for cat in present_categories),
+            'SIN LECTURA': sum(condition_by_category.get(cat, {}).get('SIN LECTURA', 0)
+                               for cat in present_categories),
+        }
+        evaluated_total = (
+            counts['BUEN ESTADO']
+            + counts['PRÓXIMO CAMBIO']
+            + counts['CAMBIO URGENTE']
+        )
+        good_pct = (counts['BUEN ESTADO'] / evaluated_total * 100) if evaluated_total else 0
+
         condition_rows=[]
         for label,text_color,row_color in [
             ('BUEN ESTADO','#176B2C','#DDF3E3'),
             ('PRÓXIMO CAMBIO','#8A5A00','#FFF0C2'),
             ('CAMBIO URGENTE','#A61B12','#FAD9D6'),
         ]:
-            n=counts[label]
-            condition_rows.append(ft.DataRow(color=row_color, cells=[
+            category_values = [condition_by_category.get(cat, {}).get(label, 0) for cat in present_categories]
+            row_total = sum(category_values)
+            cells = [
                 ft.DataCell(ft.Text(label.title(), size=10, weight=ft.FontWeight.BOLD, color=text_color)),
-                ft.DataCell(ft.Text(str(n), size=10, weight=ft.FontWeight.BOLD, color=text_color)),
-                ft.DataCell(ft.Text(f'{pct(n,evaluated_total):.1f}%', size=10, weight=ft.FontWeight.BOLD, color=text_color)),
-            ]))
-        if counts['SIN LECTURA']:
-            condition_rows.append(ft.DataRow(cells=[
-                ft.DataCell(ft.Text('Sin lectura', size=10, weight=ft.FontWeight.BOLD, color=TEXT_MUTED)),
-                ft.DataCell(ft.Text(str(counts['SIN LECTURA']), size=10)),
-                ft.DataCell(ft.Text(f'{pct(counts["SIN LECTURA"],total):.1f}%', size=10)),
-            ]))
-        condition_rows.append(ft.DataRow(color='#000000', cells=[
-            ft.DataCell(ft.Text('TOTAL', size=10, weight=ft.FontWeight.BOLD, color='#FFFFFF')),
+            ]
+            cells += [
+                ft.DataCell(ft.Text(str(value), size=10, weight=ft.FontWeight.BOLD, color=text_color))
+                for value in category_values
+            ]
+            cells += [
+                ft.DataCell(ft.Text(str(row_total), size=10, weight=ft.FontWeight.BOLD, color=text_color)),
+                ft.DataCell(ft.Text(f'{pct(row_total,evaluated_total):.1f}%', size=10, weight=ft.FontWeight.BOLD, color=text_color)),
+            ]
+            condition_rows.append(ft.DataRow(color=row_color, cells=cells))
+
+        # Se muestran lecturas faltantes solo si existen.
+        no_reading_values = [condition_by_category.get(cat, {}).get('SIN LECTURA', 0) for cat in present_categories]
+        no_reading_total = sum(no_reading_values)
+        if no_reading_total:
+            cells = [ft.DataCell(ft.Text('Sin lectura', size=10, weight=ft.FontWeight.BOLD, color=TEXT_MUTED))]
+            cells += [ft.DataCell(ft.Text(str(value), size=10, color=TEXT_MUTED)) for value in no_reading_values]
+            cells += [
+                ft.DataCell(ft.Text(str(no_reading_total), size=10, color=TEXT_MUTED)),
+                ft.DataCell(ft.Text(f'{pct(no_reading_total,total):.1f}%', size=10, color=TEXT_MUTED)),
+            ]
+            condition_rows.append(ft.DataRow(cells=cells))
+
+        # Totales por tipo de equipo y total general.
+        category_totals = [sum(condition_by_category.get(cat, {}).values()) for cat in present_categories]
+        cells = [ft.DataCell(ft.Text('TOTAL', size=10, weight=ft.FontWeight.BOLD, color='#FFFFFF'))]
+        cells += [ft.DataCell(ft.Text(str(value), size=10, weight=ft.FontWeight.BOLD, color='#FFFFFF')) for value in category_totals]
+        cells += [
             ft.DataCell(ft.Text(str(total), size=10, weight=ft.FontWeight.BOLD, color='#FFFFFF')),
             ft.DataCell(ft.Text('100.0%' if total else '0.0%', size=10, weight=ft.FontWeight.BOLD, color='#FFFFFF')),
-        ]))
+        ]
+        condition_rows.append(ft.DataRow(color='#000000', cells=cells))
+
+        condition_columns = [
+            ft.DataColumn(ft.Text('Condición', size=11, weight=ft.FontWeight.BOLD, color='#FFFFFF')),
+        ]
+        condition_columns += [
+            ft.DataColumn(ft.Text(category, size=10, weight=ft.FontWeight.BOLD, color='#FFFFFF'), numeric=True)
+            for category in present_categories
+        ]
+        condition_columns += [
+            ft.DataColumn(ft.Text('Total', size=11, weight=ft.FontWeight.BOLD, color='#FFFFFF'), numeric=True),
+            ft.DataColumn(ft.Text('% del Total', size=10, weight=ft.FontWeight.BOLD, color='#FFFFFF'), numeric=True),
+        ]
+
         condition_table=ft.DataTable(
             heading_row_height=34,
             heading_row_color='#000000',
             data_row_min_height=30,
             data_row_max_height=30,
-            column_spacing=34,
-            columns=[
-                ft.DataColumn(ft.Text('Condición', size=11, weight=ft.FontWeight.BOLD, color='#FFFFFF')),
-                ft.DataColumn(ft.Text('Cantidad', size=11, weight=ft.FontWeight.BOLD, color='#FFFFFF'), numeric=True),
-                ft.DataColumn(ft.Text('% del Total', size=11, weight=ft.FontWeight.BOLD, color='#FFFFFF'), numeric=True),
-            ],
+            column_spacing=22,
+            columns=condition_columns,
             rows=condition_rows
         )
+
+        # Tablas independientes por tipo de equipo. Cada tabla conserva el
+        # mismo formato de la tabla general, pero solo cuantifica los neumáticos
+        # de su propia categoría y se inserta en la fila correspondiente.
+        def build_condition_table_category(category):
+            data = condition_by_category.get(category, {})
+            category_total = sum(data.get(k, 0) for k in (
+                'BUEN ESTADO', 'PRÓXIMO CAMBIO', 'CAMBIO URGENTE', 'SIN LECTURA'
+            ))
+            if category_total <= 0:
+                return None
+
+            rows_cat = []
+            for label, text_color, row_color in [
+                ('BUEN ESTADO', '#176B2C', '#DDF3E3'),
+                ('PRÓXIMO CAMBIO', '#8A5A00', '#FFF0C2'),
+                ('CAMBIO URGENTE', '#A61B12', '#FAD9D6'),
+            ]:
+                value = data.get(label, 0)
+                rows_cat.append(ft.DataRow(
+                    color=row_color,
+                    cells=[
+                        ft.DataCell(ft.Text(label.title(), size=9.5, weight=ft.FontWeight.BOLD, color=text_color)),
+                        ft.DataCell(ft.Text(str(value), size=9.5, weight=ft.FontWeight.BOLD, color=text_color)),
+                        ft.DataCell(ft.Text(f'{pct(value, category_total):.1f}%', size=9.5, weight=ft.FontWeight.BOLD, color=text_color)),
+                    ]
+                ))
+
+            no_reading = data.get('SIN LECTURA', 0)
+            if no_reading:
+                rows_cat.append(ft.DataRow(cells=[
+                    ft.DataCell(ft.Text('Sin lectura', size=9.5, color=TEXT_MUTED)),
+                    ft.DataCell(ft.Text(str(no_reading), size=9.5, color=TEXT_MUTED)),
+                    ft.DataCell(ft.Text(f'{pct(no_reading, category_total):.1f}%', size=9.5, color=TEXT_MUTED)),
+                ]))
+
+            rows_cat.append(ft.DataRow(
+                color='#000000',
+                cells=[
+                    ft.DataCell(ft.Text('TOTAL', size=9.5, weight=ft.FontWeight.BOLD, color='#FFFFFF')),
+                    ft.DataCell(ft.Text(str(category_total), size=9.5, weight=ft.FontWeight.BOLD, color='#FFFFFF')),
+                    ft.DataCell(ft.Text('100.0%', size=9.5, weight=ft.FontWeight.BOLD, color='#FFFFFF')),
+                ]
+            ))
+
+            return ft.DataTable(
+                heading_row_height=30,
+                heading_row_color='#000000',
+                data_row_min_height=28,
+                data_row_max_height=28,
+                column_spacing=14,
+                columns=[
+                    ft.DataColumn(ft.Text('Condición', size=9.5, weight=ft.FontWeight.BOLD, color='#FFFFFF')),
+                    ft.DataColumn(ft.Text('Cantidad', size=9.5, weight=ft.FontWeight.BOLD, color='#FFFFFF'), numeric=True),
+                    ft.DataColumn(ft.Text('% Total', size=9.5, weight=ft.FontWeight.BOLD, color='#FFFFFF'), numeric=True),
+                ],
+                rows=rows_cat,
+            )
+
+        # Tercera fila: matriz dinámica invertida.
+        # Filas = posiciones de neumáticos. Columnas = equipos agrupados por tipo.
+        # Cada celda usa el menor RTD entre EXT e INT y se representa con un círculo
+        # cuyo color corresponde a la condición RTD aprobada.
+        equipment_positions = {}
+        equipment_categories = {}
+        all_positions = set()
+
+        for r, rtd, condition in evaluated:
+            equipment = (str(r['equipment_code']).strip().upper() if r['equipment_code'] else 'SIN EQUIPO')
+            position_raw = str(r['position']).strip().upper() if r['position'] is not None else ''
+            if not position_raw:
+                continue
+            if position_raw.isdigit():
+                position = f'P{position_raw}'
+            elif position_raw.startswith('P') and position_raw[1:].isdigit():
+                position = f"P{int(position_raw[1:])}"
+            else:
+                position = position_raw
+
+            all_positions.add(position)
+            equipment_positions.setdefault(equipment, {})
+            equipment_categories[equipment] = classify_equipment(r['vehicle_type'])
+            current = equipment_positions[equipment].get(position)
+            if rtd is not None and (current is None or rtd < current):
+                equipment_positions[equipment][position] = rtd
+            elif position not in equipment_positions[equipment]:
+                equipment_positions[equipment][position] = None
+
+        def position_sort_key(pos):
+            text = str(pos)
+            if text.startswith('P') and text[1:].isdigit():
+                return (0, int(text[1:]))
+            if text.isdigit():
+                return (0, int(text))
+            return (1, text)
+
+        ordered_positions = sorted(all_positions, key=position_sort_key)
+        category_order = ['VOLQUETES', 'CAMIONETAS', 'SCOOP', 'OTROS']
+        grouped_equipment = {category: [] for category in category_order}
+        for equipment in sorted(equipment_positions.keys()):
+            grouped_equipment.setdefault(equipment_categories.get(equipment, 'OTROS'), []).append(equipment)
+        grouped_equipment = {k: v for k, v in grouped_equipment.items() if v}
+
+        status_colors = {
+            'BUEN ESTADO': '#2E9B45',
+            'PRÓXIMO CAMBIO': '#F2A900',
+            'CAMBIO URGENTE': '#D92D20',
+            'SIN LECTURA': '#AEB9C4',
+        }
+
+        def rtd_circle(rtd, category):
+            condition = rtd_condition_by_category(category, rtd)
+            if rtd is None or condition == 'SIN LECTURA':
+                label = '—'
+                color = status_colors['SIN LECTURA']
+            else:
+                label = f'{rtd:.0f}' if abs(rtd - round(rtd)) < 0.05 else f'{rtd:.1f}'
+                color = status_colors[condition]
+            return ft.Container(
+                width=30,
+                height=30,
+                bgcolor=color,
+                border_radius=15,
+                alignment=ft.Alignment.CENTER,
+                content=ft.Text(
+                    label, size=10.5, weight=ft.FontWeight.BOLD, color='#FFFFFF',
+                    text_align=ft.TextAlign.CENTER
+                ),
+            )
+
+        # Tercera fila: matriz de remanente mínimo separada dinámicamente por
+        # tipo de equipo, igual que la fila 4. Cada tipo genera su propia tarjeta.
+        POSITION_COL_W = 70
+        EQUIPMENT_COL_W = 40
+
+        def build_remanente_matrix_category(category):
+            equipments = grouped_equipment.get(category, [])
+            if not equipments:
+                return None
+
+            # Solo posiciones que realmente aparecen en los equipos de esta categoría.
+            category_positions = set()
+            for equipment in equipments:
+                category_positions.update(equipment_positions.get(equipment, {}).keys())
+            ordered_category_positions = sorted(category_positions, key=position_sort_key)
+
+            header = ft.Row([
+                ft.Container(
+                    width=POSITION_COL_W, height=82, bgcolor='#172B3A',
+                    alignment=ft.Alignment.CENTER,
+                    content=ft.Text('POSICIÓN', size=10.5, weight=ft.FontWeight.BOLD, color='#FFFFFF')
+                )
+            ], spacing=2)
+
+            for equipment in equipments:
+                header.controls.append(
+                    ft.Container(
+                        width=EQUIPMENT_COL_W, height=82,
+                        bgcolor='#F0F4F8',
+                        border=ft.Border(bottom=ft.BorderSide(1, '#D9E2EA')),
+                        alignment=ft.Alignment.CENTER,
+                        content=ft.Text(
+                            equipment, size=8.5, weight=ft.FontWeight.BOLD,
+                            color=TEXT_MAIN, text_align=ft.TextAlign.CENTER,
+                            rotate=ft.Rotate(angle=-1.5708),
+                        )
+                    )
+                )
+
+            rows = []
+            for pos in ordered_category_positions:
+                row_controls = [
+                    ft.Container(
+                        width=POSITION_COL_W, height=36, bgcolor='#F5F7FA',
+                        alignment=ft.Alignment.CENTER,
+                        border=ft.Border(right=ft.BorderSide(1, '#D9E2EA')),
+                        content=ft.Text(pos, size=10, weight=ft.FontWeight.BOLD, color=TEXT_MAIN)
+                    )
+                ]
+                for equipment in equipments:
+                    row_controls.append(
+                        ft.Container(
+                            width=EQUIPMENT_COL_W, height=36,
+                            alignment=ft.Alignment.CENTER,
+                            content=rtd_circle(equipment_positions[equipment].get(pos), category)
+                        )
+                    )
+                rows.append(ft.Row(row_controls, spacing=2))
+
+            body = ft.Column(rows, spacing=1) if rows else ft.Container(
+                height=58, alignment=ft.Alignment.CENTER,
+                content=ft.Text('Sin posiciones de neumáticos para mostrar.', size=10, color=TEXT_MUTED)
+            )
+
+            matrix = ft.Row([
+                ft.Column([header, body], spacing=1, tight=True)
+            ], scroll=ft.ScrollMode.AUTO)
+
+            # Ancho mínimo basado en la cantidad real de equipos; permite scroll
+            # si un tipo de equipo tiene una flota grande.
+            content_width = POSITION_COL_W + (EQUIPMENT_COL_W * len(equipments)) + (2 * len(equipments)) + 20
+            return ft.Container(
+                width=max(330, min(760, content_width)),
+                bgcolor=CARD_BG,
+                border=ft.Border.all(1, '#DDE5ED'),
+                border_radius=10,
+                padding=10,
+                content=ft.Column([
+                    ft.Text(
+                        f'REMANENTE MÍNIMO · {category}', size=12,
+                        weight=ft.FontWeight.BOLD, color=TEXT_MAIN,
+                        text_align=ft.TextAlign.CENTER
+                    ),
+                    ft.Text(
+                        'Menor RTD entre EXT e INT.', size=9, color=TEXT_MUTED,
+                        text_align=ft.TextAlign.CENTER
+                    ),
+                    matrix,
+                ], spacing=4, horizontal_alignment=ft.CrossAxisAlignment.CENTER)
+            )
+
+        # ------------------------------------------------------------------
+        # FILAS 3+ DINÁMICAS: cada tipo de equipo agrupa su matriz de
+        # remanente mínimo y su gráfico de cuantificación en la MISMA fila.
+        # Orden: VOLQUETES, CAMIONETAS, SCOOP, OTROS.
+        # ------------------------------------------------------------------
+        # Leyenda de colores oculta por solicitud del usuario.
+        # Se usa un contenedor vacío en lugar de None para evitar que Flet
+        # reciba un control nulo dentro de la columna.
+        matrix_legend = ft.Container(height=0)
+
+        # Cuantificación dinámica del remanente mínimo por milímetro,
+        # segregada por tipo de equipo. Solo valores con cantidad > 0.
+        equipment_categories = {}
+        for r, _rtd, _condition in evaluated:
+            category = classify_equipment(r['vehicle_type'])
+            equipment_categories.setdefault(category, [])
+            equipment_categories[category].append((r, _rtd, _condition))
+
+        category_order_chart = ['VOLQUETES', 'CAMIONETAS', 'SCOOP', 'OTROS']
+        chart_categories = [
+            category for category in category_order_chart
+            if equipment_categories.get(category)
+        ]
+
+        def build_remanente_chart(category):
+            category_rows = equipment_categories.get(category, [])
+            remanente_por_mm = {}
+            for _r, rtd, _condition in category_rows:
+                if rtd is None:
+                    continue
+                try:
+                    mm = int(round(float(rtd)))
+                except (TypeError, ValueError):
+                    continue
+                if mm < 1:
+                    continue
+                remanente_por_mm[mm] = remanente_por_mm.get(mm, 0) + 1
+
+            items = sorted(
+                ((mm, cantidad) for mm, cantidad in remanente_por_mm.items() if cantidad > 0),
+                key=lambda item: item[0]
+            )
+            chart_max_count = max((cantidad for _, cantidad in items), default=1)
+            # Escala Y en múltiplos de 5, comenzando siempre en 0.
+            y_max = max(5, ((chart_max_count + 4) // 5) * 5)
+            BAR_AREA_H = 185
+            BAR_W = 18
+            BAR_GAP = 8
+
+            chart_bars = []
+            for mm, cantidad in items:
+                condition = rtd_condition_by_category(category, mm)
+                bar_color = status_colors.get(condition, status_colors['SIN LECTURA'])
+                bar_h = max(8, int((cantidad / chart_max_count) * (BAR_AREA_H - 10)))
+                chart_bars.append(
+                    ft.Container(
+                        width=BAR_W + BAR_GAP,
+                        height=BAR_AREA_H + 50,
+                        alignment=ft.Alignment.BOTTOM_CENTER,
+                        content=ft.Column([
+                            ft.Container(
+                                width=BAR_W,
+                                height=BAR_AREA_H,
+                                alignment=ft.Alignment.BOTTOM_CENTER,
+                                content=ft.Container(
+                                    width=BAR_W,
+                                    height=bar_h,
+                                    bgcolor=bar_color,
+                                    border_radius=ft.BorderRadius(top_left=3, top_right=3, bottom_left=0, bottom_right=0),
+                                    alignment=ft.Alignment.TOP_CENTER,
+                                    content=ft.Container(
+                                        margin=ft.Margin(top=-20, left=0, right=0, bottom=0),
+                                        content=ft.Text(
+                                            str(cantidad), size=9.5, weight=ft.FontWeight.BOLD,
+                                            color=TEXT_MAIN, text_align=ft.TextAlign.CENTER
+                                        )
+                                    )
+                                )
+                            ),
+                            ft.Text(str(mm), size=8.5, weight=ft.FontWeight.BOLD,
+                                    color=TEXT_MAIN, text_align=ft.TextAlign.CENTER, no_wrap=True),
+                        ], spacing=4, horizontal_alignment=ft.CrossAxisAlignment.CENTER)
+                    )
+                )
+
+            if not chart_bars:
+                return ft.Container(
+                    height=BAR_AREA_H + 60,
+                    alignment=ft.Alignment.CENTER,
+                    content=ft.Text('No hay lecturas RTD válidas para cuantificar.', size=10, color=TEXT_MUTED)
+                )
+
+            # Escala Y uniforme: 0, 5, 10, 15... hasta y_max.
+            y_ticks = list(range(y_max, -1, -5))
+            # El área de barras incluye 50 px adicionales para las etiquetas X.
+            # El eje Y debe terminar exactamente en la base de las barras,
+            # no en la parte inferior de las etiquetas X.
+            y_scale_ticks = ft.Column(
+                [ft.Text(str(tick), size=9, color=TEXT_MUTED) for tick in y_ticks],
+                height=BAR_AREA_H,
+                alignment=ft.MainAxisAlignment.SPACE_BETWEEN
+            )
+            y_scale = ft.Container(
+                width=22,
+                height=BAR_AREA_H + 50,
+                alignment=ft.Alignment.TOP_LEFT,
+                content=y_scale_ticks,
+            )
+
+            plot_row = ft.Row([
+                y_scale,
+                ft.Container(width=1, height=BAR_AREA_H, bgcolor='#CBD5E1'),
+                ft.Container(
+                    content=ft.Row(
+                        chart_bars,
+                        spacing=0,
+                        vertical_alignment=ft.CrossAxisAlignment.END,
+                        scroll=ft.ScrollMode.AUTO,
+                    ),
+                    expand=True,
+                ),
+            ], spacing=8, vertical_alignment=ft.CrossAxisAlignment.END)
+
+            return plot_row
+
+        # Construye una fila completa por categoría: izquierda = matriz,
+        # derecha = cuantificación. Si una categoría no existe en el taller,
+        # simplemente no se genera esa fila.
+        paired_category_rows = []
+        PAIR_LEFT_W = 540
+        PAIR_RIGHT_W = 540
+        PAIR_CONDITION_W = 360
+
+        for category in category_order:
+            matrix = build_remanente_matrix_category(category)
+            if matrix is None:
+                continue
+
+            chart_plot = build_remanente_chart(category)
+
+            # El título y subtítulo ya forman parte de la matriz construida
+            # por build_remanente_matrix_category(). No repetirlos en el panel.
+            matrix_panel = ft.Container(
+                width=PAIR_LEFT_W,
+                bgcolor=CARD_BG,
+                border=ft.Border.all(1, '#DDE5ED'),
+                border_radius=10,
+                padding=12,
+                content=matrix,
+            )
+
+            chart_panel = ft.Container(
+                width=PAIR_RIGHT_W,
+                bgcolor=CARD_BG,
+                border=ft.Border.all(1, '#DDE5ED'),
+                border_radius=10,
+                padding=12,
+                content=ft.Column([
+                    ft.Text(
+                        f'CUANTIFICACIÓN DEL REMANENTE · {category}', size=12,
+                        weight=ft.FontWeight.BOLD, color=TEXT_MAIN,
+                        text_align=ft.TextAlign.CENTER
+                    ),
+                    ft.Text(
+                        'Cantidad de neumáticos por cada milímetro de remanente mínimo.',
+                        size=9, color=TEXT_MUTED, text_align=ft.TextAlign.CENTER
+                    ),
+                    chart_plot,
+                ], spacing=4, horizontal_alignment=ft.CrossAxisAlignment.CENTER)
+            )
+
+            category_condition_table = build_condition_table_category(category)
+            condition_panel = ft.Container(
+                width=PAIR_RIGHT_W,
+                bgcolor=CARD_BG,
+                border=ft.Border.all(1, '#DDE5ED'),
+                border_radius=10,
+                padding=12,
+                content=ft.Column([
+                    ft.Text(
+                        f'CONDICIÓN RTD · {category}', size=12,
+                        weight=ft.FontWeight.BOLD, color=TEXT_MAIN,
+                        text_align=ft.TextAlign.CENTER
+                    ),
+                    ft.Text(
+                        'Distribución de neumáticos según su condición.',
+                        size=9, color=TEXT_MUTED, text_align=ft.TextAlign.CENTER
+                    ),
+                    ft.Row([category_condition_table], scroll=ft.ScrollMode.AUTO, alignment=ft.MainAxisAlignment.CENTER),
+                ], spacing=4, horizontal_alignment=ft.CrossAxisAlignment.CENTER)
+            )
+
+            # Cada tipo de equipo queda en una fila independiente: la matriz
+            # va a la izquierda y, a la derecha, la cuantificación arriba y
+            # la tabla de condición RTD inmediatamente debajo.
+            right_column = ft.Column([
+                chart_panel,
+                ft.Container(height=12),
+                condition_panel,
+            ], spacing=0, horizontal_alignment=ft.CrossAxisAlignment.CENTER)
+
+            paired_category_rows.append(
+                ft.Row(
+                    [matrix_panel, right_column],
+                    spacing=12,
+                    vertical_alignment=ft.CrossAxisAlignment.START,
+                    scroll=ft.ScrollMode.AUTO,
+                )
+            )
+
+        if paired_category_rows:
+            paired_rows_with_separators = []
+            for idx, category_row in enumerate(paired_category_rows):
+                paired_rows_with_separators.append(category_row)
+                if idx < len(paired_category_rows) - 1:
+                    paired_rows_with_separators.append(
+                        ft.Container(
+                            width=1100,
+                            height=1,
+                            bgcolor='#CBD5E1',
+                            margin=ft.Margin(top=10, bottom=10, left=0, right=0),
+                        )
+                    )
+            paired_rows_content = ft.Column(
+                paired_rows_with_separators,
+                spacing=0,
+                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+            )
+        else:
+            paired_rows_content = ft.Container(
+                height=180,
+                alignment=ft.Alignment.CENTER,
+                content=ft.Text('No hay posiciones de neumáticos en servicio para mostrar.', size=10, color=TEXT_MUTED)
+            )
+
+        paired_remanente_section = card(ft.Column([
+            ft.Text(
+                'REMANENTE MÍNIMO + CUANTIFICACIÓN POR TIPO DE EQUIPO',
+                size=16, weight=ft.FontWeight.BOLD,
+                color=TEXT_MAIN, text_align=ft.TextAlign.CENTER
+            ),
+            ft.Text(
+                'Cada tipo de equipo reúne su matriz de posiciones y su cuantificación de remanente en la misma fila.',
+                size=10, color=TEXT_MUTED, text_align=ft.TextAlign.CENTER
+            ),
+            ft.Container(height=2),
+            paired_rows_content,
+            matrix_legend,
+        ], spacing=8, horizontal_alignment=ft.CrossAxisAlignment.CENTER), padding=14)
 
         content.content=ft.Column([
             page_title('3. Programa de mantenimiento · 3.1 Evaluación de Remanente (RTD)',
                        'Evaluación automática de neumáticos en servicio según profundidad remanente'),
-            ft.Row([
-                ft.OutlinedButton('VOLVER A PROGRAMA DE MANTENIMIENTO',icon=ft.Icons.ARROW_BACK,on_click=lambda e: maintenance_menu_view()),
-                ft.ElevatedButton('3.1 Evaluación de remanente', icon=ft.Icons.CHECK_CIRCLE_OUTLINE, disabled=True),
-                ft.OutlinedButton('3.2 Diferencia RTD entre hombros', icon=ft.Icons.COMPARE_ARROWS,
-                                  on_click=lambda e: maintenance_shoulders_view()),
-                ft.OutlinedButton('3.3 Diferencia RTD mismo eje', icon=ft.Icons.COMPARE_ARROWS,
-                                  on_click=lambda e: maintenance_axles_view()),
-                ft.OutlinedButton('3.4 Diferencia entre ejes por equipo', icon=ft.Icons.COMPARE_ARROWS,
-                                  on_click=lambda e: maintenance_four_positions_view()),
-                ft.OutlinedButton('3.5 Nivelación de presión', icon=ft.Icons.SPEED,
-                                  on_click=lambda e: maintenance_pressure_view()),
-                ft.OutlinedButton('3.6 Reporte final de mantenimiento', icon=ft.Icons.DESCRIPTION_OUTLINED,
-                                  on_click=lambda e: maintenance_final_report_view()),
-            ], spacing=10, wrap=True),
+            maintenance_nav_row('31'),
             ft.Row([
                 top_metric('NEUMÁTICOS EN SERVICIO', total, 'Total actualmente instalado', '#C81D2A'),
                 top_metric('EQUIPOS EN SERVICIO', equipment_count, 'Equipos con neumáticos instalados'),
-                top_metric('NEUMÁTICOS EN BUEN ESTADO', f'{good_pct:.1f}%',
+                top_metric('BUEN ESTADO', f'{good_pct:.1f}%',
                            f'{counts["BUEN ESTADO"]} neumáticos', '#2E9B45'),
-                top_metric('NEUMÁTICOS QUE REQUIEREN CAMBIO', f'{attention_pct:.1f}%',
-                           f'{attention} neumáticos', '#C81D2A'),
-            ], wrap=True, spacing=12, run_spacing=12),
-            ft.Row([
-                ft.Container(expand=1, content=card(ft.Column([
-                    ft.Text('SCOOP POR MODELO', size=14, weight=ft.FontWeight.BOLD, color=TEXT_MAIN),
-                    ft.Row([scoop_table], scroll=ft.ScrollMode.AUTO),
-                    ft.Text('Modelos tomados del registro de equipos.', size=9.5, italic=True, color=TEXT_MUTED),
-                ], spacing=8))),
-                ft.Container(expand=1, content=card(ft.Column([
-                    ft.Text('CONDICIÓN GENERAL DE NEUMÁTICOS (RTD)', size=14, weight=ft.FontWeight.BOLD, color=TEXT_MAIN),
-                    ft.Row([condition_table], scroll=ft.ScrollMode.AUTO),
-                ], spacing=8))),
-                ft.Container(expand=1, content=card(ft.Column([
-                    ft.Text('GRÁFICO DE CONDICIÓN RTD', size=14, weight=ft.FontWeight.BOLD, color=TEXT_MAIN),
-                    rtd_donut_chart(),
-                    ft.Text('Evaluación según la menor lectura RTD disponible.', size=9.5, italic=True, color=TEXT_MUTED),
-                ], spacing=8))),
+                top_metric('PRÓXIMO CAMBIO', f'{pct(counts["PRÓXIMO CAMBIO"], evaluated_total):.1f}%',
+                           f'{counts["PRÓXIMO CAMBIO"]} neumáticos', '#F2A900'),
+                top_metric('CAMBIO URGENTE', f'{pct(counts["CAMBIO URGENTE"], evaluated_total):.1f}%',
+                           f'{counts["CAMBIO URGENTE"]} neumáticos', '#C81D2A'),
             ], spacing=12, vertical_alignment=ft.CrossAxisAlignment.START),
+            ft.Container(height=2),
+            paired_remanente_section,
         ], scroll=ft.ScrollMode.AUTO, spacing=16)
         page.update()
 
 
     def maintenance_shoulders_view():
         """3.2 Diferencia de RTD entre hombros (EXT vs INT) del mismo neumático."""
+        op_id = active_operation_id()
         rows = query("""
             SELECT
                 t.id, t.code, t.serial, t.brand, t.size, t.design,
@@ -4178,9 +6622,9 @@ def main(page: ft.Page):
                 t.position
             FROM tires t
             LEFT JOIN equipment e ON e.id=t.equipment_id
-            WHERE t.status='SERVICIO'
+            WHERE t.status='SERVICIO' AND t.operation_id=?
             ORDER BY COALESCE(e.code,''), t.position, t.code
-        """)
+        """, (op_id,))
 
         def latest_rtd(r):
             # Se prioriza la última inspección por ID para evitar problemas con
@@ -4188,9 +6632,9 @@ def main(page: ft.Page):
             insp = query("""
                 SELECT tread_inner, tread_outer
                 FROM occurrences
-                WHERE tire_id=? AND event_code IN ('INSP','INSC')
+                WHERE tire_id=? AND operation_id=? AND event_code IN ('INSP','INSC')
                 ORDER BY id DESC LIMIT 1
-            """, (r['id'],))
+            """, (r['id'], op_id))
             inner = insp[0]['tread_inner'] if insp and insp[0]['tread_inner'] is not None else r['tread_inner']
             outer = insp[0]['tread_outer'] if insp and insp[0]['tread_outer'] is not None else r['tread_outer']
             try:
@@ -4340,20 +6784,7 @@ def main(page: ft.Page):
         content.content=ft.Column([
             page_title('3. Programa de mantenimiento · 3.2 Diferencia de RTD entre hombros',
                        'Evaluación del desgaste entre hombro exterior (EXT) e interior (INT) del mismo neumático'),
-            ft.Row([
-                ft.OutlinedButton('VOLVER A PROGRAMA DE MANTENIMIENTO',icon=ft.Icons.ARROW_BACK,on_click=lambda e: maintenance_menu_view()),
-                ft.OutlinedButton('3.1 Evaluación de remanente', icon=ft.Icons.CHECK_CIRCLE_OUTLINE,
-                                  on_click=lambda e: maintenance_view()),
-                ft.ElevatedButton('3.2 Diferencia RTD entre hombros', icon=ft.Icons.COMPARE_ARROWS, disabled=True),
-                ft.OutlinedButton('3.3 Diferencia RTD mismo eje', icon=ft.Icons.COMPARE_ARROWS,
-                                  on_click=lambda e: maintenance_axles_view()),
-                ft.OutlinedButton('3.4 Diferencia entre ejes por equipo', icon=ft.Icons.COMPARE_ARROWS,
-                                  on_click=lambda e: maintenance_four_positions_view()),
-                ft.OutlinedButton('3.5 Nivelación de presión', icon=ft.Icons.SPEED,
-                                  on_click=lambda e: maintenance_pressure_view()),
-                ft.OutlinedButton('3.6 Reporte final de mantenimiento', icon=ft.Icons.DESCRIPTION_OUTLINED,
-                                  on_click=lambda e: maintenance_final_report_view()),
-            ], spacing=10, wrap=True),
+            maintenance_nav_row('32'),
             ft.Row([
                 top_metric('NEUMÁTICOS EN SERVICIO', total, 'Total actualmente instalado', '#C81D2A'),
                 top_metric('EQUIPOS EN SERVICIO', len({r['equipment_id'] for r in rows if r['equipment_id'] is not None}), 'Equipos con neumáticos instalados'),
@@ -4381,6 +6812,7 @@ def main(page: ft.Page):
 
     def maintenance_axles_view():
         """3.3 Diferencia de RTD entre neumáticos del mismo eje (P1-P2 y P3-P4)."""
+        op_id = active_operation_id()
         rows = query("""
             SELECT
                 t.id, t.code, t.serial, t.brand, t.size, t.design,
@@ -4390,9 +6822,9 @@ def main(page: ft.Page):
                 t.position
             FROM tires t
             LEFT JOIN equipment e ON e.id=t.equipment_id
-            WHERE t.status='SERVICIO'
+            WHERE t.status='SERVICIO' AND t.operation_id=?
             ORDER BY COALESCE(e.code,''), t.position, t.code
-        """)
+        """, (op_id,))
 
         def latest_rtd(r):
             # Igual que 3.2: se toma la última inspección por ID. De este modo
@@ -4400,9 +6832,9 @@ def main(page: ft.Page):
             insp = query("""
                 SELECT tread_inner, tread_outer
                 FROM occurrences
-                WHERE tire_id=? AND event_code IN ('INSP','INSC')
+                WHERE tire_id=? AND operation_id=? AND event_code IN ('INSP','INSC')
                 ORDER BY id DESC LIMIT 1
-            """, (r['id'],))
+            """, (r['id'], op_id))
             inner = insp[0]['tread_inner'] if insp and insp[0]['tread_inner'] is not None else r['tread_inner']
             outer = insp[0]['tread_outer'] if insp and insp[0]['tread_outer'] is not None else r['tread_outer']
             try:
@@ -4680,20 +7112,7 @@ def main(page: ft.Page):
         content.content = ft.Column([
             page_title('3. Programa de mantenimiento · 3.3 Diferencia de RTD en el mismo eje',
                        'Comparación del RTD promedio entre P1–P2 y P3–P4 · Vista tipo Power BI'),
-            ft.Row([
-                ft.OutlinedButton('VOLVER A PROGRAMA DE MANTENIMIENTO',icon=ft.Icons.ARROW_BACK,on_click=lambda e: maintenance_menu_view()),
-                ft.OutlinedButton('3.1 Evaluación de remanente', icon=ft.Icons.CHECK_CIRCLE_OUTLINE,
-                                  on_click=lambda e: maintenance_view()),
-                ft.OutlinedButton('3.2 Diferencia RTD entre hombros', icon=ft.Icons.COMPARE_ARROWS,
-                                  on_click=lambda e: maintenance_shoulders_view()),
-                ft.ElevatedButton('3.3 Diferencia RTD mismo eje', icon=ft.Icons.COMPARE_ARROWS, disabled=True),
-                ft.OutlinedButton('3.4 Diferencia entre ejes por equipo', icon=ft.Icons.COMPARE_ARROWS,
-                                  on_click=lambda e: maintenance_four_positions_view()),
-                ft.OutlinedButton('3.5 Nivelación de presión', icon=ft.Icons.SPEED,
-                                  on_click=lambda e: maintenance_pressure_view()),
-                ft.OutlinedButton('3.6 Reporte final de mantenimiento', icon=ft.Icons.DESCRIPTION_OUTLINED,
-                                  on_click=lambda e: maintenance_final_report_view()),
-            ], spacing=10, wrap=True),
+            maintenance_nav_row('33'),
             ft.Row([
                 top_metric('EQUIPOS EN SERVICIO', equipment_count, 'Equipos con posiciones P1–P4'),
                 top_metric('EJES EVALUADOS', evaluated_total, 'P1–P2 y P3–P4 con lectura'),
@@ -4737,14 +7156,15 @@ def main(page: ft.Page):
 
     def maintenance_four_positions_view():
         """3.4 Diferencia de RTD entre las cuatro posiciones P1-P4, sin considerar diámetro."""
+        op_id = active_operation_id()
         rows = query("""
             SELECT t.id, t.code, t.tread_inner, t.tread_outer, t.recommended_pressure,
-                   e.id AS equipment_id, e.code AS equipment_code, t.position
+                   e.id AS equipment_id, e.code AS equipment_code, e.vehicle_type, t.position
             FROM tires t
             LEFT JOIN equipment e ON e.id=t.equipment_id
-            WHERE t.status='SERVICIO'
+            WHERE t.status='SERVICIO' AND t.operation_id=?
             ORDER BY COALESCE(e.code,''), t.position, t.code
-        """)
+        """, (op_id,))
 
         def norm_pos(v):
             x=str(v or '').strip().upper().replace(' ','')
@@ -4755,8 +7175,8 @@ def main(page: ft.Page):
 
         def latest_avg(r):
             z=query("""SELECT tread_inner,tread_outer FROM occurrences
-                       WHERE tire_id=? AND event_code IN ('INSP','INSC')
-                       ORDER BY id DESC LIMIT 1""",(r['id'],))
+                       WHERE tire_id=? AND operation_id=? AND event_code IN ('INSP','INSC')
+                       ORDER BY id DESC LIMIT 1""",(r['id'],op_id))
             inn=z[0]['tread_inner'] if z and z[0]['tread_inner'] is not None else r['tread_inner']
             out=z[0]['tread_outer'] if z and z[0]['tread_outer'] is not None else r['tread_outer']
             try: inn=float(inn)
@@ -4835,7 +7255,7 @@ def main(page: ft.Page):
                 if n: cs.append(f'<circle cx="82" cy="82" r="49" fill="none" stroke="{c}" stroke-width="24" stroke-dasharray="{dash:.3f} {gap:.3f}" stroke-dashoffset="{-off:.3f}" transform="rotate(-90 82 82)"/>')
                 off+=dash
                 leg.append(ft.Row([ft.Container(width=10,height=10,bgcolor=c,border_radius=5),ft.Text(f'{lab}: {n}',size=10.5,color=TEXT_MAIN)],spacing=7))
-            svg='<svg xmlns="http://www.w3.org/2000/svg" width="164" height="164"><circle cx="82" cy="82" r="49" fill="none" stroke="#E2E8F0" stroke-width="24"/>'+''.join(cs)+f'<text x="82" y="80" text-anchor="middle" font-family="Arial" font-size="25" font-weight="700" fill="#172033">{total}</text><text x="82" y="99" text-anchor="middle" font-family="Arial" font-size="9" fill="#64748B">equipos</text></svg>'
+            svg='<svg xmlns="http://www.w3.org/2000/svg" width="164" height="164"><circle cx="82" cy="82" r="49" fill="none" stroke="#E2E8F0" stroke-width="24"/>'+''.join(cs)+f'<text x="82" y="80" text-anchor="middle" font-family="Arial" font-size="30" font-weight="700" fill="#172033">{total}</text><text x="82" y="99" text-anchor="middle" font-family="Arial" font-size="9" fill="#64748B">equipos</text></svg>'
             src='data:image/svg+xml;base64,'+base64.b64encode(svg.encode()).decode()
             return ft.Row([ft.Image(src=src,width=164,height=164),ft.Column(leg,spacing=10)],spacing=12)
 
@@ -4847,13 +7267,7 @@ def main(page: ft.Page):
 
         content.content=ft.Column([
             page_title('3. Programa de mantenimiento · 3.4 Diferencia entre ejes por equipo','Comparación del RTD promedio entre P1, P2, P3 y P4 · Sin considerar diámetro'),
-            ft.Row([ft.OutlinedButton('VOLVER A PROGRAMA DE MANTENIMIENTO',icon=ft.Icons.ARROW_BACK,on_click=lambda e: maintenance_menu_view()),
-                    ft.OutlinedButton('3.1 Evaluación de remanente',on_click=lambda e:maintenance_view()),
-                    ft.OutlinedButton('3.2 Diferencia RTD entre hombros',on_click=lambda e:maintenance_shoulders_view()),
-                    ft.OutlinedButton('3.3 Diferencia RTD mismo eje',on_click=lambda e:maintenance_axles_view()),
-                    ft.ElevatedButton('3.4 Diferencia entre ejes por equipo',disabled=True),
-                    ft.OutlinedButton('3.5 Nivelación de presión',icon=ft.Icons.SPEED,on_click=lambda e:maintenance_pressure_view()),
-                    ft.OutlinedButton('3.6 Reporte final de mantenimiento',icon=ft.Icons.DESCRIPTION_OUTLINED,on_click=lambda e:maintenance_final_report_view())],spacing=10,wrap=True),
+            maintenance_nav_row('34'),
             ft.Row([metric('EQUIPOS EVALUADOS',total,'Equipos con P1–P4'),metric('EN CONDICIÓN NORMAL',counts['NORMAL'],'< 5 mm','#2E9B45','#F1FAF3'),
                     metric('EN PREVENTIVO',counts['PREVENTIVO'],'5 a 7.5 mm','#C98600','#FFF9E8'),metric('EN EMERGENCIA',counts['EMERGENCIA'],'> 7.5 mm','#C81D2A','#FFF1F0'),
                     metric('DIFERENCIA MÁXIMA',f'{worst["diff"]:.1f} mm' if worst else '—',f'Equipo: {worst["equipment_code"]}' if worst else 'Sin datos','#C81D2A')],wrap=True,spacing=10,run_spacing=10),
@@ -4867,14 +7281,15 @@ def main(page: ft.Page):
 
     def maintenance_pressure_view():
         """3.5 Nivelación de presión: cuadro resumen + gráfico, con los criterios del Módulo 2."""
+        op_id = active_operation_id()
         rows = query("""
             SELECT t.id, t.code, t.recommended_pressure,
                    e.code AS equipment_code, t.position
             FROM tires t
             LEFT JOIN equipment e ON e.id=t.equipment_id
-            WHERE t.status='SERVICIO'
+            WHERE t.status='SERVICIO' AND t.operation_id=?
             ORDER BY COALESCE(e.code,''), t.position, t.code
-        """)
+        """, (op_id,))
 
         def norm_pos(v):
             x=str(v or '').strip().upper().replace(' ','')
@@ -4889,8 +7304,8 @@ def main(page: ft.Page):
         detail=[]
         for r in rows:
             z=query("""SELECT pressure FROM occurrences
-                       WHERE tire_id=? AND event_code IN ('INSP','INSC')
-                       ORDER BY id DESC LIMIT 1""",(r['id'],))
+                       WHERE tire_id=? AND operation_id=? AND event_code IN ('INSP','INSC')
+                       ORDER BY id DESC LIMIT 1""",(r['id'], op_id))
             act=z[0]['pressure'] if z and z[0]['pressure'] is not None else None
             rec=r['recommended_pressure']
             try:
@@ -4982,15 +7397,7 @@ def main(page: ft.Page):
         controls=[
             page_title('3. Programa de mantenimiento · 3.5 Nivelación de presión',
                        'Comparación de la última presión INSP/INSC contra la presión recomendada'),
-            ft.Row([
-                ft.OutlinedButton('VOLVER A PROGRAMA DE MANTENIMIENTO',icon=ft.Icons.ARROW_BACK,on_click=lambda e: maintenance_menu_view()),
-                    ft.OutlinedButton('3.1 Evaluación de remanente',on_click=lambda e:maintenance_view()),
-                ft.OutlinedButton('3.2 Diferencia RTD entre hombros',on_click=lambda e:maintenance_shoulders_view()),
-                ft.OutlinedButton('3.3 Diferencia RTD mismo eje',on_click=lambda e:maintenance_axles_view()),
-                ft.OutlinedButton('3.4 Diferencia entre ejes por equipo',on_click=lambda e:maintenance_four_positions_view()),
-                ft.ElevatedButton('3.5 Nivelación de presión',disabled=True),
-                ft.OutlinedButton('3.6 Reporte final de mantenimiento',icon=ft.Icons.DESCRIPTION_OUTLINED,on_click=lambda e:maintenance_final_report_view()),
-            ],spacing=10,wrap=True),
+            maintenance_nav_row('35'),
             ft.Row([
                 ft.Container(expand=1,content=card(ft.Column([
                     ft.Text('CUADRO DE EVALUACIÓN DE PRESIÓN',size=14,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
@@ -4998,7 +7405,7 @@ def main(page: ft.Page):
                     ft.Row([summary_table],scroll=ft.ScrollMode.AUTO),
                 ],spacing=8))),
                 ft.Container(expand=1,content=card(ft.Column([
-                    ft.Text('PRESIONES VS. PRESIÓN RECOMENDADA',size=14,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
+                    ft.Text('EVALUACIÓN DE PRESIÓN (PSI)',size=14,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),
                     ft.Text('Diferencia absoluta entre presión actual y recomendada.',size=10,color=TEXT_MUTED),
                     pressure_donut(),
                 ],spacing=8))),
@@ -5015,14 +7422,16 @@ def main(page: ft.Page):
 
     def maintenance_final_report_view():
         """Reporte final: actividades de mantenimiento generadas solo por condiciones de emergencia."""
+        op_id = active_operation_id()
         rows = query("""
             SELECT t.id, t.code, t.tread_inner, t.tread_outer, t.recommended_pressure,
-                   e.id AS equipment_id, e.code AS equipment_code, t.position
+                   e.id AS equipment_id, e.code AS equipment_code,
+                   e.vehicle_type AS equipment_vehicle_type, t.position
             FROM tires t
             LEFT JOIN equipment e ON e.id=t.equipment_id
-            WHERE t.status='SERVICIO'
+            WHERE t.status='SERVICIO' AND t.operation_id=?
             ORDER BY COALESCE(e.code,''), t.position, t.code
-        """)
+        """, (op_id,))
 
         def norm_pos(v):
             x=str(v or '').strip().upper().replace(' ','')
@@ -5033,8 +7442,8 @@ def main(page: ft.Page):
 
         def latest_pair(r):
             z=query("""SELECT tread_inner,tread_outer FROM occurrences
-                       WHERE tire_id=? AND event_code IN ('INSP','INSC')
-                       ORDER BY id DESC LIMIT 1""",(r['id'],))
+                       WHERE tire_id=? AND operation_id=? AND event_code IN ('INSP','INSC')
+                       ORDER BY id DESC LIMIT 1""",(r['id'], op_id))
             inn=z[0]['tread_inner'] if z and z[0]['tread_inner'] is not None else r['tread_inner']
             out=z[0]['tread_outer'] if z and z[0]['tread_outer'] is not None else r['tread_outer']
             try: inn=float(inn)
@@ -5059,19 +7468,51 @@ def main(page: ft.Page):
 
         # Cada actividad guarda: (texto de la acción, dato técnico a resaltar en rojo).
 
-        # 3.1: cambio urgente cuando el menor RTD EXT/INT es <= 20 mm.
+        # 3.1: mismo criterio de cambio urgente de 3.1 Evaluación de Remanente,
+        # pero aplicado según el tipo de equipo.
+        def equipment_category(r):
+            # Normaliza vehicle_type para usar los mismos criterios de 3.1.
+            raw = str(
+                r.get('equipment_vehicle_type')
+                or r.get('vehicle_type')
+                or ''
+            ).strip().upper()
+            if 'SCOOP' in raw or 'LHD' in raw:
+                return 'SCOOP'
+            if 'VOLQUETE' in raw or 'DUMPER' in raw or 'MINERO' in raw:
+                return 'VOLQUETES'
+            if 'CAMIONETA' in raw or 'PICKUP' in raw:
+                return 'CAMIONETAS'
+            return 'OTROS'
+
+        def rtd_change_category(category, rtd):
+            # Exactamente los mismos umbrales definidos en 3.1.
+            thresholds = {
+                'SCOOP': (20.0, 30.0),
+                'VOLQUETES': (10.0, 15.0),
+                'CAMIONETAS': (4.0, 6.0),
+                'OTROS': (10.0, 15.0),
+            }
+            emergency_max, _ = thresholds.get(category, thresholds['OTROS'])
+            if rtd is None or rtd < 0:
+                return False
+            return rtd <= emergency_max
+
         for r in rows:
             vals=[]
             for v in (r['tread_inner'],r['tread_outer']):
                 try:
                     if v is not None and str(v).strip()!='': vals.append(float(v))
                 except Exception: pass
-            if vals and min(vals) <= 20:
-                eq=r['equipment_code'] or 'SIN EQUIPO'; pos=norm_pos(r['position']) or 'SIN POSICIÓN'
-                activities_31.append((
-                    f'CAMBIO DE NEUMÁTICO DE LA {pos} DEL EQUIPO {eq}.',
-                    f'{pos} RTD {fmt_tech(min(vals))} MM'
-                ))
+            if vals:
+                rtd_min = min(vals)
+                category = equipment_category(r)
+                if rtd_change_category(category, rtd_min):
+                    eq=r['equipment_code'] or 'SIN EQUIPO'; pos=norm_pos(r['position']) or 'SIN POSICIÓN'
+                    activities_31.append((
+                        f'CAMBIO DE NEUMÁTICO DE LA {pos} DEL EQUIPO {eq}.',
+                        f'{pos} RTD {fmt_tech(rtd_min)} MM'
+                    ))
 
         # 3.2: inversión cuando RTD INT - RTD EXT >= 10 mm.
         for r in rows:
@@ -5118,8 +7559,8 @@ def main(page: ft.Page):
         # Solo genera actividad para >10 psi de diferencia o sobrepresión >20%.
         for r in rows:
             z=query("""SELECT pressure FROM occurrences
-                       WHERE tire_id=? AND event_code IN ('INSP','INSC')
-                       ORDER BY id DESC LIMIT 1""",(r['id'],))
+                       WHERE tire_id=? AND operation_id=? AND event_code IN ('INSP','INSC')
+                       ORDER BY id DESC LIMIT 1""",(r['id'], op_id))
             act=z[0]['pressure'] if z and z[0]['pressure'] is not None else None
             rec=r['recommended_pressure']
             try:
@@ -5261,16 +7702,8 @@ def main(page: ft.Page):
         content.content=ft.Column([
             page_title('PROGRAMA DE MANTENIMIENTO DE NEUMÁTICOS',
                        f'Fecha de visualización: {report_date} · Actividades generadas automáticamente a partir de condiciones de emergencia'),
-            ft.Row([
-                ft.OutlinedButton('VOLVER A PROGRAMA DE MANTENIMIENTO',icon=ft.Icons.ARROW_BACK,on_click=lambda e: maintenance_menu_view()),
-                    ft.OutlinedButton('3.1 Evaluación de remanente',on_click=lambda e:maintenance_view()),
-                ft.OutlinedButton('3.2 Diferencia RTD entre hombros',on_click=lambda e:maintenance_shoulders_view()),
-                ft.OutlinedButton('3.3 Diferencia RTD mismo eje',on_click=lambda e:maintenance_axles_view()),
-                ft.OutlinedButton('3.4 Diferencia entre ejes por equipo',on_click=lambda e:maintenance_four_positions_view()),
-                ft.OutlinedButton('3.5 Nivelación de presión',on_click=lambda e:maintenance_pressure_view()),
-                ft.ElevatedButton('3.6 Reporte final de mantenimiento',disabled=True),
-                ft.OutlinedButton('DESCARGAR PDF',icon=ft.Icons.DOWNLOAD_OUTLINED,on_click=download_pdf),
-            ],spacing=10,wrap=True),
+            maintenance_nav_row('36'),
+            ft.Row([ft.Button('DESCARGAR PDF',icon=ft.Icons.DOWNLOAD_OUTLINED,on_click=download_pdf)], spacing=10),
             card(ft.Column([
                 section('3.1 EVALUACIÓN DE REMANENTE',activities_31),
                 ft.Divider(height=18,color='#DDE5ED'),
@@ -5286,6 +7719,7 @@ def main(page: ft.Page):
         page.update()
 
     def reports_view():
+        op_id = active_operation_id()
         """Módulo 7 · Tablas y reportes.
 
         Replica la separación funcional observada en NEXA/FLT8000:
@@ -5337,15 +7771,15 @@ def main(page: ft.Page):
             order='DESC' if latest else 'ASC'
             q=query(f"""SELECT o.event_date,o.meter,o.equipment_id,o.position,e.code equipment_code
                          FROM occurrences o LEFT JOIN equipment e ON e.id=o.equipment_id
-                         WHERE o.tire_id=? AND UPPER(TRIM(o.event_code))='INST'
-                         ORDER BY o.id {order} LIMIT 1""",(tid,))
+                         WHERE o.tire_id=? AND o.operation_id=? AND UPPER(TRIM(o.event_code))='INST'
+                         ORDER BY o.id {order} LIMIT 1""",(tid,op_id))
             return q[0] if q else None
 
         def last_dins_info(tid):
             q=query("""SELECT o.event_date,o.meter,o.equipment_id,o.position,e.code equipment_code
                        FROM occurrences o LEFT JOIN equipment e ON e.id=o.equipment_id
-                       WHERE o.tire_id=? AND UPPER(TRIM(o.event_code))='DINS'
-                       ORDER BY o.id DESC LIMIT 1""",(tid,))
+                       WHERE o.tire_id=? AND o.operation_id=? AND UPPER(TRIM(o.event_code))='DINS'
+                       ORDER BY o.id DESC LIMIT 1""",(tid,op_id))
             return q[0] if q else None
 
         def current_value(r):
@@ -5410,7 +7844,7 @@ def main(page: ft.Page):
             table=ft.Column(controls,spacing=0)
             return ft.Row([ft.Container(content=table,width=width or sum(w for _,w in columns))],scroll=ft.ScrollMode.ALWAYS)
 
-        cols91=[('MEDIDA',90),('FECHA RETIRO',100),('SEC',115),('CÓDIGO',75),('MC',75),('MODELO',100),('V.U %',65),('REMA mm',75),('HORAS ACUM.',95),('US$/HR',80),('HsxMM',75),('COSTO',90),('OC N°',70),('EST',82),('MOTIVO',120),('EQ-I',75),('P',48),('EQ-F',75),('P',48)]
+        cols91=[('MEDIDA',90),('FECHA RETIRO',100),('SEC',115),('CÓDIGO',75),('MC',75),('MODELO',100),('V.U %',65),('REMA mm',75),('HORAS ACUM.',95),('US$/HR',80),('HsxMM',75),('COSTO',90),('COSTO PERDIDO',105),('OC N°',70),('EST',82),('MOTIVO',120),('EQ-I',75),('P',48),('EQ-F',75),('P',48)]
         cols92=[('CÓDIGO',78),('SERIE',115),('EQUIPO OUT',88),('POS.',55),('RTD NUEVO',82),('RTD RETIRO',82),('RTD ACTUAL',82),('% REM. ÚTIL',90),('HORAS ACUM.',95),('COSTO NEUM. US$',110),('COSTO ACUM. US$',110),('US$/NO UTILIZADO',125),('US$/H',78),('Hs/mm',75),('FECHA RETIRO',100),('MOTIVO',105)]
         cols94=[('EQ',70),('P',45),('COD',68),('MC',75),('MED',85),('MOD',90),('H.T.',65),('$/H',70),('CO',72),('EX',50),('IN',50),('REM',60),('DR',50),('DH',50),('P-Ac',60),('Rc',55),('COND',78),('T',45),('Hs/mm',65),('Proye',70),('FECHA',88),('HORO',70),('OC',58)]
         cols95=[('EQUIP',78),('LL/NEW',92),('LL/REE',92),('$CORTE',92),('$NO OPT',92),('$/HRS',78),('HRS/LL',82),('H/D',60),('Hr-Rod',82),('LL-UT',68),('MM$REE',78),('MM$BAJA',82),('$TOTAL',92),('DGT',55),('REP',55),('INV',55),('CTB',55),('CTL',55),('PSB',55),('XRE',55),('PRE',55),('SEP',55),('USA',55)]
@@ -5423,18 +7857,18 @@ def main(page: ft.Page):
 
             # 9.1: FORMATO LLANTAS DE BAJA-ANUAL (NEXA FLT2015.FXP).
             # Historial de neumáticos dados de baja. Conserva la estructura del formato original.
-            bajas=query("""SELECT t.* FROM tires t WHERE UPPER(TRIM(t.status))='BAJA' ORDER BY t.size,t.code""")
-            rows91=[]; total91_cost=0.0
+            bajas=query("""SELECT t.* FROM tires t WHERE UPPER(TRIM(t.status))='BAJA' AND t.operation_id=? ORDER BY t.size,t.code""",(op_id,))
+            rows91=[]; total91_cost=0.0; total91_lost=0.0
             for r in bajas:
                 bq=query("""SELECT o.*,e.code equipment_code FROM occurrences o
                             LEFT JOIN equipment e ON e.id=o.equipment_id
-                            WHERE o.tire_id=? AND UPPER(TRIM(o.event_code))='BAJA'
-                            ORDER BY o.id DESC LIMIT 1""",(r['id'],))
+                            WHERE o.tire_id=? AND o.operation_id=? AND UPPER(TRIM(o.event_code))='BAJA'
+                            ORDER BY o.id DESC LIMIT 1""",(r['id'], op_id))
                 baja=bq[0] if bq else None
                 iq=query("""SELECT o.*,e.code equipment_code FROM occurrences o
                             LEFT JOIN equipment e ON e.id=o.equipment_id
-                            WHERE o.tire_id=? AND UPPER(TRIM(o.event_code))='INST'
-                            ORDER BY o.id ASC LIMIT 1""",(r['id'],))
+                            WHERE o.tire_id=? AND o.operation_id=? AND UPPER(TRIM(o.event_code))='INST'
+                            ORDER BY o.id ASC LIMIT 1""",(r['id'], op_id))
                 ini=iq[0] if iq else None
                 eqf=(baja['equipment_code'] if baja else '') or ''
                 hay=' '.join(str(x or '') for x in (r['code'],r['serial'],r['brand'],r['size'],r['design'],eqf)).upper()
@@ -5447,8 +7881,8 @@ def main(page: ft.Page):
                     try: newavg=float(r['new_tread'])
                     except Exception: newavg=None
                 vu=(remavg/newavg*100.0) if remavg is not None and newavg and newavg>0 else None
-                events=query("""SELECT event_code,meter FROM occurrences WHERE tire_id=?
-                                AND UPPER(TRIM(event_code)) IN ('INST','DINS','BAJA') ORDER BY id""",(r['id'],))
+                events=query("""SELECT event_code,meter FROM occurrences WHERE tire_id=? AND operation_id=?
+                                AND UPPER(TRIM(event_code)) IN ('INST','DINS','BAJA') ORDER BY id""",(r['id'], op_id))
                 hrs=0.0; st=None
                 for ev in events:
                     try: mv=float(ev['meter']) if ev['meter'] is not None else None
@@ -5465,13 +7899,17 @@ def main(page: ft.Page):
                         hrs=(bm-im) if im is not None and bm is not None and bm>=im else 0.0
                     except Exception: hrs=0.0
                 cost=float(r['cost_usd'] or 0); total91_cost+=cost
+                # Costo perdido estimado = parte del costo de compra consumida
+                # según el porcentaje de vida útil remanente mostrado en V.U.%.
+                costo_perdido=max(0.0, cost*(1.0-(vu/100.0))) if vu is not None else 0.0
+                total91_lost+=costo_perdido
                 cph=(cost/hrs) if hrs>0 else 0.0
                 wear=(newavg-remavg) if newavg is not None and remavg is not None else 0.0
                 hsmm=(hrs/wear) if wear and wear>0 else 0.0
                 reason=(baja['reason'] if baja else '') or ''
                 cond='REENC.' if 'REENC' in str(r['tire_condition'] or '').upper() else 'NUEVA'
-                rows91.append([r['size'],format_date(baja['event_date']) if baja else '—',r['serial'],r['code'],r['brand'],r['design'],fnum(vu,1),fnum(remavg,1),fnum(hrs,0),f"${cph:.2f}",fnum(hsmm,1),money(cost),'BAJA',cond,reason,(ini['equipment_code'] if ini else '—'),(ini['position'] if ini else '—'),eqf or '—',(baja['position'] if baja else '—')])
-            total_91.value=f"TOTAL GENERAL   |   LLANTAS DE BAJA: {len(rows91)}   |   COSTO ACUMULADO: {money(total91_cost)}"
+                rows91.append([r['size'],format_date(baja['event_date']) if baja else '—',r['serial'],r['code'],r['brand'],r['design'],fnum(vu,1),fnum(remavg,1),fnum(hrs,0),f"${cph:.2f}",fnum(hsmm,1),money(cost),money(costo_perdido),'BAJA',cond,reason,(ini['equipment_code'] if ini else '—'),(ini['position'] if ini else '—'),eqf or '—',(baja['position'] if baja else '—')])
+            total_91.value=f"TOTAL GENERAL   |   LLANTAS DE BAJA: {len(rows91)}   |   COSTO ACUMULADO: {money(total91_cost)}   |   COSTO PERDIDO: {money(total91_lost)}"
             body_91.controls=[make_table(cols91,rows91,total_91)]
 
             # 9.2: RETIRO POR EQUIPO (NEXA FLT2080.FXP / RTEQ).
@@ -5480,12 +7918,12 @@ def main(page: ft.Page):
             # US$/NO UTILIZADO = costo del neumático - costo acumulado.
             rteq_rows=[]
             rteq_tot_cost=0.0; rteq_tot_acc=0.0; rteq_tot_unused=0.0; rteq_tot_hours=0.0
-            all_bajas=query("""SELECT t.* FROM tires t WHERE UPPER(TRIM(t.status))='BAJA' ORDER BY t.code""")
+            all_bajas=query("""SELECT t.* FROM tires t WHERE UPPER(TRIM(t.status))='BAJA' AND t.operation_id=? ORDER BY t.code""",(op_id,))
             for r in all_bajas:
                 bq=query("""SELECT o.*,e.code equipment_code FROM occurrences o
                             LEFT JOIN equipment e ON e.id=o.equipment_id
-                            WHERE o.tire_id=? AND UPPER(TRIM(o.event_code))='BAJA'
-                            ORDER BY o.id DESC LIMIT 1""",(r['id'],))
+                            WHERE o.tire_id=? AND o.operation_id=? AND UPPER(TRIM(o.event_code))='BAJA'
+                            ORDER BY o.id DESC LIMIT 1""",(r['id'], op_id))
                 if not bq: continue
                 baja=bq[0]
                 motivo=str(baja['reason'] or '').strip()
@@ -5519,8 +7957,8 @@ def main(page: ft.Page):
                 no_utilizado=max(0.0,costo-costo_acum)
 
                 # Horas reales acumuladas entre INST y DINS/BAJA.
-                evs=query("""SELECT event_code,meter FROM occurrences WHERE tire_id=?
-                              AND UPPER(TRIM(event_code)) IN ('INST','DINS','BAJA') ORDER BY id""",(r['id'],))
+                evs=query("""SELECT event_code,meter FROM occurrences WHERE tire_id=? AND operation_id=?
+                              AND UPPER(TRIM(event_code)) IN ('INST','DINS','BAJA') ORDER BY id""",(r['id'], op_id))
                 hrs=0.0; st=None
                 for ev in evs:
                     ec=str(ev['event_code'] or '').upper().strip()
@@ -5550,15 +7988,15 @@ def main(page: ft.Page):
             # 9.4: FORMATO REPORTE GENERAL (NEXA DEMO13.FXP).
             # Equivalente a RELACION DE NEUMATICOS EN USO: solo neumáticos actualmente en servicio.
             active94=query("""SELECT t.*,e.code equipment_code FROM tires t LEFT JOIN equipment e ON e.id=t.equipment_id
-                              WHERE UPPER(TRIM(t.status))='SERVICIO' AND t.equipment_id IS NOT NULL
-                              ORDER BY e.code,t.position,t.code""")
+                              WHERE UPPER(TRIM(t.status))='SERVICIO' AND t.equipment_id IS NOT NULL AND t.operation_id=?
+                              ORDER BY e.code,t.position,t.code""",(op_id,))
             rows94=[]
             for r in active94:
                 hay=' '.join(str(x or '') for x in (r['code'],r['brand'],r['size'],r['design'],r['equipment_code'])).upper()
                 if term and term not in hay: continue
                 inst=install_info(r['id'],latest=True)
                 lq=query("""SELECT event_date,event_code,meter,tread_outer,tread_inner,pressure,notes
-                            FROM occurrences WHERE tire_id=? ORDER BY id DESC LIMIT 1""",(r['id'],))
+                            FROM occurrences WHERE tire_id=? AND operation_id=? ORDER BY id DESC LIMIT 1""",(r['id'], op_id))
                 last=lq[0] if lq else None
                 try:
                     cm=float(last['meter']) if last and last['meter'] is not None else (float(r['current_meter']) if r['current_meter'] is not None else None)
@@ -5621,12 +8059,12 @@ def main(page: ft.Page):
                 'hr_rod':0.0,'ll_ut':0,'mm_ree':0.0,'mm_baja':0.0,'total':0.0,
                 'DGT':0,'REP':0,'INV':0,'CTB':0,'CTL':0,'PSB':0,'XRE':0,'PRE':0,'SEP':0,'USA':0,
             }
-            eqs=query("SELECT id,code FROM equipment ORDER BY code")
+            eqs=query("SELECT id,code FROM equipment WHERE operation_id=? ORDER BY code",(op_id,))
             for eq in eqs:
                 occs=query("""SELECT o.id,o.tire_id,o.event_code,o.event_date,o.meter,o.tread_outer,o.tread_inner,o.reason,
                                       t.cost_usd,t.new_tread,t.new_tread_outer,t.new_tread_inner,t.retirement_tread,t.tire_condition
                                FROM occurrences o JOIN tires t ON t.id=o.tire_id
-                               WHERE o.equipment_id=? ORDER BY o.id""",(eq['id'],))
+                               WHERE o.equipment_id=? AND o.operation_id=? AND t.operation_id=? ORDER BY o.id""",(eq['id'],op_id,op_id))
                 if not occs: continue
                 if term and term not in str(eq['code'] or '').upper(): continue
                 meters=[_n(r['meter']) for r in occs if _n(r['meter']) is not None]
@@ -5699,7 +8137,7 @@ def main(page: ft.Page):
             # 9.7: una inversión por neumático que haya sido instalado al menos una vez.
             # Se toma la primera INST para no duplicar el costo por reinstalaciones posteriores.
             tires=query("""SELECT t.*,e.code equipment_code FROM tires t
-                           LEFT JOIN equipment e ON e.id=t.equipment_id ORDER BY t.code""")
+                           LEFT JOIN equipment e ON e.id=t.equipment_id WHERE t.operation_id=? ORDER BY t.code""",(op_id,))
             rows97=[]; sum_new=0.0; sum_ree=0.0
             for r in tires:
                 inst=install_info(r['id'],latest=False)
@@ -5724,8 +8162,8 @@ def main(page: ft.Page):
             # 9.8: equivalente a NEXA c_est_tire=0 y c_sit_tire=1 -> operativas en equipos.
             active=query("""SELECT t.*,e.code equipment_code FROM tires t
                             LEFT JOIN equipment e ON e.id=t.equipment_id
-                            WHERE UPPER(TRIM(t.status))='SERVICIO' AND t.equipment_id IS NOT NULL
-                            ORDER BY e.code,t.position,t.code""")
+                            WHERE UPPER(TRIM(t.status))='SERVICIO' AND t.equipment_id IS NOT NULL AND t.operation_id=?
+                            ORDER BY e.code,t.position,t.code""",(op_id,))
             rows98=[]; total98=0.0
             for r in active:
                 hay=' '.join(str(x or '') for x in (r['code'],r['brand'],r['size'],r['design'],r['equipment_code'])).upper()
@@ -5749,7 +8187,7 @@ def main(page: ft.Page):
             body_98.controls=[make_table(cols98,rows98,total_98)]
 
             # 9.9: NEXA FLTRET08 = NEUMÁTICOS EN STAND BY / repuestos.
-            standby=query("""SELECT t.* FROM tires t WHERE UPPER(TRIM(t.status)) IN ('STAND-BY','STAND BY','STANDBY') ORDER BY t.size,t.code""")
+            standby=query("""SELECT t.* FROM tires t WHERE UPPER(TRIM(t.status)) IN ('STAND-BY','STAND BY','STANDBY') AND t.operation_id=? ORDER BY t.size,t.code""",(op_id,))
             rows99=[]; total99=0.0
             for r in standby:
                 dins=last_dins_info(r['id'])
@@ -6006,20 +8444,40 @@ def main(page: ft.Page):
             movement_view()
 
         def refresh(e=None):
+            # V12 MULTITALLER: el Módulo 4 solo puede leer el taller/operación activa.
+            op_id = active_operation_id()
             term=(search.value or '').strip()
-            sql="""SELECT t.* FROM tires t WHERE t.status='STAND-BY'"""
-            params=[]
+            sql="""SELECT t.* FROM tires t
+                     WHERE t.status='STAND-BY' AND t.operation_id=?"""
+            params=[op_id]
             if term:
                 sql += " AND (t.code LIKE ? OR t.serial LIKE ? OR t.brand LIKE ? OR t.size LIKE ? OR t.design LIKE ?)"
-                q=f'%{term}%'; params=[q,q,q,q,q]
+                q=f'%{term}%'; params.extend([q,q,q,q,q])
             sql += " ORDER BY t.code"
             tires=query(sql,tuple(params))
+
+            # Carga en bloque la última ocurrencia de los neumáticos visibles para evitar N+1 consultas.
+            last_by_tire={}
+            tire_ids=[int(r['id']) for r in tires]
+            if tire_ids:
+                marks=','.join('?' for _ in tire_ids)
+                occs=query(f"""
+                    SELECT o.event_date,o.event_code,o.meter,o.tread_outer,o.tread_inner,o.location,o.tire_id,o.id
+                    FROM occurrences o
+                    JOIN (
+                        SELECT tire_id, MAX(id) max_id
+                        FROM occurrences
+                        WHERE operation_id=? AND tire_id IN ({marks})
+                        GROUP BY tire_id
+                    ) x ON x.max_id=o.id
+                    WHERE o.operation_id=?
+                """, (op_id,*tire_ids,op_id))
+                last_by_tire={int(o['tire_id']):o for o in occs}
+
             rows_box.controls=[]
             apt=repair=low=0
             for idx,r in enumerate(tires):
-                last=query("""SELECT event_date,event_code,meter,tread_outer,tread_inner,location
-                              FROM occurrences WHERE tire_id=? ORDER BY id DESC LIMIT 1""",(r['id'],))
-                z=last[0] if last else None
+                z=last_by_tire.get(int(r['id']))
                 ext=(z['tread_outer'] if z and z['tread_outer'] is not None else r['tread_outer'])
                 inn=(z['tread_inner'] if z and z['tread_inner'] is not None else r['tread_inner'])
                 vals=[float(x) for x in (ext,inn) if x is not None]
@@ -6125,20 +8583,20 @@ def main(page: ft.Page):
             sql="""
                 SELECT t.*
                 FROM tires t
-                WHERE t.status='BAJA'
+                WHERE t.status='BAJA' AND t.operation_id=?
             """
-            params=[]
+            params=[op_id]
             if term:
                 q=f'%{term}%'
                 sql += """ AND (
                     t.code LIKE ? OR t.serial LIKE ? OR t.brand LIKE ? OR t.size LIKE ? OR
                     t.design LIKE ? OR EXISTS(
                         SELECT 1 FROM occurrences ox LEFT JOIN equipment ex ON ex.id=ox.equipment_id
-                        WHERE ox.tire_id=t.id AND ox.event_code='BAJA'
+                        WHERE ox.tire_id=t.id AND ox.operation_id=? AND ox.event_code='BAJA'
                           AND (COALESCE(ex.code,'') LIKE ? OR COALESCE(ox.reason,'') LIKE ?)
                     )
                 )"""
-                params=[q,q,q,q,q,q,q]
+                params=[op_id,q,q,q,q,q,op_id,q,q]
             sql += ' ORDER BY t.code'
             tires=query(sql,tuple(params))
             table.rows=[]
@@ -6154,9 +8612,9 @@ def main(page: ft.Page):
                            o.tread_outer,o.tread_inner,o.reason,o.notes,e.code equipment_code
                     FROM occurrences o
                     LEFT JOIN equipment e ON e.id=o.equipment_id
-                    WHERE o.tire_id=? AND o.event_code='BAJA'
+                    WHERE o.tire_id=? AND o.operation_id=? AND o.event_code='BAJA'
                     ORDER BY o.id DESC LIMIT 1
-                """,(r['id'],))
+                """,(r['id'],op_id))
                 z=baja[0] if baja else None
 
                 ext=(z['tread_outer'] if z and z['tread_outer'] is not None else r['tread_outer'])
@@ -6276,6 +8734,7 @@ def main(page: ft.Page):
 
     def nfu_detail_view():
         """Módulo 5.1 · NFU / BAJA: cuadro independiente de neumáticos dados de baja."""
+        op_id = active_operation_id()
         search=ft.TextField(
             label='Buscar código / serie / marca / medida / equipo',
             prefix_icon=ft.Icons.SEARCH,
@@ -6339,8 +8798,8 @@ def main(page: ft.Page):
         def accumulated_tire_hours(tire_id):
             """Suma horas reales de uso entre INST y DINS/BAJA; no usa el horómetro BAJA como vida total."""
             events=query("""SELECT id,event_code,meter FROM occurrences
-                            WHERE tire_id=? AND event_code IN ('INST','DINS','BAJA')
-                            ORDER BY id""",(tire_id,))
+                            WHERE tire_id=? AND operation_id=? AND event_code IN ('INST','DINS','BAJA')
+                            ORDER BY id""",(tire_id,op_id))
             total=0.0
             start=None
             for ev in events:
@@ -6355,7 +8814,7 @@ def main(page: ft.Page):
                         total += diff
                     start=None
             if total>0: return total
-            z=query('SELECT installation_meter FROM tires WHERE id=?',(tire_id,)); b=query("SELECT meter FROM occurrences WHERE tire_id=? AND event_code='BAJA' ORDER BY id DESC LIMIT 1",(tire_id,))
+            z=query('SELECT installation_meter FROM tires WHERE id=? AND operation_id=?',(tire_id,op_id)); b=query("SELECT meter FROM occurrences WHERE tire_id=? AND operation_id=? AND event_code='BAJA' ORDER BY id DESC LIMIT 1",(tire_id,op_id))
             im=num(z[0]['installation_meter']) if z else None; bm=num(b[0]['meter']) if b else None
             return (bm-im) if im is not None and bm is not None and bm>=im else None
 
@@ -6371,16 +8830,16 @@ def main(page: ft.Page):
 
         def refresh(e=None):
             term=(search.value or '').strip()
-            sql="""SELECT t.* FROM tires t WHERE t.status='BAJA'"""
-            params=[]
+            sql="""SELECT t.* FROM tires t WHERE t.status='BAJA' AND t.operation_id=?"""
+            params=[op_id]
             if term:
                 q=f'%{term}%'
                 sql += """ AND (
                     t.code LIKE ? OR t.serial LIKE ? OR t.brand LIKE ? OR t.size LIKE ? OR t.design LIKE ? OR
                     EXISTS(SELECT 1 FROM occurrences ox LEFT JOIN equipment ex ON ex.id=ox.equipment_id
-                           WHERE ox.tire_id=t.id AND ox.event_code='BAJA' AND COALESCE(ex.code,'') LIKE ?)
+                           WHERE ox.tire_id=t.id AND ox.operation_id=? AND ox.event_code='BAJA' AND COALESCE(ex.code,'') LIKE ?)
                 )"""
-                params=[q,q,q,q,q,q]
+                params.extend([q,q,q,q,q,op_id,q])
             sql += ' ORDER BY t.code'
             tires=query(sql,tuple(params))
 
@@ -6395,8 +8854,8 @@ def main(page: ft.Page):
                                      o.tread_outer,o.tread_inner,o.reason,e.code equipment_code
                               FROM occurrences o
                               LEFT JOIN equipment e ON e.id=o.equipment_id
-                              WHERE o.tire_id=? AND o.event_code='BAJA'
-                              ORDER BY o.id DESC LIMIT 1""",(r['id'],))
+                              WHERE o.tire_id=? AND o.operation_id=? AND o.event_code='BAJA'
+                              ORDER BY o.id DESC LIMIT 1""",(r['id'],op_id))
                 z=last[0] if last else None
 
                 ext=(z['tread_outer'] if z and z['tread_outer'] is not None else r['tread_outer'])
@@ -6479,6 +8938,7 @@ def main(page: ft.Page):
         page.update()
 
     def inventory_consumption_view():
+        op_id = active_operation_id()
         """6. Análisis de operación -> 6.1 Utilización y pérdida por equipo.
 
         Criterio evaluado:
@@ -6523,7 +8983,7 @@ def main(page: ft.Page):
             txt=str(value or '').strip().upper()
             return ('CORTE' in txt) or txt in ('CTL','CTB','CPB') or txt.startswith('CT')
 
-        eq_rows=query("SELECT id,code,brand,model,vehicle_type,active FROM equipment ORDER BY code")
+        eq_rows=query("SELECT id,code,brand,model,vehicle_type,active FROM equipment WHERE operation_id=? ORDER BY code",(op_id,))
         result=[]
 
         for eq in eq_rows:
@@ -6535,9 +8995,9 @@ def main(page: ft.Page):
                        t.retirement_tread,t.tire_condition
                 FROM occurrences o
                 JOIN tires t ON t.id=o.tire_id
-                WHERE o.equipment_id=?
+                WHERE o.equipment_id=? AND o.operation_id=? AND t.operation_id=?
                 ORDER BY o.id
-            """,(eid,))
+            """,(eid,op_id,op_id))
 
             if not occs:
                 continue
@@ -6886,12 +9346,12 @@ def main(page: ft.Page):
 
         # 6.3 · Análisis estadístico/económico de neumáticos dados de BAJA (NFU).
         # Se alimenta exclusivamente de tires.status='BAJA' y del último evento BAJA.
-        baja_tires=query("SELECT * FROM tires WHERE status='BAJA' ORDER BY code")
+        baja_tires=query("SELECT * FROM tires WHERE status='BAJA' AND operation_id=? ORDER BY code",(op_id,))
         baja_groups={}
 
         def baja_hours(tire_id):
             evs=query("""SELECT event_code,meter FROM occurrences
-                         WHERE tire_id=? AND event_code IN ('INST','DINS','BAJA') ORDER BY id""",(tire_id,))
+                         WHERE tire_id=? AND operation_id=? AND event_code IN ('INST','DINS','BAJA') ORDER BY id""",(tire_id,op_id))
             total=0.0; start=None
             for ev in evs:
                 code=str(ev['event_code'] or '').upper(); meter=n(ev['meter'])
@@ -6901,14 +9361,14 @@ def main(page: ft.Page):
                     if meter>=start: total += meter-start
                     start=None
             if total>0: return total
-            z=query('SELECT installation_meter FROM tires WHERE id=?',(tire_id,)); b=query("SELECT meter FROM occurrences WHERE tire_id=? AND event_code='BAJA' ORDER BY id DESC LIMIT 1",(tire_id,))
+            z=query('SELECT installation_meter FROM tires WHERE id=? AND operation_id=?',(tire_id,op_id)); b=query("SELECT meter FROM occurrences WHERE tire_id=? AND operation_id=? AND event_code='BAJA' ORDER BY id DESC LIMIT 1",(tire_id,op_id))
             im=n(z[0]['installation_meter']) if z else None; bm=n(b[0]['meter']) if b else None
             return (bm-im) if im is not None and bm is not None and bm>=im else None
 
         for t in baja_tires:
             last=query("""SELECT o.reason
                           FROM occurrences o
-                          WHERE o.tire_id=? AND o.event_code='BAJA' ORDER BY o.id DESC LIMIT 1""",(t['id'],))
+                          WHERE o.tire_id=? AND o.operation_id=? AND o.event_code='BAJA' ORDER BY o.id DESC LIMIT 1""",(t['id'],op_id))
             z=last[0] if last else None
             brand=str(t['brand'] or '—')
             size=str(t['size'] or '—')
@@ -7026,7 +9486,7 @@ def main(page: ft.Page):
         seen_inst=set()
         inst_rows=query("""SELECT o.tire_id,t.cost_usd,t.tire_condition
                            FROM occurrences o JOIN tires t ON t.id=o.tire_id
-                           WHERE UPPER(TRIM(o.event_code))='INST' ORDER BY o.id""")
+                           WHERE UPPER(TRIM(o.event_code))='INST' AND o.operation_id=? AND t.operation_id=? ORDER BY o.id""",(op_id,op_id))
         for r in inst_rows:
             tid=int(r['tire_id'])
             if tid in seen_inst:
@@ -7055,8 +9515,8 @@ def main(page: ft.Page):
                        t.cost_usd,t.new_tread,t.new_tread_outer,t.new_tread_inner,
                        t.retirement_tread,t.tire_condition
                 FROM occurrences o JOIN tires t ON t.id=o.tire_id
-                WHERE o.equipment_id=? ORDER BY o.id
-            """,(int(eq['id']),))
+                WHERE o.equipment_id=? AND o.operation_id=? AND t.operation_id=? ORDER BY o.id
+            """,(int(eq['id']),op_id,op_id))
             by_tire={}
             for r in occs:
                 by_tire.setdefault(int(r['tire_id']),[]).append(r)
@@ -7109,8 +9569,8 @@ def main(page: ft.Page):
         out_rteq=0.0
         rteq_rows=query("""SELECT t.*,o.tread_outer baja_outer,o.tread_inner baja_inner,o.reason
                            FROM occurrences o JOIN tires t ON t.id=o.tire_id
-                           WHERE UPPER(TRIM(o.event_code))='BAJA'
-                           ORDER BY o.id""")
+                           WHERE UPPER(TRIM(o.event_code))='BAJA' AND o.operation_id=? AND t.operation_id=?
+                           ORDER BY o.id""",(op_id,op_id))
         latest_rteq={}
         for r in rteq_rows:
             reason=str(r['reason'] or '').upper().strip()
@@ -7132,11 +9592,11 @@ def main(page: ft.Page):
         # SALDO · fuentes 9.8 y 9.9: valor residual actual por RTD útil.
         close_oper=0.0
         for t in query("""SELECT * FROM tires
-                          WHERE UPPER(TRIM(status))='SERVICIO' AND equipment_id IS NOT NULL"""):
+                          WHERE UPPER(TRIM(status))='SERVICIO' AND equipment_id IS NOT NULL AND operation_id=?""",(op_id,)):
             close_oper += _current_residual_value(t)
         close_spare=0.0
         for t in query("""SELECT * FROM tires
-                          WHERE UPPER(TRIM(status)) IN ('STAND-BY','STAND BY','STANDBY')"""):
+                          WHERE UPPER(TRIM(status)) IN ('STAND-BY','STAND BY','STANDBY') AND operation_id=?""",(op_id,)):
             close_spare += _current_residual_value(t)
 
         total_income=income_new+income_equipment_arrival+income_reenc
@@ -7525,6 +9985,11 @@ def main(page: ft.Page):
         )
         nav.on_change=lambda e: select(e.control.selected_index)
 
+        active_op_label = ft.Text(
+            f"TALLER ACTIVO: {active_operation_row()['name']}",
+            size=12, weight=ft.FontWeight.BOLD, color=NAV_ACCENT
+        )
+
         userbar=ft.Container(
             height=62,
             bgcolor=ft.Colors.WHITE,
@@ -7533,8 +9998,10 @@ def main(page: ft.Page):
             content=ft.Row([
                 ft.Text('Gestión integral de neumáticos OTR',size=13,color=TEXT_MUTED),
                 ft.Container(expand=True),
+                active_op_label,
+                ft.Container(width=18),
                 ft.Icon(ft.Icons.ACCOUNT_CIRCLE_OUTLINED,color=NAV_ACCENT),
-                ft.Column([ft.Text(user['full_name'] or user['username'],size=12,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),ft.Text(user['role'],size=10,color=TEXT_MUTED)],spacing=0),
+                ft.Column([ft.Text(user['full_name'] or user['username'],size=12,weight=ft.FontWeight.BOLD,color=TEXT_MAIN),ft.Text('ADMINISTRADOR GENERAL' if str(user['role']).upper()=='ADMIN' else user['role'],size=10,color=TEXT_MUTED)],spacing=0),
                 ft.TextButton('Salir',icon=ft.Icons.LOGOUT,on_click=lambda e: logout())
             ])
         )
@@ -7552,78 +10019,112 @@ def main(page: ft.Page):
         show_login()
 
     def show_login():
-        # Portada inspirada en el diseño clásico de MegaSoftire/FoxPro.
-        # Se conserva la lógica de acceso de v22; solo cambia la presentación.
-        classic_blue = '#0000AA'
-        classic_white = '#FFFFFF'
-        outer_bg = '#E5E7EB'
+        # Portada Software-ETM limpia, sin imágenes.
+        # Se conserva íntegramente la autenticación existente.
         expected_user = 'admin'
         expected_password_hash = '04445e6487736590d1ef50186b414e737e0164683cbbec64e00e73c000fd3bef'
 
         user_field = ft.TextField(
-            value='', width=220, height=38, autofocus=True,
-            text_size=16, bgcolor=classic_blue, color=classic_white,
-            border_color=classic_white, focused_border_color=classic_white,
-            cursor_color=classic_white, content_padding=ft.Padding(left=8, top=4, right=8, bottom=4),
-        )
-        password_field = ft.TextField(
-            value='', width=220, height=38, password=True, can_reveal_password=False,
-            text_size=16, bgcolor=classic_blue, color=classic_white,
-            border_color=classic_white, focused_border_color=classic_white,
-            cursor_color=classic_white, content_padding=ft.Padding(left=8, top=4, right=38, bottom=4),
+            value='', width=390, height=56, autofocus=True,
+            text_size=16, color='#172B3A',
+            border_color='#B7C5D0', focused_border_color='#FF6338',
+            cursor_color='#FF6338',
+            hint_text='Usuario',
+            hint_style=ft.TextStyle(color='#7B8B97'),
+            bgcolor='#FFFFFF',
+            content_padding=ft.Padding(left=46, top=8, right=14, bottom=8),
+            prefix_icon=ft.Icons.PERSON_OUTLINE,
         )
 
+        password_field = ft.TextField(
+            value='', width=390, height=56, password=True, can_reveal_password=False,
+            text_size=16, color='#172B3A',
+            border_color='#B7C5D0', focused_border_color='#FF6338',
+            cursor_color='#FF6338',
+            hint_text='Contraseña',
+            hint_style=ft.TextStyle(color='#7B8B97'),
+            bgcolor='#FFFFFF',
+            content_padding=ft.Padding(left=46, top=8, right=48, bottom=8),
+            prefix_icon=ft.Icons.LOCK_OUTLINE,
+        )
+
+        # Ojo: permite mostrar/ocultar la contraseña.
         password_eye = ft.IconButton(
             icon=ft.Icons.VISIBILITY_OFF,
-            icon_color=classic_white,
-            icon_size=20,
-            tooltip='Mostrar / ocultar clave',
-            style=ft.ButtonStyle(padding=0),
+            icon_color='#617381',
+            tooltip='Mostrar / ocultar contraseña'
         )
 
         def toggle_password_visibility(e=None):
             password_field.password = not password_field.password
-            password_eye.icon = ft.Icons.VISIBILITY_OFF if password_field.password else ft.Icons.VISIBILITY
+            password_eye.icon = (
+                ft.Icons.VISIBILITY_OFF
+                if password_field.password
+                else ft.Icons.VISIBILITY
+            )
             page.update()
 
         password_eye.on_click = toggle_password_visibility
+
         password_control = ft.Stack(
-            width=220,
-            height=38,
+            width=390, height=56,
             controls=[
                 password_field,
                 ft.Container(
                     content=password_eye,
-                    right=2,
-                    top=-1,
-                    width=34,
-                    height=38,
-                    alignment=ft.Alignment.CENTER,
+                    right=2, top=4, width=46, height=46,
+                    alignment=ft.Alignment.CENTER
                 ),
             ],
         )
-        login_message = ft.Text('', size=12, color='#FFFF66', text_align=ft.TextAlign.CENTER,
-                                font_family='Courier New')
+
+        login_message = ft.Text(
+            '', size=12, color='#D84315',
+            text_align=ft.TextAlign.CENTER
+        )
 
         def enter_system(e=None):
             username = (user_field.value or '').strip()
             password = password_field.value or ''
-            password_ok = hashlib.sha256(password.encode('utf-8')).hexdigest() == expected_password_hash
-            if username != expected_user or not password_ok:
+            db_user = authenticate(username, password)
+            legacy_admin_ok = (
+                username == expected_user and
+                hashlib.sha256(password.encode('utf-8')).hexdigest() == expected_password_hash
+            )
+
+            if db_user:
+                urow = query(
+                    'SELECT id,username,full_name,role,operation_id FROM users WHERE id=?',
+                    (db_user['id'],)
+                )[0]
+                session['user'] = dict(urow)
+            elif legacy_admin_ok:
+                session['user'] = {
+                    'username': 'admin',
+                    'full_name': 'Administrador',
+                    'role': 'ADMIN',
+                    'operation_id': 1
+                }
+            else:
                 login_message.value = 'USUARIO O CLAVE INCORRECTOS'
                 password_field.value = ''
                 page.update()
                 return
-            # Login web estable: después de validar usuario/clave usamos un perfil
-            # conocido y completo. Esto evita que una fila antigua/incompleta de la
-            # tabla users en Render bloquee la construcción de la pantalla principal.
-            session['user'] = {'username': 'admin', 'full_name': 'Administrador', 'role': 'ADMIN'}
+
+            role_now = str(session['user'].get('role') or '').upper()
+            if role_now not in ('ADMIN', 'ADMINISTRADOR GENERAL', 'SUPERADMIN'):
+                assigned = session['user'].get('operation_id')
+                if not assigned:
+                    session['user'] = None
+                    login_message.value = 'USUARIO SIN TALLER ASIGNADO'
+                    page.update()
+                    return
+                operation_state['id'] = int(assigned)
+
             try:
                 build_shell()
                 page.update()
             except Exception as ex:
-                # Si hubiera un error al construir la pantalla principal, no dejar el
-                # botón aparentemente sin respuesta: mostramos el fallo en la portada.
                 session['user'] = None
                 login_message.value = f'ERROR AL INGRESAR: {str(ex)[:120]}'
                 page.update()
@@ -7631,73 +10132,98 @@ def main(page: ft.Page):
         user_field.on_submit = lambda e: password_field.focus()
         password_field.on_submit = enter_system
 
-        dos_font = 'Courier New'
         login_panel = ft.Container(
-            width=900, height=600, bgcolor=classic_blue, padding=12,
+            width=500,
+            bgcolor='#FFFFFF',
+            border_radius=18,
             border=ft.Border(
-                left=ft.BorderSide(2, classic_white), top=ft.BorderSide(2, classic_white),
-                right=ft.BorderSide(2, classic_white), bottom=ft.BorderSide(2, classic_white),
+                left=ft.BorderSide(1, '#D7E0E7'),
+                top=ft.BorderSide(1, '#D7E0E7'),
+                right=ft.BorderSide(1, '#D7E0E7'),
+                bottom=ft.BorderSide(1, '#D7E0E7'),
             ),
-            content=ft.Container(
-                expand=True, padding=14,
-                border=ft.Border(
-                    left=ft.BorderSide(1, classic_white), top=ft.BorderSide(1, classic_white),
-                    right=ft.BorderSide(1, classic_white), bottom=ft.BorderSide(1, classic_white),
-                ),
-                content=ft.Column([
-                    ft.Container(height=8),
-                    ft.Container(
-                        width=560, height=58, alignment=ft.Alignment.CENTER,
-                        border=ft.Border(
-                            left=ft.BorderSide(2, classic_white), top=ft.BorderSide(2, classic_white),
-                            right=ft.BorderSide(2, classic_white), bottom=ft.BorderSide(2, classic_white),
-                        ),
-                        content=ft.Text('SISTEMA DE CONTROL DE NEUMÁTICOS OTR', size=19,
-                                        weight=ft.FontWeight.BOLD, color=classic_white,
-                                        text_align=ft.TextAlign.CENTER, font_family=dos_font),
+            padding=44,
+            shadow=ft.BoxShadow(
+                blur_radius=24,
+                color='#26000000',
+                offset=ft.Offset(0, 8)
+            ),
+            content=ft.Column(
+                [
+                    ft.Text(
+                        'Software-',
+                        size=40,
+                        weight=ft.FontWeight.BOLD,
+                        color='#193247'
+                    ),
+                    ft.Text(
+                        'ETM',
+                        size=50,
+                        weight=ft.FontWeight.BOLD,
+                        color='#FF6338'
+                    ),
+                    ft.Text(
+                        'Enterprise Tire Management',
+                        size=17,
+                        italic=True,
+                        color='#607684'
+                    ),
+                    ft.Container(height=10),
+                    ft.Divider(color='#D8E0E6', height=1),
+                    ft.Text(
+                        'GESTIÓN INTEGRAL DE NEUMÁTICOS OTR',
+                        size=11,
+                        weight=ft.FontWeight.BOLD,
+                        color='#71838F'
                     ),
                     ft.Container(height=18),
-                    ft.Text('MegaSoftire', size=92, weight=ft.FontWeight.BOLD,
-                            color=classic_white, text_align=ft.TextAlign.CENTER, font_family=dos_font),
-                    ft.Text('VERSIÓN WEB 2026', size=20, weight=ft.FontWeight.BOLD,
-                            color=classic_white, text_align=ft.TextAlign.CENTER, font_family=dos_font),
-                    ft.Container(height=10),
-                    ft.Row([
-                        ft.Text('USUARIO  :', width=125, size=18, weight=ft.FontWeight.BOLD,
-                                color=classic_white, font_family=dos_font), user_field,
-                    ], alignment=ft.MainAxisAlignment.CENTER, vertical_alignment=ft.CrossAxisAlignment.CENTER),
-                    ft.Row([
-                        ft.Text('CLAVE    :', width=125, size=18, weight=ft.FontWeight.BOLD,
-                                color=classic_white, font_family=dos_font), password_control,
-                    ], alignment=ft.MainAxisAlignment.CENTER, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                    user_field,
+                    password_control,
                     login_message,
-                    ft.Container(height=2),
-                    ft.ElevatedButton(
-                        'INGRESAR',
+                    ft.Container(height=4),
+                    ft.Button(
+                        'INICIAR SESIÓN',
                         on_click=enter_system,
-                        width=220,
-                        height=42,
-                        bgcolor=classic_blue,
-                        color=classic_white,
+                        width=390,
+                        height=54,
+                        bgcolor='#FF6338',
+                        color=ft.Colors.WHITE,
                         style=ft.ButtonStyle(
-                            shape=ft.RoundedRectangleBorder(radius=0),
-                            side=ft.BorderSide(2, classic_white),
-                            text_style=ft.TextStyle(size=16, weight=ft.FontWeight.BOLD, font_family=dos_font),
+                            shape=ft.RoundedRectangleBorder(radius=7),
+                            text_style=ft.TextStyle(
+                                size=16,
+                                weight=ft.FontWeight.BOLD
+                            )
                         ),
                     ),
                     ft.Container(height=2),
-                    ft.Text('UD. ESTÁ AUTORIZADO PARA INGRESAR AL SISTEMA', size=16,
-                            weight=ft.FontWeight.BOLD, color=classic_white,
-                            text_align=ft.TextAlign.CENTER, font_family=dos_font),
-                    ft.Text('PRESIONE ENTER PARA INGRESAR', size=16,
-                            weight=ft.FontWeight.BOLD, color=classic_white,
-                            text_align=ft.TextAlign.CENTER, font_family=dos_font),
-                ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=8),
+                    ft.TextButton(
+                        'Recuperar Contraseña',
+                        style=ft.ButtonStyle(color='#607684')
+                    ),
+                ],
+                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                spacing=10
             ),
         )
 
-        app_host.content = ft.Container(expand=True, bgcolor=outer_bg,
-                                        alignment=ft.Alignment.CENTER, content=login_panel)
+        # Fondo neutro: no depende de archivos externos ni de assets.
+        background = ft.Container(
+            expand=True,
+            bgcolor='#EEF2F5',
+        )
+
+        app_host.content = ft.Stack(
+            expand=True,
+            controls=[
+                background,
+                ft.Container(
+                    expand=True,
+                    alignment=ft.Alignment.CENTER,
+                    content=login_panel
+                ),
+            ],
+        )
         page.update()
 
     def adapt(e=None):
@@ -7717,4 +10243,4 @@ if __name__=='__main__':
         os.environ.setdefault('FLET_SERVER_PORT', os.environ['PORT'])
         os.environ.setdefault('FLET_SERVER_IP', '0.0.0.0')
         os.environ.setdefault('FLET_FORCE_WEB_SERVER', 'true')
-    ft.run(main)
+    ft.run(main, assets_dir='assets')
