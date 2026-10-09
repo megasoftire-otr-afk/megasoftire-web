@@ -7426,6 +7426,7 @@ def main(page: ft.Page):
         rows = query("""
             SELECT t.id, t.code, t.tread_inner, t.tread_outer, t.recommended_pressure,
                    e.id AS equipment_id, e.code AS equipment_code,
+                   e.vehicle_type AS vehicle_type,
                    e.vehicle_type AS equipment_vehicle_type, t.position
             FROM tires t
             LEFT JOIN equipment e ON e.id=t.equipment_id
@@ -7471,8 +7472,8 @@ def main(page: ft.Page):
         # 3.1: mismo criterio de cambio urgente de 3.1 Evaluación de Remanente,
         # pero aplicado según el tipo de equipo.
         def equipment_category(r):
-            # Copia exacta de classify_equipment() del módulo 3.1.
-            raw = str(r['equipment_vehicle_type'] or '').strip().upper()
+            # Mismo clasificador que el cuadro por categorías del módulo 3.1.
+            raw = str(r.get('vehicle_type') or r.get('equipment_vehicle_type') or '').strip().upper()
             raw = (raw.replace('Á','A').replace('É','E').replace('Í','I')
                       .replace('Ó','O').replace('Ú','U').replace('Ü','U'))
             if 'VOLQUETE' in raw:
@@ -7507,7 +7508,14 @@ def main(page: ft.Page):
             if vals:
                 rtd_min = min(vals)
                 category = equipment_category(r)
-                if rtd_change_category(category, rtd_min):
+                # La lista 3.6 incluye únicamente los neumáticos que 3.1
+                # clasifica como CAMBIO URGENTE para su categoría de equipo.
+                condition_31 = (
+                    'BUEN ESTADO' if rtd_min > {'SCOOP':30.0,'VOLQUETES':15.0,'CAMIONETAS':6.0,'OTROS':15.0}.get(category,15.0)
+                    else 'PRÓXIMO CAMBIO' if rtd_min > {'SCOOP':20.0,'VOLQUETES':10.0,'CAMIONETAS':4.0,'OTROS':10.0}.get(category,10.0)
+                    else 'CAMBIO URGENTE'
+                )
+                if condition_31 == 'CAMBIO URGENTE':
                     eq=r['equipment_code'] or 'SIN EQUIPO'; pos=norm_pos(r['position']) or 'SIN POSICIÓN'
                     activities_31.append((
                         f'CAMBIO DE NEUMÁTICO DE LA {pos} DEL EQUIPO {eq}.',
