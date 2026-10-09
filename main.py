@@ -7471,18 +7471,21 @@ def main(page: ft.Page):
         # 3.1: mismo criterio de cambio urgente de 3.1 Evaluación de Remanente,
         # pero aplicado según el tipo de equipo.
         def equipment_category(r):
-            # Normaliza vehicle_type para usar los mismos criterios de 3.1.
+            # Debe coincidir exactamente con classify_equipment() de 3.1:
+            # allí CAMION y CAMIONETA se clasifican como CAMIONETAS.
             raw = str(
                 r.get('equipment_vehicle_type')
                 or r.get('vehicle_type')
                 or ''
             ).strip().upper()
+            raw = (raw.replace('Á','A').replace('É','E').replace('Í','I')
+                      .replace('Ó','O').replace('Ú','U').replace('Ü','U'))
+            if 'VOLQUETE' in raw:
+                return 'VOLQUETES'
+            if 'CAMIONETA' in raw or 'CAMION' in raw or 'PICKUP' in raw:
+                return 'CAMIONETAS'
             if 'SCOOP' in raw or 'LHD' in raw:
                 return 'SCOOP'
-            if 'VOLQUETE' in raw or 'DUMPER' in raw or 'MINERO' in raw:
-                return 'VOLQUETES'
-            if 'CAMIONETA' in raw or 'PICKUP' in raw:
-                return 'CAMIONETAS'
             return 'OTROS'
 
         def rtd_change_category(category, rtd):
