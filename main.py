@@ -7469,11 +7469,11 @@ def main(page: ft.Page):
 
         # Cada actividad guarda: (texto de la acción, dato técnico a resaltar en rojo).
 
-        # 3.1: mismo criterio de cambio urgente de 3.1 Evaluación de Remanente,
-        # pero aplicado según el tipo de equipo.
+        # 3.1: replica literalmente el clasificador y el criterio por categoría
+        # de maintenance_view(), para que 3.6 liste exactamente los urgentes
+        # contabilizados en las tablas de 3.1.
         def equipment_category(r):
-            # Mismo clasificador que el cuadro por categorías del módulo 3.1.
-            raw = str(r.get('vehicle_type') or r.get('equipment_vehicle_type') or '').strip().upper()
+            raw = str(r['vehicle_type'] or '').strip().upper()
             raw = (raw.replace('Á','A').replace('É','E').replace('Í','I')
                       .replace('Ó','O').replace('Ú','U').replace('Ü','U'))
             if 'VOLQUETE' in raw:
@@ -7484,43 +7484,45 @@ def main(page: ft.Page):
                 return 'SCOOP'
             return 'OTROS'
 
-        def rtd_change_category(category, rtd):
-            # Misma tabla de umbrales que rtd_condition_by_category() en 3.1.
+        def rtd_condition_by_category(category, rtd):
+            # Mismos umbrales que 3.1 Evaluación de Remanente.
+            if rtd is None or rtd < 0:
+                return 'SIN LECTURA'
             thresholds = {
                 'SCOOP': (20.0, 30.0),
                 'VOLQUETES': (10.0, 15.0),
                 'CAMIONETAS': (4.0, 6.0),
                 'OTROS': (10.0, 15.0),
             }
-            if rtd is None or rtd < 0:
-                return False
-            emergency_max, _preventive_max = thresholds.get(
-                category, thresholds['OTROS']
+            emergency_max, preventive_max = thresholds.get(
+                str(category).upper(), (10.0, 15.0)
             )
-            return rtd <= emergency_max
+            if rtd > preventive_max:
+                return 'BUEN ESTADO'
+            if rtd > emergency_max:
+                return 'PRÓXIMO CAMBIO'
+            return 'CAMBIO URGENTE'
 
         for r in rows:
-            vals=[]
-            for v in (r['tread_inner'],r['tread_outer']):
+            # Igual que rtd_value() en 3.1: RTD mínimo entre INT y EXT
+            # guardados en el registro maestro del neumático.
+            vals = []
+            for value in (r['tread_inner'], r['tread_outer']):
                 try:
-                    if v is not None and str(v).strip()!='': vals.append(float(v))
-                except Exception: pass
-            if vals:
-                rtd_min = min(vals)
-                category = equipment_category(r)
-                # La lista 3.6 incluye únicamente los neumáticos que 3.1
-                # clasifica como CAMBIO URGENTE para su categoría de equipo.
-                condition_31 = (
-                    'BUEN ESTADO' if rtd_min > {'SCOOP':30.0,'VOLQUETES':15.0,'CAMIONETAS':6.0,'OTROS':15.0}.get(category,15.0)
-                    else 'PRÓXIMO CAMBIO' if rtd_min > {'SCOOP':20.0,'VOLQUETES':10.0,'CAMIONETAS':4.0,'OTROS':10.0}.get(category,10.0)
-                    else 'CAMBIO URGENTE'
-                )
-                if condition_31 == 'CAMBIO URGENTE':
-                    eq=r['equipment_code'] or 'SIN EQUIPO'; pos=norm_pos(r['position']) or 'SIN POSICIÓN'
-                    activities_31.append((
-                        f'CAMBIO DE NEUMÁTICO DE LA {pos} DEL EQUIPO {eq}.',
-                        f'{pos} RTD {fmt_tech(rtd_min)} MM'
-                    ))
+                    if value is not None and str(value).strip() != '':
+                        vals.append(float(value))
+                except Exception:
+                    pass
+            rtd_min = min(vals) if vals else None
+            category = equipment_category(r)
+            condition_31 = rtd_condition_by_category(category, rtd_min)
+            if condition_31 == 'CAMBIO URGENTE':
+                eq = r['equipment_code'] or 'SIN EQUIPO'
+                pos = norm_pos(r['position']) or 'SIN POSICIÓN'
+                activities_31.append((
+                    f'CAMBIO DE NEUMÁTICO DE LA {pos} DEL EQUIPO {eq}.',
+                    f'{pos} RTD {fmt_tech(rtd_min)} MM'
+                ))
 
         # 3.2: inversión cuando RTD INT - RTD EXT >= 10 mm.
         for r in rows:
