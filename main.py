@@ -7471,34 +7471,31 @@ def main(page: ft.Page):
         # 3.1: mismo criterio de cambio urgente de 3.1 Evaluación de Remanente,
         # pero aplicado según el tipo de equipo.
         def equipment_category(r):
-            # Debe coincidir exactamente con classify_equipment() de 3.1:
-            # allí CAMION y CAMIONETA se clasifican como CAMIONETAS.
-            raw = str(
-                r.get('equipment_vehicle_type')
-                or r.get('vehicle_type')
-                or ''
-            ).strip().upper()
+            # Copia exacta de classify_equipment() del módulo 3.1.
+            raw = str(r['equipment_vehicle_type'] or '').strip().upper()
             raw = (raw.replace('Á','A').replace('É','E').replace('Í','I')
                       .replace('Ó','O').replace('Ú','U').replace('Ü','U'))
             if 'VOLQUETE' in raw:
                 return 'VOLQUETES'
-            if 'CAMIONETA' in raw or 'CAMION' in raw or 'PICKUP' in raw:
+            if 'CAMIONETA' in raw or 'CAMION' in raw:
                 return 'CAMIONETAS'
-            if 'SCOOP' in raw or 'LHD' in raw:
+            if 'SCOOP' in raw:
                 return 'SCOOP'
             return 'OTROS'
 
         def rtd_change_category(category, rtd):
-            # Exactamente los mismos umbrales definidos en 3.1.
+            # Misma tabla de umbrales que rtd_condition_by_category() en 3.1.
             thresholds = {
                 'SCOOP': (20.0, 30.0),
                 'VOLQUETES': (10.0, 15.0),
                 'CAMIONETAS': (4.0, 6.0),
                 'OTROS': (10.0, 15.0),
             }
-            emergency_max, _ = thresholds.get(category, thresholds['OTROS'])
             if rtd is None or rtd < 0:
                 return False
+            emergency_max, _preventive_max = thresholds.get(
+                category, thresholds['OTROS']
+            )
             return rtd <= emergency_max
 
         for r in rows:
